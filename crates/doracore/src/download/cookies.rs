@@ -801,6 +801,123 @@ pub async fn validate_cookies_ok() -> bool {
     validate_cookies().await.is_ok()
 }
 
+/// Validates that cookies carry **age-verified** authentication.
+///
+/// YouTube gates some videos behind "Sign in to confirm your age". Regular
+/// `validate_cookies` probes a non-age-gated video ("Me at the zoo") — that
+/// passes for any logged-in account, even one without a verified DOB, so it
+/// cannot detect the loss of age-verification state (which invalidates
+/// 18+ video downloads without otherwise affecting the session).
+///
+/// This probe downloads metadata for an age-restricted classic (Rammstein
+/// "Sonne") through the full proxy chain. `Ok(())` means age-gated content
+/// is accessible; an `Err` typically means the cookies were re-exported from
+/// a browser session that never completed the age-verification step.
+pub async fn validate_age_gated_cookies() -> anyhow::Result<()> {
+    let cookies_path = match get_cookies_path() {
+        Some(path) => path,
+        None => {
+            anyhow::bail!("YTDL_COOKIES_FILE is not set — cookies path is not configured");
+        }
+    };
+
+    if !cookies_path.exists() {
+        anyhow::bail!("Cookies file not found: {}", cookies_path.display());
+    }
+
+    // Age-restricted probe: Rammstein "Sonne" — long-standing 18+ gate on YouTube.
+    let test_url = "https://www.youtube.com/watch?v=PmAI3GvuRkA";
+    let ytdl_bin = crate::core::config::YTDL_BIN.as_str();
+
+    let proxy_chain = get_proxy_chain();
+    let total_proxies = proxy_chain.len();
+    let mut last_error: Option<String> = None;
+
+    for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
+        let proxy_name = proxy_option
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Direct (no proxy)".to_string());
+
+        log::debug!(
+            "🔞 Age-gated probe attempt {}/{} using [{}]",
+            attempt + 1,
+            total_proxies,
+            proxy_name
+        );
+
+        let mut cmd = Command::new(ytdl_bin);
+        cmd.arg("--no-warnings")
+            .arg("--no-playlist")
+            .arg("--skip-download")
+            .arg("--socket-timeout")
+            .arg("120");
+
+        if let Some(ref proxy_config) = proxy_option {
+            cmd.arg("--proxy").arg(&proxy_config.url);
+        }
+
+        cmd.arg("--cookies")
+            .arg(&cookies_path)
+            .arg("--extractor-args")
+            .arg("youtube:player_client=android_vr,web_safari;formats=missing_pot")
+            .arg("--js-runtimes")
+            .arg("deno")
+            .arg("--print")
+            .arg("%(id)s %(title)s")
+            .arg(test_url);
+
+        let output = match timeout(Duration::from_secs(180), cmd.output()).await {
+            Ok(result) => result,
+            Err(_) => {
+                last_error = Some("Age-gated probe timed out".to_string());
+                continue;
+            }
+        };
+
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    log::debug!("✅ Age-gated probe passed using [{}]", proxy_name);
+                    return Ok(());
+                }
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stderr_lower = stderr.to_lowercase();
+
+                // Age-gate: cookies logged-in but not age-verified. Proxy won't help.
+                if stderr_lower.contains("sign in to confirm your age")
+                    || stderr_lower.contains("inappropriate for some users")
+                {
+                    anyhow::bail!("Cookies are not age-verified (YouTube requires age confirmation)");
+                }
+
+                // Proxy-level errors: try the next tier.
+                if is_proxy_related_error(&stderr) {
+                    last_error = Some(format!("Proxy error: {}", stderr.lines().next().unwrap_or("unknown")));
+                    continue;
+                }
+
+                let stderr_short = stderr.lines().next().unwrap_or("unknown error");
+                last_error = Some(stderr_short.to_string());
+            }
+            Err(e) => {
+                last_error = Some(format!("Failed to run yt-dlp: {}", e));
+                continue;
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        last_error.unwrap_or_else(|| "Age-gated probe failed on every proxy".to_string())
+    ))
+}
+
+/// Bool wrapper for `validate_age_gated_cookies` (parallels `validate_cookies_ok`).
+pub async fn validate_age_gated_cookies_ok() -> bool {
+    validate_age_gated_cookies().await.is_ok()
+}
+
 /// Detailed validation that returns structured result with reason
 pub async fn validate_cookies_detailed() -> CookieValidationResult {
     let cookies_path = match get_cookies_path() {

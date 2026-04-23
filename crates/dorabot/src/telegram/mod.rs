@@ -82,7 +82,7 @@ pub use admin::{
     handle_proxy_stats_command, handle_send_command, handle_sent_files_command, handle_setplan_command,
     handle_transactions_command, handle_update_cookies_command, handle_update_ig_cookies_command,
     handle_update_ytdlp_callback, handle_update_ytdlp_command, handle_users_command, handle_version_command, is_admin,
-    notify_admin_cookies_refresh,
+    notify_admin_age_gate_state, notify_admin_cookies_refresh, AgeGateTransition,
 };
 pub use analytics::{handle_analytics_command, handle_health_command, handle_metrics_command, handle_revenue_command};
 pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_commands, setup_chat_bot_commands, Command};

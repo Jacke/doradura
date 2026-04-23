@@ -318,6 +318,15 @@ metric!(
 );
 
 metric!(
+    /// Age-verified cookies status (1 = age-gated probe passes, 0 = lost).
+    /// Distinct from COOKIES_STATUS: regular cookies may be valid while
+    /// age-verification state has been dropped, blocking 18+ video downloads.
+    pub COOKIES_AGE_VERIFIED_STATUS: Gauge =
+        "doradura_cookies_age_verified_status",
+        "Age-verified cookies status (1 = age-gated probe passes, 0 = lost)"
+);
+
+metric!(
     /// Platform distribution for downloads
     /// Labels: platform (youtube/soundcloud/vimeo/etc)
     pub PLATFORM_DOWNLOADS_TOTAL: CounterVec =
@@ -740,6 +749,7 @@ pub fn init_metrics() {
     // Initialize remaining system health metrics
     let _ = &*FILE_SIZE_BYTES;
     let _ = &*COOKIES_STATUS;
+    let _ = &*COOKIES_AGE_VERIFIED_STATUS;
     let _ = &*PLATFORM_DOWNLOADS_TOTAL;
     let _ = &*USER_FEEDBACK_TOTAL;
     let _ = &*ALERTS_TOTAL;
@@ -752,6 +762,7 @@ pub fn init_metrics() {
 
     // Set cookies status to valid by default
     COOKIES_STATUS.set(1.0);
+    COOKIES_AGE_VERIFIED_STATUS.set(1.0);
 
     // Initialize disk metrics
     let _ = &*DISK_AVAILABLE_BYTES;
@@ -891,6 +902,11 @@ pub fn record_platform_download(platform: &str) {
 /// Helper function to update cookies status
 pub fn update_cookies_status(valid: bool) {
     COOKIES_STATUS.set(if valid { 1.0 } else { 0.0 });
+}
+
+/// Helper function to update age-verified cookies status
+pub fn update_cookies_age_verified_status(valid: bool) {
+    COOKIES_AGE_VERIFIED_STATUS.set(if valid { 1.0 } else { 0.0 });
 }
 
 /// Helper function to record user feedback

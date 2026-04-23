@@ -114,38 +114,109 @@ pub async fn spawn_cookies_checker(bot: Bot, shared_storage: Arc<SharedStorage>)
 
     tokio::spawn(async move {
         use crate::download::cookies;
-        use crate::telegram::notify_admin_cookies_refresh;
+        use crate::telegram::{notify_admin_age_gate_state, notify_admin_cookies_refresh, AgeGateTransition};
+
+        /// Per-probe state tracked across ticks for edge-triggered notifications.
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum ProbeState {
+            Unknown,
+            Ok,
+            Fail,
+        }
 
         let _lock_conn = lock_conn;
         let mut interval = interval(Duration::from_secs(5 * 60));
+        let mut base_state = ProbeState::Unknown;
+        let mut age_state = ProbeState::Unknown;
+
         loop {
             interval.tick().await;
             log::debug!("Running periodic cookies validation check");
 
-            if let Some(reason) = cookies::needs_refresh().await {
-                metrics::update_cookies_status(false);
-                log::warn!("🔴 Cookies need refresh: {}", reason);
+            // --- Probe 1: regular cookies (Me at the zoo) ---
+            let base_result = cookies::needs_refresh().await;
+            let base_ok = base_result.is_none();
+            let new_base_state = if base_ok { ProbeState::Ok } else { ProbeState::Fail };
+            metrics::update_cookies_status(base_ok);
 
-                let admin_ids = config::admin::ADMIN_IDS.clone();
-                let primary_admin = *config::admin::ADMIN_USER_ID;
-                let mut notified_admins = std::collections::HashSet::new();
+            // Edge-trigger for base cookies: notify on OK→Fail and Unknown→Fail transitions.
+            // (Keeps existing behavior: admin only hears about the fail edge — the
+            // notify_admin_cookies_refresh helper has its own 6h cooldown as a secondary
+            // guard, but the state machine here is the primary dedup.)
+            match (base_state, new_base_state) {
+                (ProbeState::Unknown | ProbeState::Ok, ProbeState::Fail) => {
+                    let reason = base_result
+                        .as_deref()
+                        .unwrap_or("Cookies validation failed")
+                        .to_string();
+                    log::warn!("🔴 Cookies need refresh: {}", reason);
 
-                for admin_id in admin_ids.iter() {
-                    if notified_admins.insert(*admin_id) {
-                        if let Err(e) = notify_admin_cookies_refresh(&bot, *admin_id, &reason).await {
-                            log::error!("Failed to notify admin {} about cookies: {}", admin_id, e);
+                    let admin_ids = config::admin::ADMIN_IDS.clone();
+                    let primary_admin = *config::admin::ADMIN_USER_ID;
+                    let mut notified_admins = std::collections::HashSet::new();
+
+                    for admin_id in admin_ids.iter() {
+                        if notified_admins.insert(*admin_id) {
+                            if let Err(e) = notify_admin_cookies_refresh(&bot, *admin_id, &reason).await {
+                                log::error!("Failed to notify admin {} about cookies: {}", admin_id, e);
+                            }
+                        }
+                    }
+
+                    if primary_admin != 0 && notified_admins.insert(primary_admin) {
+                        if let Err(e) = notify_admin_cookies_refresh(&bot, primary_admin, &reason).await {
+                            log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
+                        }
+                    }
+                }
+                (ProbeState::Fail, ProbeState::Ok) => {
+                    log::info!("✅ Cookies recovered");
+                }
+                _ => {}
+            }
+
+            // --- Probe 2: age-verified cookies (only probed when base is OK) ---
+            // No point testing age-gate when base auth itself is broken — that path will
+            // fail with the same SessionExpired reason and spam noise.
+            if base_ok {
+                let age_ok = cookies::validate_age_gated_cookies_ok().await;
+                let new_age_state = if age_ok { ProbeState::Ok } else { ProbeState::Fail };
+                metrics::update_cookies_age_verified_status(age_ok);
+
+                let transition = match (age_state, new_age_state) {
+                    (ProbeState::Unknown | ProbeState::Ok, ProbeState::Fail) => Some(AgeGateTransition::Lost),
+                    (ProbeState::Fail, ProbeState::Ok) => Some(AgeGateTransition::Recovered),
+                    _ => None,
+                };
+
+                if let Some(t) = transition {
+                    log::warn!("🔞 Age-gate state transition: {:?}", t);
+                    let admin_ids = config::admin::ADMIN_IDS.clone();
+                    let primary_admin = *config::admin::ADMIN_USER_ID;
+                    let mut notified_admins = std::collections::HashSet::new();
+
+                    for admin_id in admin_ids.iter() {
+                        if notified_admins.insert(*admin_id) {
+                            if let Err(e) = notify_admin_age_gate_state(&bot, *admin_id, t).await {
+                                log::error!("Failed to notify admin {} about age-gate: {}", admin_id, e);
+                            }
+                        }
+                    }
+
+                    if primary_admin != 0 && notified_admins.insert(primary_admin) {
+                        if let Err(e) = notify_admin_age_gate_state(&bot, primary_admin, t).await {
+                            log::error!("Failed to notify primary admin {} about age-gate: {}", primary_admin, e);
                         }
                     }
                 }
 
-                if primary_admin != 0 && notified_admins.insert(primary_admin) {
-                    if let Err(e) = notify_admin_cookies_refresh(&bot, primary_admin, &reason).await {
-                        log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
-                    }
-                }
-            } else {
-                metrics::update_cookies_status(true);
+                age_state = new_age_state;
             }
+            // If base is broken we deliberately DO NOT touch age_state — the next tick
+            // where base recovers will re-probe age-gate from its last known state,
+            // avoiding spurious Lost→Recovered flaps driven by base-auth outages.
+
+            base_state = new_base_state;
         }
     });
 }

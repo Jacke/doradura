@@ -243,6 +243,52 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
     }
 }
 
+/// Age-gate probe state transition for admin notifications.
+#[derive(Debug, Clone, Copy)]
+pub enum AgeGateTransition {
+    /// Age-verified cookies stopped passing the age-gate probe (regular cookies still OK).
+    Lost,
+    /// Age-verified cookies recovered after a previous Lost transition.
+    Recovered,
+}
+
+/// Sends a single notification to admin about an age-gate probe transition.
+///
+/// Caller is responsible for edge-triggering — this fn has no cooldown because
+/// the 2-state machine in `spawn_cookies_checker` already dedupes by tracking
+/// the previous `ProbeState` across ticks.
+pub async fn notify_admin_age_gate_state(bot: &Bot, admin_id: i64, transition: AgeGateTransition) -> Result<()> {
+    let message = match transition {
+        AgeGateTransition::Lost => {
+            "⚠️ *Age\\-verified cookies lost*\n\n\
+             Regular YouTube cookies still work, but the age\\-verification probe \
+             \\(Rammstein \"Sonne\"\\) now fails with _\"Sign in to confirm your age\"_\\.\n\n\
+             Non\\-gated videos keep working\\. 18\\+ videos will fail until \
+             cookies are re\\-exported from a browser session that has completed \
+             YouTube's age\\-confirmation step\\.\n\n\
+             To fix:\n\
+             • Open YouTube in a browser signed into an age\\-verified account\n\
+             • Confirm age on any 18\\+ video once\n\
+             • Re\\-export cookies and send via /update\\_cookies"
+        }
+        AgeGateTransition::Recovered => {
+            "✅ *Age\\-verified cookies recovered*\n\n\
+             Age\\-gated probe passes again — 18\\+ videos should work\\."
+        }
+    };
+
+    match bot.send_md(ChatId(admin_id), message.to_string()).await {
+        Ok(_) => {
+            log::info!("✅ Sent age-gate {:?} notification to admin {}", transition, admin_id);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("❌ Failed to send age-gate notification to admin {}: {}", admin_id, e);
+            Err(e.into())
+        }
+    }
+}
+
 pub async fn handle_cookies_file_upload(
     _db_pool: Arc<crate::storage::db::DbPool>,
     shared_storage: Arc<SharedStorage>,
