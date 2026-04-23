@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Dependabot: close 8/12 open advisories** (v0.39.2) — `cargo update`:
+  - `openssl 0.10.76 → 0.10.78` closes **4 HIGH** advisories (buffer overflows / oversized-length reads in `Deriver::derive`, `PkeyCtxRef::derive`, `rustMdCtxRef::digest_final`, PSK/cookie trampoline length checks, PEM password callback bounds) — prod TLS path.
+  - `actix-http 3.12.0 → 3.12.1` closes **1 MEDIUM** HTTP/1.1 CL.TE request smuggling — used via actix-web in admin panel.
+  - `rustls-webpki 0.103.10 → 0.103.13` closes **2 LOW** name-constraints-on-URI / wildcard-name acceptance — prod HTTPS client validation.
+  - `rand 0.9.2 → 0.9.4`, `rand 0.10.0 → 0.10.1` closes **1 LOW** unsoundness with custom logger on `rand::rng()`.
+  - **Skipped**: `actix-web-lab 0.23.0` advisory (host header poisoning in redirect middleware) — transitive dev-dep from `teloxide_tests` (git-pinned fork), **not in production bot binary**. Patch requires 0.23 → 0.26 (3 pre-1.0 minor bumps) which would need forking teloxide_tests; defer until the upstream fork updates.
+  - 574 doracore + 568 dorabot lib tests still green; `cargo check --workspace` clean.
+
 ### Fixed
 - **CI Lint: suppress `collapsible_match` in subscriptions.rs** (v0.39.1) — Rust 1.95 clippy now flags 5 `match parts[1] { "X" => { if parts.len() >= N { ... } } ... }` sites in `crates/dorabot/src/telegram/subscriptions.rs:247` (the `cw:` callback dispatcher). Collapsing each arm to `"X" if parts.len() >= N => { ... }` would duplicate guards across 5 near-identical arms — less readable than the nested form. Added `#![allow(clippy::collapsible_match)]` at the subscriptions module scope with a rationale comment mirroring the v0.38.22 TUI fix in `doratui/src/main.rs`. CI Lint (workspace `cargo clippy -D warnings`) now green.
 
