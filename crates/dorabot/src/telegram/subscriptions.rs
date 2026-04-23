@@ -1,6 +1,15 @@
 //! Telegram UI for content subscriptions (subscribe, manage, notifications).
 //!
 //! Handles `/subscriptions` command and `cw:` callback prefix.
+//
+// Rust 1.95 clippy tightened `collapsible_match` to flag the
+// `match parts[1] { "X" => { if parts.len() >= N { ... } } ... }` pattern
+// that this callback dispatcher uses 5 times. Collapsing each arm to
+// `"X" if parts.len() >= N => { ... }` duplicates every guard check and
+// splits the single `parts[1]` match into five near-identical arms — less
+// readable than the nested form. Suppress at module scope (same rationale
+// as the v0.38.22 TUI fix in `doratui/src/main.rs`).
+#![allow(clippy::collapsible_match)]
 
 use crate::core::config;
 use crate::download::source::instagram::InstagramSource;
