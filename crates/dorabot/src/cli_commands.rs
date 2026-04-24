@@ -100,7 +100,7 @@ pub async fn run_cli_download(
 
     // Check if PO Token server is running (for YouTube)
     if url.contains("youtube.com") || url.contains("youtu.be") {
-        let po_token_check = std::process::Command::new("curl")
+        let po_token_check = tokio::process::Command::new("curl")
             .args([
                 "-s",
                 "-o",
@@ -109,7 +109,8 @@ pub async fn run_cli_download(
                 "%{http_code}",
                 "http://127.0.0.1:4416/health",
             ])
-            .output();
+            .output()
+            .await;
         let server_running = po_token_check
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("200"))
             .unwrap_or(false);

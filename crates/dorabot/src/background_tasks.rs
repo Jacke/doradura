@@ -20,6 +20,12 @@ const LOCK_UPDATES_CLEANUP: i64 = 1002;
 const LOCK_SUBSCRIPTION_EXPIRY: i64 = 1103;
 const LOCK_COOKIES_CHECKER: i64 = 1104;
 const LOCK_CONTENT_WATCHER: i64 = 1105;
+const LOCK_DOWNLOADS_CLEANUP: i64 = 1106;
+
+/// Default retention period for files in the downloads folder (in days).
+/// Override with the `DOWNLOADS_RETENTION_DAYS` env var. Files older than
+/// this are deleted by `spawn_downloads_cleanup` every 6 hours.
+const DOWNLOADS_RETENTION_DAYS_DEFAULT: u64 = 7;
 
 async fn try_acquire_pg_singleton_lock(
     shared_storage: &Arc<SharedStorage>,
@@ -219,6 +225,107 @@ pub async fn spawn_cookies_checker(bot: Bot, shared_storage: Arc<SharedStorage>)
             base_state = new_base_state;
         }
     });
+}
+
+/// Start the downloads folder cleanup task (every 6 hours).
+///
+/// Deletes files in the configured `DOWNLOAD_FOLDER` whose mtime is older than
+/// `DOWNLOADS_RETENTION_DAYS` (default: 7 days). Prevents disk-full incidents
+/// from accumulated download artifacts (.mp4 / .webp / .temp.mp4).
+pub async fn spawn_downloads_cleanup(shared_storage: Arc<SharedStorage>) {
+    let lock_conn = match shared_storage.as_ref() {
+        SharedStorage::Sqlite { .. } => None,
+        SharedStorage::Postgres { .. } => {
+            match try_acquire_pg_singleton_lock(&shared_storage, LOCK_DOWNLOADS_CLEANUP, "downloads cleanup").await {
+                Some(conn) => Some(conn),
+                None => return,
+            }
+        }
+    };
+
+    tokio::spawn(async move {
+        let _lock_conn = lock_conn;
+        let retention_days: u64 = std::env::var("DOWNLOADS_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DOWNLOADS_RETENTION_DAYS_DEFAULT);
+
+        let folder = shellexpand::tilde(&*doracore::core::config::DOWNLOAD_FOLDER).into_owned();
+        log::info!(
+            "🧹 Downloads cleanup task started: folder={}, retention={} days",
+            folder,
+            retention_days
+        );
+
+        // Run once shortly after startup, then every 6 hours.
+        let mut interval = interval(Duration::from_secs(6 * 60 * 60));
+        loop {
+            interval.tick().await;
+            let cutoff = std::time::SystemTime::now() - Duration::from_secs(retention_days * 24 * 60 * 60);
+
+            let (removed, freed_bytes) = match cleanup_downloads_folder(&folder, cutoff).await {
+                Ok(stats) => stats,
+                Err(e) => {
+                    log::warn!("🧹 Downloads cleanup failed: {}", e);
+                    continue;
+                }
+            };
+
+            if removed > 0 {
+                log::info!(
+                    "🧹 Downloads cleanup: removed {} files, freed {:.1} MB",
+                    removed,
+                    freed_bytes as f64 / (1024.0 * 1024.0)
+                );
+            } else {
+                log::debug!("🧹 Downloads cleanup: nothing to delete (folder={})", folder);
+            }
+        }
+    });
+}
+
+/// Walk `folder` (one level deep, files only), delete entries with mtime older
+/// than `cutoff`. Returns `(deleted_count, total_freed_bytes)`.
+///
+/// Skips directories, symlinks, and files we can't `stat`/`remove` (logs at debug).
+async fn cleanup_downloads_folder(folder: &str, cutoff: std::time::SystemTime) -> std::io::Result<(usize, u64)> {
+    let mut removed = 0usize;
+    let mut freed_bytes = 0u64;
+
+    let mut entries = tokio::fs::read_dir(folder).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let metadata = match entry.metadata().await {
+            Ok(md) => md,
+            Err(e) => {
+                log::debug!("🧹 stat failed on {:?}: {}", entry.path(), e);
+                continue;
+            }
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let mtime = match metadata.modified() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if mtime >= cutoff {
+            continue;
+        }
+
+        let size = metadata.len();
+        let path = entry.path();
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => {
+                removed += 1;
+                freed_bytes += size;
+            }
+            Err(e) => {
+                log::debug!("🧹 remove failed on {:?}: {}", path, e);
+            }
+        }
+    }
+
+    Ok((removed, freed_bytes))
 }
 
 pub async fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>, shared_storage: Arc<SharedStorage>) {

@@ -158,6 +158,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     background_tasks::spawn_cookies_checker(bot.clone(), Arc::clone(&shared_storage)).await;
     background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
     background_tasks::spawn_db_cleanup(Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
+    background_tasks::spawn_downloads_cleanup(Arc::clone(&shared_storage)).await;
 
     // Create extension registry
     let extension_registry = Arc::new(crate::extension::ExtensionRegistry::default_registry());

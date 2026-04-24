@@ -139,11 +139,6 @@ pub async fn handle_settings_callback(
         return Ok(true);
     }
 
-    if data == "settings:toggle_experimental" {
-        handle_settings_toggle_experimental(bot, callback_id).await?;
-        return Ok(true);
-    }
-
     if let Some(bitrate) = data.strip_prefix("bitrate:") {
         handle_settings_bitrate(bot, callback_id, chat_id, message_id, bitrate, db_pool, shared_storage).await?;
         return Ok(true);
@@ -817,19 +812,6 @@ async fn handle_settings_video_toggle_no_caption(
         None,
     )
     .await?;
-    Ok(())
-}
-
-/// Handles `settings:toggle_experimental` — stub retained for backward
-/// compatibility. Experimental features have been graduated to the main
-/// workflow, so this callback is now a no-op with an informational answer.
-async fn handle_settings_toggle_experimental(bot: &Bot, callback_id: &CallbackQueryId) -> ResponseResult<()> {
-    // Experimental features have been graduated to the main workflow.
-    // The toggle is kept for backward compatibility but has no effect.
-    let _ = bot
-        .answer_callback_query(callback_id.clone())
-        .text("Experimental features are now enabled for everyone!")
-        .await;
     Ok(())
 }
 

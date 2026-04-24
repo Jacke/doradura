@@ -138,8 +138,7 @@ async fn main() -> anyhow::Result<()> {
         thumb_tx,
         thumb_rx,
         ytdlp_rx,
-    )
-    .await;
+    );
 
     // Always restore terminal, even on error
     let _ = disable_raw_mode();
@@ -155,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_loop(
+fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     dl_tx: mpsc::Sender<(usize, SlotEvent)>,
