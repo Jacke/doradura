@@ -265,64 +265,44 @@ fn render_share_page(row: &SharePageRecord) -> String {
 }
 
 fn render_streaming_buttons(links: &serde_json::Value, youtube_url: &str) -> String {
-    let mut btns = String::new();
+    use std::fmt::Write as _;
 
-    if let Some(url) = links.get("spotify").and_then(|v| v.as_str()) {
-        if is_safe_url(url) {
-            btns.push_str(&format!(
-                r#"<a href="{}" class="btn spotify" target="_blank" rel="noopener">Spotify</a>"#,
-                html_escape(url)
-            ));
+    /// Append a single button to `btns` if the URL is present and passes the
+    /// safe-scheme check. Uses `write!` against the existing `String` to avoid
+    /// the intermediate `format!` allocation.
+    fn append_btn(btns: &mut String, url: &str, css: &str, label: &str) {
+        if !is_safe_url(url) {
+            return;
         }
+        // write! into a String can only fail on alloc OOM — propagating here
+        // would only hide the panic, so swallow the Result.
+        let _ = write!(
+            btns,
+            r#"<a href="{}" class="btn {}" target="_blank" rel="noopener">{}</a>"#,
+            html_escape(url),
+            css,
+            label
+        );
     }
-    if let Some(url) = links.get("appleMusic").and_then(|v| v.as_str()) {
-        if is_safe_url(url) {
-            btns.push_str(&format!(
-                r#"<a href="{}" class="btn apple" target="_blank" rel="noopener">Apple Music</a>"#,
-                html_escape(url)
-            ));
-        }
-    }
-    if let Some(url) = links.get("youtubeMusic").and_then(|v| v.as_str()) {
-        if is_safe_url(url) {
-            btns.push_str(&format!(
-                r#"<a href="{}" class="btn yt" target="_blank" rel="noopener">YouTube Music</a>"#,
-                html_escape(url)
-            ));
-        }
-    }
-    if let Some(url) = links.get("deezer").and_then(|v| v.as_str()) {
-        if is_safe_url(url) {
-            btns.push_str(&format!(
-                r#"<a href="{}" class="btn deezer" target="_blank" rel="noopener">Deezer</a>"#,
-                html_escape(url)
-            ));
-        }
-    }
-    if let Some(url) = links.get("tidal").and_then(|v| v.as_str()) {
-        if is_safe_url(url) {
-            btns.push_str(&format!(
-                r#"<a href="{}" class="btn tidal" target="_blank" rel="noopener">Tidal</a>"#,
-                html_escape(url)
-            ));
-        }
-    }
-    if let Some(url) = links.get("amazonMusic").and_then(|v| v.as_str()) {
-        if is_safe_url(url) {
-            btns.push_str(&format!(
-                r#"<a href="{}" class="btn amazon" target="_blank" rel="noopener">Amazon Music</a>"#,
-                html_escape(url)
-            ));
+
+    let mut btns = String::new();
+    let services: &[(&str, &str, &str)] = &[
+        ("spotify", "spotify", "Spotify"),
+        ("appleMusic", "apple", "Apple Music"),
+        ("youtubeMusic", "yt", "YouTube Music"),
+        ("deezer", "deezer", "Deezer"),
+        ("tidal", "tidal", "Tidal"),
+        ("amazonMusic", "amazon", "Amazon Music"),
+    ];
+
+    for (key, css, label) in services {
+        if let Some(url) = links.get(key).and_then(|v| v.as_str()) {
+            append_btn(&mut btns, url, css, label);
         }
     }
 
     // Always show the original YouTube link if it has a safe scheme
-    if is_safe_url(youtube_url) {
-        btns.push_str(&format!(
-            r#"<a href="{}" class="btn youtube-src" target="_blank" rel="noopener">YouTube</a>"#,
-            html_escape(youtube_url)
-        ));
-    }
+    append_btn(&mut btns, youtube_url, "youtube-src", "YouTube");
 
     btns
 }
