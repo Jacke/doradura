@@ -100,6 +100,18 @@ impl SharedStorage {
             == 1)
     }
 
+    pub async fn get_user_video_no_caption(&self, telegram_id: i64) -> Result<bool> {
+        Ok(self
+            .get_user_i32_setting(
+                telegram_id,
+                "video_no_caption",
+                "SELECT COALESCE(video_no_caption, 0) AS video_no_caption FROM users WHERE telegram_id = $1",
+                0,
+            )
+            .await?
+            == 1)
+    }
+
     pub async fn get_user_experimental_features(&self, telegram_id: i64) -> Result<bool> {
         Ok(self
             .get_user_i32_setting(
@@ -195,6 +207,16 @@ impl SharedStorage {
             "burn_subtitles",
             i32::from(enabled),
             "UPDATE users SET burn_subtitles = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_video_no_caption(&self, telegram_id: i64, enabled: bool) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "video_no_caption",
+            i32::from(enabled),
+            "UPDATE users SET video_no_caption = $2, updated_at = NOW() WHERE telegram_id = $1",
         )
         .await
     }

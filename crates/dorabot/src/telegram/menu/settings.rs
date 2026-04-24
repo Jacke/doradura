@@ -265,6 +265,10 @@ pub async fn show_video_quality_menu(
         .await
         .unwrap_or(false);
     let burn_subs = shared_storage.get_user_burn_subtitles(chat_id.0).await.unwrap_or(false);
+    let no_caption = shared_storage
+        .get_user_video_no_caption(chat_id.0)
+        .await
+        .unwrap_or(false);
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let mut keyboard_rows = vec![
@@ -339,6 +343,20 @@ pub async fn show_video_quality_menu(
         keyboard_rows.push(vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.burn_subtitles_button", &burn_args),
             "video:toggle_burn_subs",
+        )]);
+    }
+
+    // Video caption toggle (suppress `*artist* — _title_` under sent video).
+    {
+        let status = if no_caption {
+            i18n::t(&lang, "menu.video_no_caption_on")
+        } else {
+            i18n::t(&lang, "menu.video_no_caption_off")
+        };
+        let args = doracore::fluent_args!("status" => status);
+        keyboard_rows.push(vec![crate::telegram::cb(
+            i18n::t_args(&lang, "menu.video_no_caption_button", &args),
+            "video:toggle_no_caption",
         )]);
     }
 

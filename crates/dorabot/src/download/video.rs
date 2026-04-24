@@ -236,6 +236,13 @@ pub async fn download_and_send_video(
                 false
             };
 
+            // Get user preference: suppress caption on sent video (inline, clean for forwarding)
+            let suppress_caption = if let Some(ref storage) = shared_storage_clone {
+                storage.get_user_video_no_caption(chat_id.0).await.unwrap_or(false)
+            } else {
+                false
+            };
+
             // Split video if Local Bot API is used and file exceeds 1.9GB
             let final_file_size = fs::metadata(&actual_file_path).map(|m| m.len()).unwrap_or(0);
             metrics::record_file_size("mp4", final_file_size);
@@ -273,6 +280,7 @@ pub async fn download_and_send_video(
                     send_as_document,
                     message_id,
                     Some(artist.clone()),
+                    suppress_caption,
                 )
                 .await?;
 

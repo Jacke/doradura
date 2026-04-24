@@ -134,6 +134,11 @@ pub async fn handle_settings_callback(
         return Ok(true);
     }
 
+    if data == "video:toggle_no_caption" {
+        handle_settings_video_toggle_no_caption(bot, callback_id, chat_id, message_id, db_pool, shared_storage).await?;
+        return Ok(true);
+    }
+
     if data == "settings:toggle_experimental" {
         handle_settings_toggle_experimental(bot, callback_id).await?;
         return Ok(true);
@@ -756,6 +761,48 @@ async fn handle_settings_video_toggle_burn_subs(
 
     log::info!(
         "User {} toggled burn_subtitles: {} -> {}",
+        chat_id.0,
+        current_value,
+        new_value
+    );
+
+    show_video_quality_menu(
+        bot,
+        chat_id,
+        message_id,
+        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Handles `video:toggle_no_caption` — toggles per-user preference to
+/// suppress the Markdown caption when sending downloaded videos, then
+/// re-renders the quality menu so the updated status is visible.
+async fn handle_settings_video_toggle_no_caption(
+    bot: &Bot,
+    callback_id: &CallbackQueryId,
+    chat_id: ChatId,
+    message_id: teloxide::types::MessageId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    let _ = bot.answer_callback_query(callback_id.clone()).await;
+    let current_value = shared_storage
+        .get_user_video_no_caption(chat_id.0)
+        .await
+        .unwrap_or(false);
+    let new_value = !current_value;
+
+    shared_storage
+        .set_user_video_no_caption(chat_id.0, new_value)
+        .await
+        .map_err(db_err)?;
+
+    log::info!(
+        "User {} toggled video_no_caption: {} -> {}",
         chat_id.0,
         current_value,
         new_value

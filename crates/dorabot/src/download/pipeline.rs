@@ -802,6 +802,16 @@ pub async fn execute(
         false
     };
 
+    // Per-user toggle: suppress caption on sent video (applies only to Video format).
+    let suppress_video_caption = if let Some(storage) = shared_storage {
+        match format {
+            PipelineFormat::Video { .. } => storage.get_user_video_no_caption(chat_id.0).await.unwrap_or(false),
+            PipelineFormat::Audio { .. } => false,
+        }
+    } else {
+        false
+    };
+
     // Verify downloaded file exists before attempting send
     if !std::path::Path::new(&download_output.file_path).exists() {
         return Err(PipelineError::Operational(AppError::Download(
@@ -858,6 +868,7 @@ pub async fn execute(
                     send_as_document,
                     message_id,
                     Some(artist.clone()),
+                    suppress_video_caption,
                 )
                 .await
                 .map_err(PipelineError::Operational)?

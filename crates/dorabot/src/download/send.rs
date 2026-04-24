@@ -932,6 +932,7 @@ pub async fn send_audio_with_retry(
 /// # Returns
 ///
 /// Returns a tuple of (Message, file_size) on success, or an AppError on failure.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_video_with_retry(
     bot: &Bot,
     chat_id: ChatId,
@@ -942,6 +943,7 @@ pub async fn send_video_with_retry(
     send_as_document: bool,
     message_id: Option<i32>,
     artist: Option<String>,
+    suppress_caption: bool,
 ) -> Result<(Message, u64), AppError> {
     // Get video metadata for correct Telegram sending
     let video_metadata = probe_video_metadata(download_path).await;
@@ -1157,10 +1159,11 @@ pub async fn send_video_with_retry(
                 let title_for_doc = title_for_doc.clone();
                 async move {
                     let input_file = input_file_with_progress(&path, progress).await?;
-                    bot.send_document(chat_id, input_file)
-                        .caption(&title_for_doc)
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .await
+                    let mut req = bot.send_document(chat_id, input_file);
+                    if !suppress_caption {
+                        req = req.caption(&title_for_doc).parse_mode(ParseMode::MarkdownV2);
+                    }
+                    req.await
                 }
             },
             message_id,
@@ -1194,10 +1197,10 @@ pub async fn send_video_with_retry(
 
             async move {
                 let input_file = input_file_with_progress(&path, progress).await?;
-                let mut video_msg = bot
-                    .send_video(chat_id, input_file)
-                    .caption(&title_clone)
-                    .parse_mode(ParseMode::MarkdownV2);
+                let mut video_msg = bot.send_video(chat_id, input_file);
+                if !suppress_caption {
+                    video_msg = video_msg.caption(&title_clone).parse_mode(ParseMode::MarkdownV2);
+                }
 
                 // Add metadata for correct Telegram playback
                 if let Some(dur) = duration_clone {
