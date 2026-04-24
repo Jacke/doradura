@@ -144,6 +144,9 @@ pub fn update_task_status(conn: &DbConnection, task_id: &str, status: &str, erro
     Ok(())
 }
 
+/// Move a task from `processing` → `uploading` state. Used by the worker
+/// after the local download finishes and before pushing to Telegram.
+/// `worker_id` must match the lease holder.
 pub fn mark_task_uploading(conn: &DbConnection, task_id: &str, worker_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue
@@ -240,6 +243,10 @@ pub fn mark_task_processing(conn: &DbConnection, task_id: &str, worker_id: &str)
     Ok(())
 }
 
+/// Bump `lease_expires_at` on every task currently leased by `worker_id` by
+/// `lease_seconds` from now. Returns the number of leases refreshed.
+/// Called periodically by the worker loop to prevent the reaper from
+/// reclaiming an actively-held task.
 pub fn heartbeat_worker_leases(conn: &DbConnection, worker_id: &str, lease_seconds: i64) -> Result<usize> {
     conn.execute(
         "UPDATE task_queue
@@ -252,6 +259,8 @@ pub fn heartbeat_worker_leases(conn: &DbConnection, worker_id: &str, lease_secon
     )
 }
 
+/// Release a task back to the queue (e.g. graceful shutdown or retry).
+/// Resets state to `pending` and clears worker/lease columns.
 pub fn release_task(conn: &DbConnection, task_id: &str, worker_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue
@@ -271,6 +280,8 @@ pub fn release_task(conn: &DbConnection, task_id: &str, worker_id: &str) -> Resu
     Ok(())
 }
 
+/// Mark a task as `completed` and clear its lease. Worker calls this after
+/// successful upload to Telegram and DB write of the resulting download.
 pub fn mark_task_completed(conn: &DbConnection, task_id: &str, worker_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue
@@ -289,6 +300,8 @@ pub fn mark_task_completed(conn: &DbConnection, task_id: &str, worker_id: &str) 
     Ok(())
 }
 
+/// Mark a task as `failed` with an optional error message. Worker calls
+/// this when a non-retryable error occurs (or retry budget exhausted).
 pub fn mark_task_failed(
     conn: &DbConnection,
     task_id: &str,
@@ -365,6 +378,10 @@ pub fn reset_in_progress_tasks_at_startup(conn: &DbConnection) -> Result<usize> 
     )
 }
 
+/// Reaper: revert any task whose lease has expired (worker died mid-flight)
+/// back to `pending` so another worker can pick it up. Tasks that have
+/// exceeded `max_retries` are marked `failed` instead. Returns the count of
+/// tasks recovered.
 pub fn recover_expired_leases(conn: &DbConnection, max_retries: i32) -> Result<usize> {
     conn.execute(
         "UPDATE task_queue
@@ -394,6 +411,8 @@ pub fn recover_expired_leases(conn: &DbConnection, max_retries: i32) -> Result<u
     )
 }
 
+/// Count tasks currently in `pending` or `processing`/`uploading` state
+/// (i.e. work in progress, excluding completed/failed history).
 pub fn count_active_tasks(conn: &DbConnection) -> Result<usize> {
     conn.query_row(
         "SELECT COUNT(*) FROM task_queue WHERE status IN ('pending', 'leased', 'processing', 'uploading')",
@@ -402,6 +421,8 @@ pub fn count_active_tasks(conn: &DbConnection) -> Result<usize> {
     )
 }
 
+/// Return the user's position in the pending queue (1-indexed) or `None`
+/// if they have no pending tasks. Used by the "X-th in queue" UI hint.
 pub fn get_queue_position(conn: &DbConnection, user_id: i64) -> Result<Option<usize>> {
     let task = conn
         .query_row(
@@ -433,6 +454,8 @@ pub fn get_queue_position(conn: &DbConnection, user_id: i64) -> Result<Option<us
     Ok(Some(ahead + 1))
 }
 
+/// All `pending` tasks for a user, ordered by enqueue time (oldest first).
+/// Used by the admin UI and by the cancel-all-pending flow.
 pub fn get_pending_tasks_for_user(conn: &DbConnection, user_id: i64) -> Result<Vec<TaskQueueEntry>> {
     let sql = format!(
         "{} WHERE user_id = ?1
@@ -487,6 +510,10 @@ pub fn get_and_reset_recoverable_tasks(conn: &DbConnection) -> Result<Vec<TaskQu
     Ok(tasks)
 }
 
+/// Record that an `update_id` was successfully processed. Returns `true` if
+/// it was new (insert succeeded), `false` if already present (duplicate).
+/// Multi-instance dedup: prevents two bot replicas from acting on the same
+/// Telegram update.
 pub fn register_processed_update(conn: &DbConnection, bot_id: i64, update_id: i64) -> Result<bool> {
     let changed = conn.execute(
         "INSERT INTO processed_updates (bot_id, update_id) VALUES (?1, ?2)
@@ -508,6 +535,9 @@ pub fn cleanup_old_tasks(conn: &DbConnection, days: i64) -> Result<usize> {
     Ok(deleted)
 }
 
+/// Delete entries from `processed_updates` older than `hours`. Periodic
+/// cleanup keeps the dedup table small (typical retention: 24h). Returns
+/// rows deleted.
 pub fn cleanup_old_processed_updates(conn: &DbConnection, hours: i64) -> Result<usize> {
     conn.execute(
         "DELETE FROM processed_updates

@@ -8,6 +8,7 @@ menu =
     .language_button = 🌍 Langue
     .download_type_title = Choisis un format de téléchargement:\n\n*Format actuel: {$format}*
     .video_quality_title = Choisis la qualité vidéo:\n\n*Qualité actuelle: {$quality}*\n*Type d'envoi: {$send_type}*
+    .warning_highres = ⚠️ 2K/4K/8K — gros fichiers \(jusqu'à 20 Go\), 10–60 min\. Envoyés en document \(VP9/AV1\) — à ouvrir depuis l'app Telegram \(desktop ou mobile\)\.
     .audio_bitrate_title = Choisis le débit audio:\n\n*Débit actuel: {$bitrate}*\n*Type d'envoi: {$send_type}*
     .send_video_media = 📹 Envoi: Média ✓
     .send_video_document = 📄 Envoi: Document ✓

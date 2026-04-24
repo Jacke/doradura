@@ -118,8 +118,9 @@ pub async fn download_and_send_video(
         };
         let registry = bot_global();
 
-        // Global timeout for entire operation
-        let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {
+        // Global timeout for entire operation (scaled for 4K/8K which can run hours)
+        let global_dl_timeout = config::download::global_timeout_for_quality(video_quality.as_deref());
+        let result: Result<(), AppError> = match timeout(global_dl_timeout, async {
             // ── Phase 1: Download via pipeline ──
             let phase = pipeline::download_phase(
                 &bot_clone,
@@ -225,8 +226,14 @@ pub async fn download_and_send_video(
                 actual_file_path
             };
 
-            // Get user preference for send_as_document
-            let send_as_document = if let Some(ref storage) = shared_storage_clone {
+            // Get user preference for send_as_document.
+            //
+            // For 2K/4K/8K we force document mode regardless of user setting:
+            // Telegram's streamable video player struggles with >2 GB files and
+            // the VP9/AV1 codecs YouTube uses above 1080p aren't universally
+            // handled in-line — document delivery preserves original quality and
+            // lets the recipient's OS pick a native player.
+            let user_send_as_document = if let Some(ref storage) = shared_storage_clone {
                 storage
                     .get_user_send_as_document(chat_id.0)
                     .await
@@ -234,6 +241,17 @@ pub async fn download_and_send_video(
                     .unwrap_or(false)
             } else {
                 false
+            };
+            let send_as_document = if config::download::is_highres_quality(video_quality.as_deref()) {
+                if !user_send_as_document {
+                    log::info!(
+                        "Forcing document mode for high-res quality {:?} (user pref was video)",
+                        video_quality
+                    );
+                }
+                true
+            } else {
+                user_send_as_document
             };
 
             // Get user preference: suppress caption on sent video (inline, clean for forwarding)
@@ -502,13 +520,11 @@ pub async fn download_and_send_video(
         {
             Ok(inner) => inner,
             Err(_) => {
-                log::error!(
-                    "🚨 Video download timed out after {} seconds",
-                    config::download::GLOBAL_TIMEOUT_SECS
-                );
+                let secs = global_dl_timeout.as_secs();
+                log::error!("🚨 Video download timed out after {} seconds", secs);
                 Err(AppError::Download(DownloadError::Timeout(format!(
                     "Video upload timeout (exceeded {} minutes)",
-                    config::download::GLOBAL_TIMEOUT_SECS / 60
+                    secs / 60
                 ))))
             }
         };

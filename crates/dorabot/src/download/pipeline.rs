@@ -27,10 +27,48 @@ use crate::storage::db::{self as db, DbPool};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use anyhow::Context;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use teloxide::prelude::*;
 use teloxide::types::Message;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::Url;
+
+/// Global cap on concurrent high-res (2K/4K/8K) video downloads.
+///
+/// A single 8K job holds a worker for 30+ minutes and consumes 20+ GB of disk
+/// through a throttled proxy. Without this cap, a handful of concurrent 4K/8K
+/// requests would starve the queue and exhaust disk. Regular ≤1080p downloads
+/// run unthrottled on the main queue's concurrency budget.
+static HIGHRES_DOWNLOAD_SEMAPHORE: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(1)));
+
+/// Disk-space multiplier over estimated filesize for high-res downloads.
+/// 3× covers the original file, the ffmpeg split intermediate, and headroom.
+const HIGHRES_DISK_MULTIPLIER: u64 = 3;
+
+/// Floor for the required free-space check regardless of estimated size.
+const HIGHRES_MIN_DISK_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+/// Acquire a permit from the high-res semaphore if the format is 4K/8K.
+/// Returns `Some(permit)` on success; the permit must be held for the full
+/// download+send lifetime.
+async fn acquire_highres_permit_if_needed(format: &PipelineFormat) -> Option<OwnedSemaphorePermit> {
+    if !config::download::is_highres_quality(pipeline_video_quality(format)) {
+        return None;
+    }
+    let sem = Arc::clone(&HIGHRES_DOWNLOAD_SEMAPHORE);
+    log::info!(
+        "High-res download requested (quality={:?}) — waiting for concurrency slot",
+        pipeline_video_quality(format)
+    );
+    sem.acquire_owned().await.ok()
+}
+
+fn pipeline_video_quality(format: &PipelineFormat) -> Option<&str> {
+    match format {
+        PipelineFormat::Video { quality, .. } => quality.as_deref(),
+        PipelineFormat::Audio { .. } => None,
+    }
+}
 
 /// Apply speed modification to a downloaded media file using ffmpeg.
 /// Replaces the original file in-place.
@@ -122,10 +160,17 @@ pub enum PipelineFormat {
 
 impl PipelineFormat {
     /// Returns the file extension for this format.
+    ///
+    /// Video quality 1440p/2160p/4320p (2K/4K/8K) uses `mkv` because YouTube
+    /// only serves H.264 up to 1080p — 4K/8K require AV1/VP9 which mux cleanly
+    /// into Matroska. Everything else uses `mp4`.
     pub fn extension(&self) -> &str {
         match self {
             PipelineFormat::Audio { .. } => "mp3",
-            PipelineFormat::Video { .. } => "mp4",
+            PipelineFormat::Video { quality, .. } => match quality.as_deref() {
+                Some("1440p") | Some("2160p") | Some("4320p") => "mkv",
+                _ => "mp4",
+            },
         }
     }
 
@@ -306,6 +351,34 @@ pub async fn download_phase(
         return Err(PipelineError::PreCheck("Insufficient disk space".to_string()));
     }
 
+    // High-res (2K/4K/8K) needs far more free space than the default 500 MB
+    // check. Require HIGHRES_MIN_DISK_BYTES (8 GB) — the ytdlp estimate comes
+    // later (Step 4b) and refines this if available.
+    if config::download::is_highres_quality(pipeline_video_quality(format)) {
+        if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER) {
+            if info.available_bytes < HIGHRES_MIN_DISK_BYTES {
+                log::error!(
+                    "High-res precheck: only {:.2} GB free, need {:.2} GB",
+                    info.available_gb(),
+                    HIGHRES_MIN_DISK_BYTES as f64 / (1024.0 * 1024.0 * 1024.0),
+                );
+                send_error_with_sticker_and_message(
+                    bot,
+                    chat_id,
+                    Some("❌ Not enough free disk space for 4K/8K. Try lower quality."),
+                )
+                .await;
+                return Err(PipelineError::PreCheck(
+                    "Insufficient disk space for high-res download".to_string(),
+                ));
+            }
+        }
+    }
+
+    // High-res concurrency slot — held for the full download+send via `_highres_permit`.
+    // Regular ≤1080p video and audio downloads skip this and share the main queue budget.
+    let _highres_permit = acquire_highres_permit_if_needed(format).await;
+
     // Livestream check
     // Experimental features graduated to main workflow — always try cache first (~0ms),
     // fall back to full yt-dlp check on cache miss.
@@ -395,6 +468,30 @@ pub async fn download_phase(
                     )
                     .await;
                 return Err(PipelineError::PreCheck(format!("File too large: ~{:.2} MB", size_mb)));
+            }
+
+            // Refined disk-space check for high-res: require 3× estimated size.
+            if config::download::is_highres_quality(pipeline_video_quality(format)) {
+                let required = (estimated_size * HIGHRES_DISK_MULTIPLIER).max(HIGHRES_MIN_DISK_BYTES);
+                if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER) {
+                    if info.available_bytes < required {
+                        let required_gb = required as f64 / (1024.0 * 1024.0 * 1024.0);
+                        let avail_gb = info.available_gb();
+                        log::error!(
+                            "High-res disk check failed: need {:.1} GB, have {:.1} GB",
+                            required_gb,
+                            avail_gb
+                        );
+                        let msg = format!(
+                            "❌ Not enough disk space for this download: need ~{:.1} GB, have {:.1} GB. Try lower quality.",
+                            required_gb, avail_gb
+                        );
+                        send_error_with_sticker_and_message(bot, chat_id, Some(&msg)).await;
+                        return Err(PipelineError::PreCheck(
+                            "Insufficient disk space for high-res".to_string(),
+                        ));
+                    }
+                }
             }
         }
     } // end !has_time_range && video

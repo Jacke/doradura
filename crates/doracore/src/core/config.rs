@@ -259,6 +259,40 @@ pub mod download {
     pub fn global_timeout() -> Duration {
         Duration::from_secs(GLOBAL_TIMEOUT_SECS)
     }
+
+    /// Quality-aware global timeout for video downloads.
+    ///
+    /// 4K/8K files can be 5–20 GB through a throttled proxy, so they need far
+    /// more than the default 15 minutes. Audio and ≤1080p video keep the base
+    /// timeout to fail fast on hung downloads.
+    pub fn global_timeout_for_quality(video_quality: Option<&str>) -> Duration {
+        match video_quality {
+            Some("4320p") => Duration::from_secs(7200), // 2 h
+            Some("2160p") => Duration::from_secs(3600), // 1 h
+            Some("1440p") => Duration::from_secs(1800), // 30 min
+            _ => global_timeout(),
+        }
+    }
+
+    /// Quality-aware yt-dlp subprocess timeout for the download phase.
+    ///
+    /// Distinct from [`ytdlp_timeout`], which stays at 4 min for metadata /
+    /// preview fetches. The download subprocess needs to be generous for
+    /// high-res; the default covers audio + ≤1080p video.
+    pub fn ytdlp_download_timeout_for_quality(video_quality: Option<&str>) -> Duration {
+        match video_quality {
+            Some("4320p") => Duration::from_secs(7200),
+            Some("2160p") => Duration::from_secs(3600),
+            Some("1440p") => Duration::from_secs(1800),
+            _ => Duration::from_secs(1200), // 20 min — safe default for any ≤1080p
+        }
+    }
+
+    /// Returns `true` if this quality needs the high-resolution code path
+    /// (AV1/VP9 codecs, mkv container, larger timeouts, document-mode send).
+    pub fn is_highres_quality(video_quality: Option<&str>) -> bool {
+        matches!(video_quality, Some("1440p") | Some("2160p") | Some("4320p"))
+    }
 }
 
 /// Retry configuration

@@ -8,6 +8,7 @@ menu =
     .language_button = 🌍 Язык
     .download_type_title = Выбери формат для скачивания:\n\n*Текущий формат: {$format}*
     .video_quality_title = Выбери качество видео:\n\n*Текущее качество: {$quality}*\n*Тип отправки: {$send_type}*
+    .warning_highres = ⚠️ 2K/4K/8K — большие файлы \(до 20 GB\), качаются 10–60 мин\. Присылаю документом \(VP9/AV1\) — открывай в Telegram Desktop или в мобильном приложении\.
     .audio_bitrate_title = Выбери битрейт для аудио:\n\n*Текущий битрейт: {$bitrate}*\n*Тип отправки: {$send_type}*
     .send_video_media = 📹 Отправка: Медиа ✓
     .send_video_document = 📄 Отправка: Документ ✓

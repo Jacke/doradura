@@ -697,6 +697,30 @@ pub fn build_telegram_safe_format(requested_height: Option<u32>) -> String {
     parts.join("/")
 }
 
+/// Builds a yt-dlp format string for high-resolution video (1440p/2160p/4320p).
+///
+/// YouTube serves H.264 (avc1) only up to 1080p, so for 2K/4K/8K we must accept
+/// AV1 or VP9. Falls back to 1080p H.264 (via [`build_telegram_safe_format`]) if
+/// the requested resolution is unavailable, ensuring the user still receives a
+/// video rather than an error.
+///
+/// The output container should be `mkv` (pass `--merge-output-format mkv` to
+/// yt-dlp) so AV1/VP9 video + AAC audio can be muxed without re-encoding.
+pub fn build_highres_format(requested_height: u32) -> String {
+    let filt = format!("[height<={}]", requested_height);
+    let mut parts: Vec<String> = Vec::new();
+
+    parts.push(format!("bv*{filt}[vcodec^=av01]+ba[acodec^=mp4a]"));
+    parts.push(format!("bv*{filt}[vcodec^=av01]+ba"));
+    parts.push(format!("bv*{filt}[vcodec^=vp9]+ba[acodec^=mp4a]"));
+    parts.push(format!("bv*{filt}[vcodec^=vp9]+ba"));
+    parts.push(format!("bv*{filt}+ba"));
+
+    parts.push(build_telegram_safe_format(Some(1080)));
+
+    parts.join("/")
+}
+
 /// Finds the actual downloaded file path after a yt-dlp download.
 ///
 /// yt-dlp may append suffixes like `(1).mp4`, `(2).mp4` when a file already exists,

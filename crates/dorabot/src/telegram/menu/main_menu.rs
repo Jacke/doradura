@@ -44,6 +44,9 @@ pub async fn show_main_menu(
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
+        "4320p" => "🎬 8K",
+        "2160p" => "🎬 4K",
+        "1440p" => "🎬 2K",
         "1080p" => "🎬 1080p",
         "720p" => "🎬 720p",
         "480p" => "🎬 480p",
@@ -149,6 +152,9 @@ pub(crate) async fn edit_main_menu(
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
+        "4320p" => "🎬 8K",
+        "2160p" => "🎬 4K",
+        "1440p" => "🎬 2K",
         "1080p" => "🎬 1080p",
         "720p" => "🎬 720p",
         "480p" => "🎬 480p",
@@ -236,6 +242,9 @@ pub async fn send_main_menu_as_new(
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
+        "4320p" => "🎬 8K",
+        "2160p" => "🎬 4K",
+        "1440p" => "🎬 2K",
         "1080p" => "🎬 1080p",
         "720p" => "🎬 720p",
         "480p" => "🎬 480p",
@@ -344,6 +353,9 @@ pub async fn show_enhanced_main_menu(
     // Quality or bitrate line based on format
     let quality_line = if format == "mp4" {
         let quality_display = match video_quality.as_str() {
+            "4320p" => "8K",
+            "2160p" => "4K",
+            "1440p" => "2K",
             "1080p" => "1080p",
             "720p" => "720p",
             "480p" => "480p",
@@ -403,6 +415,9 @@ pub(crate) async fn edit_enhanced_main_menu(
 
     let quality_line = if format == "mp4" {
         let quality_display = match video_quality.as_str() {
+            "4320p" => "8K",
+            "2160p" => "4K",
+            "1440p" => "2K",
             "1080p" => "1080p",
             "720p" => "720p",
             "480p" => "480p",
@@ -473,6 +488,9 @@ pub(crate) async fn show_current_settings_detail(
 
     let quality_line = if format == "mp4" || format == "mp4+mp3" {
         let quality_display = match video_quality.as_str() {
+            "4320p" => "8K",
+            "2160p" => "4K",
+            "1440p" => "2K",
             "1080p" => "1080p",
             "720p" => "720p",
             "480p" => "480p",

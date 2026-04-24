@@ -297,6 +297,8 @@ pub struct AudioCutSession {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Insert or replace an audio-cut session. Drops any existing session for the
+/// same user before inserting so each user has at most one active session.
 pub fn upsert_audio_cut_session(conn: &DbConnection, session: &AudioCutSession) -> Result<()> {
     conn.execute("DELETE FROM audio_cut_sessions WHERE user_id = ?1", [session.user_id])?;
     conn.execute(
@@ -314,6 +316,7 @@ pub fn upsert_audio_cut_session(conn: &DbConnection, session: &AudioCutSession) 
     Ok(())
 }
 
+/// Fetch the user's active (non-expired) audio-cut session, if any.
 pub fn get_active_audio_cut_session(conn: &DbConnection, user_id: i64) -> Result<Option<AudioCutSession>> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut stmt = conn.prepare(
@@ -340,6 +343,7 @@ pub fn get_active_audio_cut_session(conn: &DbConnection, user_id: i64) -> Result
     }
 }
 
+/// Delete the user's audio-cut session (used when the user cancels or completes).
 pub fn delete_audio_cut_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
     conn.execute("DELETE FROM audio_cut_sessions WHERE user_id = ?1", [user_id])?;
     Ok(())
@@ -373,6 +377,9 @@ impl OutputKind {
         self.into()
     }
 
+    /// Parse a stored DB string back into `OutputKind`. Falls back to `Cut`
+    /// for unknown values (forward-compatibility — older rows without newer
+    /// variants stay readable).
     pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "video_note" => Self::VideoNote,
@@ -400,6 +407,8 @@ impl SourceKind {
         self.into()
     }
 
+    /// Parse a stored DB string back into `SourceKind`. Falls back to
+    /// `Download` for unknown values.
     pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "cut" => Self::Cut,
@@ -423,6 +432,8 @@ pub struct VideoClipSession {
     pub custom_audio_file_id: Option<String>,
 }
 
+/// Insert or replace a video-clip session for cut/circle/ringtone/loop
+/// flows. Drops any existing session for the same user before inserting.
 pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession) -> Result<()> {
     conn.execute("DELETE FROM video_clip_sessions WHERE user_id = ?1", [session.user_id])?;
     conn.execute(
@@ -446,6 +457,7 @@ pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession
     Ok(())
 }
 
+/// Fetch the user's active (non-expired) video-clip session, if any.
 pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Result<Option<VideoClipSession>> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut stmt = conn.prepare(
@@ -487,6 +499,7 @@ pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Resul
     }
 }
 
+/// Delete the user's video-clip session (cancellation or completion).
 pub fn delete_video_clip_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
     conn.execute("DELETE FROM video_clip_sessions WHERE user_id = ?1", [user_id])?;
     Ok(())
@@ -503,6 +516,8 @@ pub struct CookiesUploadSession {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Insert or replace a YouTube cookies-upload session. Drops any existing
+/// session for the same user. Caller checks expiry separately.
 pub fn upsert_cookies_upload_session(conn: &DbConnection, session: &CookiesUploadSession) -> Result<()> {
     conn.execute(
         "DELETE FROM cookies_upload_sessions WHERE user_id = ?1",
@@ -521,6 +536,7 @@ pub fn upsert_cookies_upload_session(conn: &DbConnection, session: &CookiesUploa
     Ok(())
 }
 
+/// Fetch the user's active (non-expired) YouTube cookies-upload session.
 pub fn get_active_cookies_upload_session(conn: &DbConnection, user_id: i64) -> Result<Option<CookiesUploadSession>> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut stmt = conn.prepare(
@@ -546,6 +562,7 @@ pub fn get_active_cookies_upload_session(conn: &DbConnection, user_id: i64) -> R
     }
 }
 
+/// Delete the user's YouTube cookies-upload session.
 pub fn delete_cookies_upload_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
     conn.execute("DELETE FROM cookies_upload_sessions WHERE user_id = ?1", [user_id])?;
     Ok(())
@@ -553,6 +570,9 @@ pub fn delete_cookies_upload_session_by_user(conn: &DbConnection, user_id: i64) 
 
 // ==================== Instagram Cookies Upload Sessions ====================
 
+/// Instagram-specific variant of `upsert_cookies_upload_session`. Stored in
+/// a separate table to allow YouTube + Instagram cookies to be uploaded in
+/// parallel without overwriting each other's pending sessions.
 pub fn upsert_ig_cookies_upload_session(conn: &DbConnection, session: &CookiesUploadSession) -> Result<()> {
     conn.execute(
         "DELETE FROM ig_cookies_upload_sessions WHERE user_id = ?1",
@@ -571,6 +591,7 @@ pub fn upsert_ig_cookies_upload_session(conn: &DbConnection, session: &CookiesUp
     Ok(())
 }
 
+/// Fetch the user's active Instagram cookies-upload session.
 pub fn get_active_ig_cookies_upload_session(conn: &DbConnection, user_id: i64) -> Result<Option<CookiesUploadSession>> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut stmt = conn.prepare(
@@ -597,6 +618,7 @@ pub fn get_active_ig_cookies_upload_session(conn: &DbConnection, user_id: i64) -
     }
 }
 
+/// Delete the user's Instagram cookies-upload session.
 pub fn delete_ig_cookies_upload_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
     conn.execute("DELETE FROM ig_cookies_upload_sessions WHERE user_id = ?1", [user_id])?;
     Ok(())

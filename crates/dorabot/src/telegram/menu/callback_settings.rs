@@ -682,7 +682,7 @@ async fn handle_settings_quality(
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     let _ = bot.answer_callback_query(callback_id.clone()).await;
-    const VALID_QUALITIES: &[&str] = &["best", "1080p", "720p", "480p", "360p"];
+    const VALID_QUALITIES: &[&str] = &["best", "4320p", "2160p", "1440p", "1080p", "720p", "480p", "360p"];
     if !VALID_QUALITIES.contains(&quality) {
         log::warn!("Rejected invalid quality value from user {}: {:?}", chat_id.0, quality);
         return Ok(());

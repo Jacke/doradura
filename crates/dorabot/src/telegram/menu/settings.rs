@@ -274,6 +274,35 @@ pub async fn show_video_quality_menu(
     let mut keyboard_rows = vec![
         vec![
             crate::telegram::cb(
+                if current_quality == "4320p" {
+                    "🎬 8K (4320p) ✓"
+                } else {
+                    "🎬 8K (4320p)"
+                }
+                .to_string(),
+                "quality:4320p",
+            ),
+            crate::telegram::cb(
+                if current_quality == "2160p" {
+                    "🎬 4K (2160p) ✓"
+                } else {
+                    "🎬 4K (2160p)"
+                }
+                .to_string(),
+                "quality:2160p",
+            ),
+        ],
+        vec![crate::telegram::cb(
+            if current_quality == "1440p" {
+                "🎬 2K (1440p) ✓"
+            } else {
+                "🎬 2K (1440p)"
+            }
+            .to_string(),
+            "quality:1440p",
+        )],
+        vec![
+            crate::telegram::cb(
                 if current_quality == "1080p" {
                     "🎬 1080p (Full HD) ✓"
                 } else {
@@ -368,6 +397,9 @@ pub async fn show_video_quality_menu(
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
     let quality_display = match current_quality.as_str() {
+        "4320p" => "🎬 8K (4320p)",
+        "2160p" => "🎬 4K (2160p)",
+        "1440p" => "🎬 2K (1440p)",
         "1080p" => "🎬 1080p (Full HD)",
         "720p" => "🎬 720p (HD)",
         "480p" => "🎬 480p (SD)",
@@ -384,14 +416,12 @@ pub async fn show_video_quality_menu(
     let escaped_quality = escape_markdown(quality_display);
     let escaped_send_type = escape_markdown(&send_type_display);
     let args = doracore::fluent_args!("quality" => escaped_quality.clone(), "send_type" => escaped_send_type.clone());
-    edit_caption_or_text(
-        bot,
-        chat_id,
-        message_id,
-        i18n::t_args(&lang, "menu.video_quality_title", &args),
-        Some(keyboard),
-    )
-    .await?;
+    let mut body = i18n::t_args(&lang, "menu.video_quality_title", &args);
+    if matches!(current_quality.as_str(), "4320p" | "2160p" | "1440p") {
+        body.push_str("\n\n");
+        body.push_str(&i18n::t(&lang, "menu.warning_highres"));
+    }
+    edit_caption_or_text(bot, chat_id, message_id, body, Some(keyboard)).await?;
     Ok(())
 }
 

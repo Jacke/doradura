@@ -14,7 +14,7 @@ use crate::download::cookies::report_and_wait_for_refresh;
 use crate::download::downloader::{cleanup_partial_download, parse_progress};
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
-    add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args,
+    add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, build_highres_format,
     build_telegram_safe_format, default_pot_token, default_youtube_extractor_args, find_actual_downloaded_file,
     get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
 };
@@ -83,11 +83,15 @@ fn push_audio_format_args(args: &mut Vec<&str>, with_thumbnail: bool) {
 
 /// Push the video-specific prefix args (Tier 1 / Tier 2 shape — Tier 3
 /// drops the `--postprocessor-args Merger:...` pair).
-fn push_video_format_args(args: &mut Vec<&str>, with_merger_postprocessor: bool) {
+///
+/// `container` is the yt-dlp `--merge-output-format` value — `"mp4"` for
+/// H.264/AAC downloads, `"mkv"` for AV1/VP9 (4K/8K where YouTube has no H.264).
+/// The `+faststart` Merger postprocessor is mp4-specific and is skipped for mkv.
+fn push_video_format_args(args: &mut Vec<&str>, with_merger_postprocessor: bool, container: &'static str) {
     args.push("--format");
     args.push("--merge-output-format");
-    args.push("mp4");
-    if with_merger_postprocessor {
+    args.push(container);
+    if with_merger_postprocessor && container == "mp4" {
         args.push("--postprocessor-args");
         args.push("Merger:-movflags +faststart");
     }
@@ -229,6 +233,7 @@ impl YtDlpSource {
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
 
+        let subprocess_timeout = config::download::ytdlp_download_timeout_for_quality(None);
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
 
@@ -238,6 +243,7 @@ impl YtDlpSource {
                 &download_path,
                 &progress_tx,
                 "audio",
+                subprocess_timeout,
                 move |args, proxy_option| {
                     push_audio_format_args(args, true);
                     if is_youtube {
@@ -322,20 +328,23 @@ impl YtDlpSource {
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
 
-        let format_arg = match request.video_quality.as_deref() {
-            Some("4320p") => build_telegram_safe_format(Some(4320)),
-            Some("2160p") => build_telegram_safe_format(Some(2160)),
-            Some("1440p") => build_telegram_safe_format(Some(1440)),
-            Some("1080p") => build_telegram_safe_format(Some(1080)),
-            Some("720p") => build_telegram_safe_format(Some(720)),
-            Some("480p") => build_telegram_safe_format(Some(480)),
-            Some("360p") => build_telegram_safe_format(Some(360)),
-            Some("240p") => build_telegram_safe_format(Some(240)),
-            Some("144p") => build_telegram_safe_format(Some(144)),
-            _ => build_telegram_safe_format(None),
+        // High-resolution (4K/8K) requires AV1/VP9 codecs — YouTube has no H.264
+        // above 1080p. Switch format-string builder + container accordingly.
+        let (format_arg, container): (String, &'static str) = match request.video_quality.as_deref() {
+            Some("4320p") => (build_highres_format(4320), "mkv"),
+            Some("2160p") => (build_highres_format(2160), "mkv"),
+            Some("1440p") => (build_highres_format(1440), "mkv"),
+            Some("1080p") => (build_telegram_safe_format(Some(1080)), "mp4"),
+            Some("720p") => (build_telegram_safe_format(Some(720)), "mp4"),
+            Some("480p") => (build_telegram_safe_format(Some(480)), "mp4"),
+            Some("360p") => (build_telegram_safe_format(Some(360)), "mp4"),
+            Some("240p") => (build_telegram_safe_format(Some(240)), "mp4"),
+            Some("144p") => (build_telegram_safe_format(Some(144)), "mp4"),
+            _ => (build_telegram_safe_format(None), "mp4"),
         };
-        log::debug!("yt-dlp video format string: {}", format_arg);
+        log::debug!("yt-dlp video format string ({}): {}", container, format_arg);
 
+        let subprocess_timeout = config::download::ytdlp_download_timeout_for_quality(request.video_quality.as_deref());
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(
                 &ytdl_bin,
@@ -343,8 +352,9 @@ impl YtDlpSource {
                 &download_path,
                 &progress_tx,
                 "video",
+                subprocess_timeout,
                 move |args, proxy_option| {
-                    push_video_format_args(args, true);
+                    push_video_format_args(args, true, container);
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
@@ -360,7 +370,7 @@ impl YtDlpSource {
                     let url_for_tier2 = url_str.clone();
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
                         // Tier 2 (cookies + PO token)
-                        push_video_format_args(args, true);
+                        push_video_format_args(args, true, container);
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
@@ -375,7 +385,7 @@ impl YtDlpSource {
                     // Tier 3 (fixup never): same client logic as tier 2
                     args.push("--fixup");
                     args.push("never");
-                    push_video_format_args(args, false);
+                    push_video_format_args(args, false, container);
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
                     args.push(default_youtube_extractor_args());
@@ -396,11 +406,17 @@ impl YtDlpSource {
 
         let duration = probe_duration_seconds(&actual_path).await;
 
+        let mime = if actual_path.ends_with(".mkv") {
+            "video/x-matroska"
+        } else {
+            "video/mp4"
+        };
+
         Ok(DownloadOutput {
             file_path: actual_path,
             duration_secs: duration,
             file_size,
-            mime_hint: Some("video/mp4".to_string()),
+            mime_hint: Some(mime.to_string()),
             additional_files: None,
         })
     }
@@ -435,6 +451,7 @@ fn try_tier1<F>(
     proxy_option: Option<&crate::download::metadata::ProxyConfig>,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier1_args_fn: &F,
+    subprocess_timeout: Duration,
 ) -> Result<(), (YtDlpErrorType, String)>
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -467,7 +484,7 @@ where
         ytdl_bin,
         args.join(" ")
     );
-    let result = run_ytdlp_with_progress(ytdl_bin, &args, progress_tx);
+    let result = run_ytdlp_with_progress(ytdl_bin, &args, progress_tx, subprocess_timeout);
 
     if let Some(path) = info_json_path {
         let _ = fs_err::remove_file(&path);
@@ -493,6 +510,7 @@ fn try_tier2<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier2_args_fn: &F,
     runtime_handle: &tokio::runtime::Handle,
+    subprocess_timeout: Duration,
 ) -> Tier2Outcome
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -518,7 +536,7 @@ where
         media_type
     );
 
-    match run_ytdlp_with_progress(ytdl_bin, &cookies_args, progress_tx) {
+    match run_ytdlp_with_progress(ytdl_bin, &cookies_args, progress_tx, subprocess_timeout) {
         Ok(()) => {
             log::info!("✅ [WITH_COOKIES] {} download succeeded!", media_type);
             return Tier2Outcome::Success;
@@ -576,6 +594,7 @@ fn try_tier3<F>(
     proxy_option: Option<&crate::download::metadata::ProxyConfig>,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier3_args_fn: &F,
+    subprocess_timeout: Duration,
 ) -> bool
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -601,7 +620,7 @@ where
         media_type
     );
 
-    match run_ytdlp_with_progress(ytdl_bin, &fixup_args, progress_tx) {
+    match run_ytdlp_with_progress(ytdl_bin, &fixup_args, progress_tx, subprocess_timeout) {
         Ok(()) => {
             log::info!("✅ [FIXUP_NEVER] {} download succeeded!", media_type);
             true
@@ -628,6 +647,7 @@ fn download_with_fallback_chain<F1, F2, F3>(
     download_path: &str,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     media_type: &str,
+    subprocess_timeout: Duration,
     tier1_args_fn: F1,
     tier2_args_fn: F2,
     tier3_args_fn: F3,
@@ -689,6 +709,7 @@ where
             proxy_option.as_ref(),
             progress_tx,
             &tier1_args_fn,
+            subprocess_timeout,
         );
         log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
 
@@ -770,6 +791,7 @@ where
                         progress_tx,
                         &tier2_args_fn,
                         &runtime_handle,
+                        subprocess_timeout,
                     );
                     log::info!("⏱️ [TIER2] done in {:.1}s", tier2_start.elapsed().as_secs_f64());
                     match tier2_result {
@@ -803,6 +825,7 @@ where
                         proxy_option.as_ref(),
                         progress_tx,
                         &tier3_args_fn,
+                        subprocess_timeout,
                     );
                     crate::core::metrics::record_tier_attempt("tier3_fixup_never", tier3_ok);
                     if tier3_ok {
@@ -1030,7 +1053,7 @@ mod common_args_tests {
     fn video_format_args_with_merger_match_tier1_2() {
         // Tier 1/2 video: --format followed by the Merger postprocessor pair.
         let mut args: Vec<&str> = Vec::new();
-        push_video_format_args(&mut args, true);
+        push_video_format_args(&mut args, true, "mp4");
         assert_eq!(
             args,
             vec![
@@ -1047,8 +1070,16 @@ mod common_args_tests {
     fn video_format_args_without_merger_match_tier3() {
         // Tier 3 video: no Merger postprocessor.
         let mut args: Vec<&str> = Vec::new();
-        push_video_format_args(&mut args, false);
+        push_video_format_args(&mut args, false, "mp4");
         assert_eq!(args, vec!["--format", "--merge-output-format", "mp4"]);
+    }
+
+    #[test]
+    fn video_format_args_mkv_skips_faststart() {
+        // High-res (mkv container) must skip the mp4-specific faststart Merger arg.
+        let mut args: Vec<&str> = Vec::new();
+        push_video_format_args(&mut args, true, "mkv");
+        assert_eq!(args, vec!["--format", "--merge-output-format", "mkv"]);
     }
 }
 
@@ -1059,6 +1090,7 @@ fn run_ytdlp_with_progress(
     ytdl_bin: &str,
     args: &[&str],
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
+    subprocess_timeout: Duration,
 ) -> Result<(), (YtDlpErrorType, String)> {
     let ytdlp_start = std::time::Instant::now();
     let child_result = Command::new(ytdl_bin)
@@ -1127,7 +1159,7 @@ fn run_ytdlp_with_progress(
     }
 
     // Wait for the process with a timeout
-    let ytdlp_timeout = config::download::ytdlp_timeout();
+    let ytdlp_timeout = subprocess_timeout;
     let deadline = std::time::Instant::now() + ytdlp_timeout;
     let status = loop {
         match child.try_wait() {
