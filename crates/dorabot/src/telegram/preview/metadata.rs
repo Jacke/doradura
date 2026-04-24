@@ -59,8 +59,14 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
         ];
 
         if is_youtube {
-            // YouTube: use cookies from the start (datacenter IPs are flagged)
-            args.extend_from_slice(&["--extractor-args", "youtube:player_client=web,web_safari"]);
+            // YouTube: use cookies from the start (datacenter IPs are flagged).
+            //
+            // `default` client lets yt-dlp pick the full client chain (currently
+            // tv + web + ios) so 1440p/2160p/4320p formats are returned. The
+            // earlier `web,web_safari`-only override silently capped previews at
+            // 1080p because the web client doesn't expose AV1/VP9 high-res
+            // streams. `web_safari` kept as a fallback for cookie-flagged paths.
+            args.extend_from_slice(&["--extractor-args", "youtube:player_client=default,web_safari"]);
             add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), default_pot_token());
         } else {
             // Other sites: try without cookies first
@@ -161,9 +167,11 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
                 cookies_args.push("deno");
                 add_instagram_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
             } else {
-                // YouTube/other: use YT cookies + PO Token
+                // YouTube/other: use YT cookies + PO Token. `default` client
+                // exposes the tv+web+ios chain so 1440p/2160p/4320p formats
+                // appear in previews; web alone caps at 1080p.
                 cookies_args.push("--extractor-args");
-                cookies_args.push("youtube:player_client=web,web_safari");
+                cookies_args.push("youtube:player_client=default,web_safari");
                 cookies_args.push("--js-runtimes");
                 cookies_args.push("deno");
                 add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref(), default_pot_token());

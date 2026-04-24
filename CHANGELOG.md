@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Preview metadata: switch YouTube `player_client` from `web,web_safari` → `default,web_safari` to expose 1440p/2160p/4320p** (v0.41.1) — `crates/dorabot/src/telegram/preview/metadata.rs:63,172`. The v0.41.0 download path correctly emits AV1/VP9 high-res formats via `build_highres_format`, but **previews still showed only 1080p as the highest option** for 4K/8K-source videos (user report on Gorillaz "Feel Good Inc [8K Remastered]"). Root cause: the preview metadata fetch passed `youtube:player_client=web,web_safari` which silently caps the returned `formats[]` at 1080p — the modern `tv` client (part of yt-dlp's `default` chain) is what exposes the 1440/2160/4320 streams. Replaced both call sites (no-cookies branch + WITH_COOKIES retry branch) with `youtube:player_client=default,web_safari`. yt-dlp now returns 12 height tiers (27/45/90/144/240/360/480/720/1080/1440/2160/4320) instead of 9 capped at 1080p; preview keyboards display 8K/4K/2K rows when the source has them. 568 dorabot lib tests green; cargo clippy `-D warnings` clean.
+
 ### Added
 - **2K / 4K / 8K video download support** (v0.41.0 / doracore 0.25.0). YouTube serves H.264 only up to 1080p — all higher resolutions require AV1 or VP9. The existing `build_telegram_safe_format` hard-codes `[vcodec^=avc1]` at every height, so the pre-existing `4320p`/`2160p`/`1440p` match arms in `source/ytdlp.rs` silently fell back to 1080p H.264. Six-part fix:
   - `doracore::download::metadata::build_highres_format(height)` — new builder that prefers AV1 + AAC, then VP9 + AAC, then any codec at the target height, finally falling back to `build_telegram_safe_format(Some(1080))` so unavailable 8K degrades to 1080p H.264 instead of erroring.
