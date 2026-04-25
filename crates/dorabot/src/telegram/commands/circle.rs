@@ -1114,9 +1114,15 @@ pub async fn process_video_clip(
     );
 
     // Probe source resolution for adaptive encoder preset.
-    // 4K/8K source needs `slow` preset for max quality on the small Telegram
+    // 4K/8K source needs `medium` preset for max quality on the small Telegram
     // viewport; everything ≤1080p stays on `fast` for speed (4× faster) since
     // small-source → 640 downscale doesn't benefit from slower preset.
+    //
+    // We previously used `slow` here, but on Railway's 1–2 vCPU / limited-RAM
+    // workers ffmpeg got SIGKILL'd by the OOM reaper on 4K/8K input — and
+    // since the failure path retries with a video-only filter, the user got
+    // back a circle with no audio. `medium` keeps quality nearly identical at
+    // CRF 18 + lanczos while using ~2–3× less memory and CPU time.
     let source_is_highres = if has_video && is_video_note {
         let path_str = actual_input_path.to_string_lossy().to_string();
         matches!(
@@ -1127,7 +1133,7 @@ pub async fn process_video_clip(
         false
     };
     if source_is_highres {
-        log::info!("🎬 High-res source detected (height ≥ 1440) — using preset=slow for circle");
+        log::info!("🎬 High-res source detected (height ≥ 1440) — using preset=medium for circle");
     }
 
     log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
@@ -1195,9 +1201,10 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg("1:a");
         // No speed modification on custom audio - user chose specific audio.
         // Adaptive preset (mirrors no-custom-audio branch below):
-        //   high-res source → `slow` for maximum quality on Telegram viewport
+        //   high-res source → `medium` for maximum quality on Telegram viewport
+        //                     without OOM-killing ffmpeg on Railway workers
         //   else → `fast` for speed.
-        let preset = if source_is_highres { "slow" } else { "fast" };
+        let preset = if source_is_highres { "medium" } else { "fast" };
         cmd.arg("-c:v")
             .arg("libx264")
             .arg("-preset")
@@ -1226,17 +1233,18 @@ pub async fn process_video_clip(
 
         if has_video {
             // Adaptive preset for video notes:
-            //   * source ≥1440p (2K/4K/8K) → `slow` for maximum compression
-            //     efficiency at CRF 18 — the encoder spends extra cycles
-            //     extracting fine detail from the high-res source before the
-            //     640px downscale crushes it. ~3-5× slower than `fast` but
-            //     visibly sharper on the resulting circle.
+            //   * source ≥1440p (2K/4K/8K) → `medium` — extracts fine detail
+            //     from the high-res source before the 640px downscale crushes
+            //     it, while staying within Railway worker memory limits.
+            //     `slow` was nicer on paper but kept tripping the OOM reaper
+            //     on 4K input, and the silent retry path produced audioless
+            //     circles.
             //   * source ≤1080p → `fast` (default) — small source has nothing
-            //     extra to extract; `slow` would just waste CPU.
+            //     extra to extract; slower presets would just waste CPU.
             //   * non-video-note (regular cuts) → `ultrafast` (existing).
             let preset = if is_video_note {
                 if source_is_highres {
-                    "slow"
+                    "medium"
                 } else {
                     "fast"
                 }
@@ -1288,51 +1296,131 @@ pub async fn process_video_clip(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let mut retry_cmd = Command::new("ffmpeg");
-        retry_cmd.arg("-hide_banner").arg("-loglevel").arg("error");
-        if seek_offset > 0 {
-            retry_cmd.arg("-ss").arg(format!("{}", seek_offset));
-        }
-        retry_cmd
-            .arg("-i")
-            .arg(&actual_input_path)
-            .arg("-filter_complex")
-            .arg(&filter_v)
-            .arg("-map")
-            .arg(map_v_label)
-            .arg("-c:v")
-            .arg("libx264")
-            .arg("-preset")
-            .arg("ultrafast")
-            .arg("-crf")
-            .arg(crf)
-            .arg("-movflags")
-            .arg("+faststart")
-            .arg("-y")
-            .arg(&output_path);
-        let retry_output = match doracore::core::process::run_with_timeout_raw(&mut retry_cmd, ffmpeg_timeout).await {
-            Ok(result) => result.map_err(AppError::from)?,
-            Err(_) => {
-                log::error!("❌ ffmpeg retry timed out after {} seconds", ffmpeg_timeout.as_secs());
+        log::warn!(
+            "⚠️ first ffmpeg pass failed ({}); retrying with ultrafast + audio preserved",
+            output.status
+        );
+
+        // Two-stage retry — historically we dropped straight to a video-only
+        // filter, which silently produced audioless circles whenever the
+        // first pass was killed for memory/time reasons (very common on
+        // Railway 4K/8K). Try the audio+video chain at `ultrafast` first;
+        // only fall back to video-only if that *also* fails (e.g. real audio
+        // mapping issue).
+        let build_av_retry = || {
+            let mut c = Command::new("ffmpeg");
+            c.arg("-hide_banner").arg("-loglevel").arg("error");
+            if seek_offset > 0 {
+                c.arg("-ss").arg(format!("{}", seek_offset));
+            }
+            c.arg("-i").arg(&actual_input_path);
+            if custom_audio_path.is_some() && is_video_note {
+                if let Some(ref audio_path) = custom_audio_path {
+                    c.arg("-i").arg(audio_path);
+                }
+                c.arg("-filter_complex")
+                    .arg(&filter_v)
+                    .arg("-map")
+                    .arg(map_v_label)
+                    .arg("-map")
+                    .arg("1:a");
+            } else {
+                c.arg("-filter_complex").arg(&filter_av);
+                if has_video {
+                    c.arg("-map").arg(map_v_label);
+                }
+                c.arg("-map").arg(map_a_label);
+            }
+            c.arg("-c:v")
+                .arg("libx264")
+                .arg("-preset")
+                .arg("ultrafast")
+                .arg("-crf")
+                .arg(crf);
+            if is_video_note {
+                c.arg("-maxrate")
+                    .arg("1400k")
+                    .arg("-bufsize")
+                    .arg("2800k")
+                    .arg("-profile:v")
+                    .arg("high");
+            }
+            c.arg("-c:a").arg("aac").arg("-b:a").arg("128k");
+            if custom_audio_path.is_some() && is_video_note {
+                c.arg("-shortest");
+            }
+            c.arg("-movflags").arg("+faststart").arg("-y").arg(&output_path);
+            c
+        };
+        let mut av_retry_cmd = build_av_retry();
+        let av_retry_output =
+            match doracore::core::process::run_with_timeout_raw(&mut av_retry_cmd, ffmpeg_timeout).await {
+                Ok(result) => result.map_err(AppError::from)?,
+                Err(_) => {
+                    log::error!("❌ ffmpeg retry timed out after {} seconds", ffmpeg_timeout.as_secs());
+                    bot.delete_message(chat_id, status.id).await.ok();
+                    bot.send_message(
+                        chat_id,
+                        "❌ Video processing timed out (10 min limit). Try a shorter segment.",
+                    )
+                    .await
+                    .ok();
+                    return Ok(());
+                }
+            };
+
+        if !av_retry_output.status.success() {
+            log::warn!("⚠️ audio+video retry also failed; falling back to video-only (audioless)");
+            let mut retry_cmd = Command::new("ffmpeg");
+            retry_cmd.arg("-hide_banner").arg("-loglevel").arg("error");
+            if seek_offset > 0 {
+                retry_cmd.arg("-ss").arg(format!("{}", seek_offset));
+            }
+            retry_cmd
+                .arg("-i")
+                .arg(&actual_input_path)
+                .arg("-filter_complex")
+                .arg(&filter_v)
+                .arg("-map")
+                .arg(map_v_label)
+                .arg("-c:v")
+                .arg("libx264")
+                .arg("-preset")
+                .arg("ultrafast")
+                .arg("-crf")
+                .arg(crf);
+            if is_video_note {
+                retry_cmd.arg("-maxrate").arg("1400k").arg("-bufsize").arg("2800k");
+            }
+            retry_cmd.arg("-movflags").arg("+faststart").arg("-y").arg(&output_path);
+            let retry_output = match doracore::core::process::run_with_timeout_raw(&mut retry_cmd, ffmpeg_timeout).await
+            {
+                Ok(result) => result.map_err(AppError::from)?,
+                Err(_) => {
+                    log::error!(
+                        "❌ ffmpeg final retry timed out after {} seconds",
+                        ffmpeg_timeout.as_secs()
+                    );
+                    bot.delete_message(chat_id, status.id).await.ok();
+                    bot.send_message(
+                        chat_id,
+                        "❌ Video processing timed out (10 min limit). Try a shorter segment.",
+                    )
+                    .await
+                    .ok();
+                    return Ok(());
+                }
+            };
+
+            if !retry_output.status.success() {
+                let stderr2 = String::from_utf8_lossy(&retry_output.stderr);
                 bot.delete_message(chat_id, status.id).await.ok();
-                bot.send_message(
-                    chat_id,
-                    "❌ Video processing timed out (10 min limit). Try a shorter segment.",
-                )
-                .await
-                .ok();
+                let args = doracore::fluent_args!("stderr" => stderr.to_string(), "stderr2" => stderr2.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_dual", &args))
+                    .await
+                    .ok();
                 return Ok(());
             }
-        };
-
-        if !retry_output.status.success() {
-            let stderr2 = String::from_utf8_lossy(&retry_output.stderr);
-            bot.delete_message(chat_id, status.id).await.ok();
-            let args = doracore::fluent_args!("stderr" => stderr.to_string(), "stderr2" => stderr2.to_string());
-            bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_dual", &args))
-                .await
-                .ok();
-            return Ok(());
         }
     }
 
