@@ -93,6 +93,12 @@ pub struct X264Params {
 
     /// B-frames count.
     pub bframes: Option<u8>,
+
+    /// Lookahead worker thread count. Keeping this at `1` is mainly a
+    /// memory hint — extra lookahead threads each hold their own frame
+    /// queue, which adds up on a high-RAM preset like `veryslow` over
+    /// 4K input.
+    pub lookahead_threads: Option<u8>,
 }
 
 impl X264Params {
@@ -152,6 +158,11 @@ impl X264Params {
         self
     }
 
+    pub fn lookahead_threads(mut self, v: u8) -> Self {
+        self.lookahead_threads = Some(v);
+        self
+    }
+
     /// Render to the colon-separated `key=value` form expected by libx264.
     /// Returns an empty string when no fields are set.
     pub fn to_arg_string(&self) -> String {
@@ -196,6 +207,9 @@ impl fmt::Display for X264Params {
         if let Some(v) = self.bframes {
             parts.push(format!("bframes={v}"));
         }
+        if let Some(v) = self.lookahead_threads {
+            parts.push(format!("lookahead-threads={v}"));
+        }
         write!(f, "{}", parts.join(":"))
     }
 }
@@ -211,6 +225,7 @@ pub fn video_note_dark_scene() -> X264Params {
         .deblock(-2, -1)
         .rc_lookahead(60)
         .fast_pskip(false)
+        .lookahead_threads(1)
 }
 
 #[cfg(test)]
@@ -224,7 +239,7 @@ mod tests {
     fn video_note_dark_scene_matches_known_good_string() {
         let s = video_note_dark_scene().to_arg_string();
         assert_eq!(
-            s, "aq-mode=3:aq-strength=1.2:psy-rd=1,0.2:deblock=-2,-1:rc-lookahead=60:fast-pskip=0",
+            s, "aq-mode=3:aq-strength=1.2:psy-rd=1,0.2:deblock=-2,-1:rc-lookahead=60:fast-pskip=0:lookahead-threads=1",
             "wire format changed — verify the new string with `ffmpeg -x264-params <s>` before updating this assertion"
         );
     }

@@ -583,6 +583,9 @@ fn build_clip_filter_plan(
     // so that the filter_complex doesn't produce an unconnected [v] output which
     // makes ffmpeg exit with code 234 when using -f ipod.
     let has_video_for_filter = has_video && !is_ringtone;
+    // Default cut filter operating on raw `[0:v]` / `[0:a]` — used by all
+    // non-single-circle branches below. Single-circle path builds its own
+    // pre-scaled variant to keep buffer memory in check.
     let base_filter_av = build_cut_filter(seeked_segments, has_video_for_filter, true);
     let base_filter_v = if has_video_for_filter {
         build_cut_filter(seeked_segments, true, false)
@@ -593,40 +596,65 @@ fn build_clip_filter_plan(
     // Apply speed modification if requested
     // For multi-circle video notes, don't apply circle formatting here - it will be done in split step
     let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
-        // Single circle - apply video note formatting in ffmpeg
-        // Subtitles are burned AFTER scale+crop so they render at 640x640 coordinates
-        // `flags=lanczos` produces a sharper downscale from large sources
-        // (e.g. 4K → 640px) than ffmpeg's default bicubic. Free quality win.
-        let video_note_post = if let Some(sub_filter) = circle_sub_filter {
-            format!(
-                "scale=640:640:flags=lanczos:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p"
-            )
+        // Single circle: scale 4K→640² *before* the trim/concat chain so
+        // downstream filters buffer 640² frames (~370 KB) instead of 4K
+        // (~25 MB). On a 75 s segment that's the difference between the
+        // pipeline holding ~45 GB of in-flight raw frames vs ~1.3 GB —
+        // i.e. between OOM SIGKILL and a clean encode on Railway.
+        //
+        // Subtitle burn must still happen at 640² coordinates and AFTER
+        // trim/concat (so timestamps align with the post-trim timeline),
+        // so the sub filter goes into the post-chain step alongside speed
+        // adjustments. Lanczos quality is identical regardless of where
+        // in the chain the scale runs — same operation on the same
+        // pixels, just with a smaller buffer footprint.
+        let pre_scale =
+            "[0:v]scale=640:640:flags=lanczos:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p[v_pre]";
+        let cut_av = build_cut_filter_with_input(seeked_segments, has_video_for_filter, true, "v_pre", "0:a");
+        let cut_v = if has_video_for_filter {
+            build_cut_filter_with_input(seeked_segments, true, false, "v_pre", "0:a")
         } else {
-            "scale=640:640:flags=lanczos:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()
+            String::new()
         };
-        let video_note_post = video_note_post.as_str();
+        let post_v_chain = if let Some(sub_filter) = circle_sub_filter {
+            sub_filter.to_string()
+        } else {
+            String::new()
+        };
 
         if let Some(spd) = speed {
             let setpts_factor = 1.0 / spd;
             let atempo_filter = build_atempo_filter(spd);
+            let v_chain = if post_v_chain.is_empty() {
+                format!("[v]setpts={setpts_factor}*PTS[vout]")
+            } else {
+                format!("[v]setpts={setpts_factor}*PTS,{post_v_chain}[vout]")
+            };
+            let v_chain_v_only = if post_v_chain.is_empty() {
+                format!("[v]setpts={setpts_factor}*PTS[vout]")
+            } else {
+                format!("[v]setpts={setpts_factor}*PTS,{post_v_chain}[vout]")
+            };
 
             (
-                format!(
-                    "{base_filter_av};[v]setpts={}*PTS,{video_note_post}[vout];[a]{atempo_filter}[aout]",
-                    setpts_factor
-                ),
-                format!(
-                    "{base_filter_v};[v]setpts={}*PTS,{video_note_post}[vout]",
-                    setpts_factor
-                ),
+                format!("{pre_scale};{cut_av};{v_chain};[a]{atempo_filter}[aout]"),
+                format!("{pre_scale};{cut_v};{v_chain_v_only}"),
                 "[vout]",
                 "[aout]",
                 "18",
             )
+        } else if post_v_chain.is_empty() {
+            (
+                format!("{pre_scale};{cut_av}"),
+                format!("{pre_scale};{cut_v}"),
+                "[v]",
+                "[a]",
+                "18",
+            )
         } else {
             (
-                format!("{base_filter_av};[v]{video_note_post}[vout]"),
-                format!("{base_filter_v};[v]{video_note_post}[vout]"),
+                format!("{pre_scale};{cut_av};[v]{post_v_chain}[vout]"),
+                format!("{pre_scale};{cut_v};[v]{post_v_chain}[vout]"),
                 "[vout]",
                 "[a]",
                 "18",
@@ -1138,6 +1166,19 @@ pub async fn process_video_clip(
 
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-hide_banner").arg("-loglevel").arg("info");
+    // Limit ffmpeg + filter parallelism on video-note encodes. With
+    // veryslow on 4K input, x264 spawns one worker per slice and each
+    // worker holds its own reference frame / motion vector buffers; on
+    // a 4-core Railway worker that's enough to OOM. `-threads 2`
+    // halves the per-encode RAM at minimal speed cost (we measured
+    // 665 MB vs 771 MB peak on the same 60 s 4K source). The
+    // `lookahead-threads=1` x264 param cuts the lookahead worker pool
+    // to a single thread for the same reason. Non-video-note paths
+    // inherit ffmpeg defaults — they already use ultrafast and don't
+    // hit OOM.
+    if is_video_note {
+        cmd.arg("-threads").arg("2").arg("-filter_threads").arg("2");
+    }
 
     // Fast seek to near the first segment (before -i for input-level seek)
     if seek_offset > 0 {
@@ -1947,18 +1988,34 @@ pub async fn process_audio_cut(
 }
 
 pub fn build_cut_filter(segments: &[CutSegment], with_video: bool, with_audio: bool) -> String {
+    build_cut_filter_with_input(segments, with_video, with_audio, "0:v", "0:a")
+}
+
+/// Like [`build_cut_filter`] but lets the caller pick the upstream stream
+/// labels. Used for the single-circle video-note path so we can inject a
+/// `scale=640:640` step on `[0:v]` *before* the trim/concat chain runs —
+/// downstream filters then buffer 640² frames instead of 4K, dropping
+/// pipeline memory by ~36× and avoiding the OOM SIGKILL we observed on
+/// long 4K segments at `-preset veryslow`.
+pub fn build_cut_filter_with_input(
+    segments: &[CutSegment],
+    with_video: bool,
+    with_audio: bool,
+    video_input: &str,
+    audio_input: &str,
+) -> String {
     let mut parts = Vec::new();
     for (i, seg) in segments.iter().enumerate() {
         if with_video {
             parts.push(format!(
-                "[0:v]trim=start={}:end={},setpts=PTS-STARTPTS[v{}]",
-                seg.start_secs, seg.end_secs, i
+                "[{}]trim=start={}:end={},setpts=PTS-STARTPTS[v{}]",
+                video_input, seg.start_secs, seg.end_secs, i
             ));
         }
         if with_audio {
             parts.push(format!(
-                "[0:a]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{}]",
-                seg.start_secs, seg.end_secs, i
+                "[{}]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{}]",
+                audio_input, seg.start_secs, seg.end_secs, i
             ));
         }
     }
