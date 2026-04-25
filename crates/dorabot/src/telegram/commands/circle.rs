@@ -1216,12 +1216,20 @@ pub async fn process_video_clip(
             .arg("1500k")
             .arg("-bufsize")
             .arg("3000k")
+            .arg("-profile:v")
+            .arg("high")
+            .arg("-level")
+            .arg("4.0")
+            .arg("-g")
+            .arg("48")
+            .arg("-keyint_min")
+            .arg("24")
             .arg("-x264-params")
             .arg(video_note_dark_scene().to_arg_string());
         cmd.arg("-c:a")
             .arg("aac")
             .arg("-b:a")
-            .arg("128k")
+            .arg("96k")
             .arg("-shortest")
             .arg("-movflags")
             .arg("+faststart");
@@ -1233,24 +1241,19 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_a_label);
 
         if has_video {
-            // **Video-note encoding rationale (v0.43.3 rollback):**
+            // **Video-note encoding (v0.43.4) — verified empirically by
+            // hand-crafting `test_circles/test_small.mp4` with the exact
+            // CLI below and confirming on the Telegram client that the
+            // resulting circle is sharp.**
             //
-            // Telegram *does* re-encode every video-note server-side
-            // (proven by metadata diff: encoder tag flips Lavc62 → Lavc60),
-            // BUT we observed in production that dropping our `veryslow`
-            // preset → `medium` produced visibly worse final output, even
-            // though the server-side re-encode is identical. The takeaway:
-            // the cleaner the intermediate pixels we hand them, the cleaner
-            // their `fast`-class transcoder can re-encode it. Their fast
-            // preset is *not* great at de-noising or recovering detail from
-            // a noisy input — it just compounds artifacts.
-            //
-            // So we keep `veryslow` + `-tune film` + the dark-scene
-            // `-x264-params` (`aq-mode=3 + psy-rd=1.0,0.20 + deblock=-2,-1`
-            // + friends, see `commands/x264_params.rs`). This burns 5-15
-            // min CPU on Railway for 4K input but materially improves the
-            // user-visible output. We dropped `-profile:v`, `-level`, `-g`,
-            // and `-keyint_min` because Telegram normalises those.
+            // We had dropped `-profile:v`, `-level`, `-g`, and `-keyint_min`
+            // in v0.43.2 on the theory that Telegram normalises them.
+            // Empirically that theory was wrong — production circles came
+            // out blocky, while the same source encoded with these flags
+            // (test_small.mp4) looked correct. So they go back. The most
+            // likely mechanism is `-g 48 -keyint_min 24` forcing a 1-2 s
+            // keyframe spacing on our intermediate, which gives Telegram's
+            // fast-preset transcoder more I-frames to anchor onto.
             //
             // Non-video-notes (regular cuts) stay on `ultrafast` —
             // delivered as full-size mp4s where size > preset matters more.
@@ -1267,13 +1270,21 @@ pub async fn process_video_clip(
                     .arg("1500k")
                     .arg("-bufsize")
                     .arg("3000k")
+                    .arg("-profile:v")
+                    .arg("high")
+                    .arg("-level")
+                    .arg("4.0")
+                    .arg("-g")
+                    .arg("48")
+                    .arg("-keyint_min")
+                    .arg("24")
                     .arg("-x264-params")
                     .arg(video_note_dark_scene().to_arg_string());
             } else {
                 cmd.arg("-crf").arg(crf);
             }
         }
-        let audio_bitrate = if is_video_note { "128k" } else { "192k" };
+        let audio_bitrate = if is_video_note { "96k" } else { "192k" };
         cmd.arg("-c:a")
             .arg("aac")
             .arg("-b:a")
