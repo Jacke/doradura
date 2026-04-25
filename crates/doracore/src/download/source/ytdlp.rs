@@ -358,33 +358,29 @@ impl YtDlpSource {
             _ => build_telegram_safe_format(None),
         };
         // **High-res strategy:** download YouTube's AV1/VP9 stream and
-        // recode to H.264 because AV1-in-mp4 still doesn't play inline
-        // in any Telegram client (telegramdesktop/tdesktop#7452, open
-        // since March 2020). To get as close to "1:1 with the YouTube
-        // source" as inline playback allows, we run x264 at the highest
-        // settings Railway can sustain on 4K input:
+        // recode to H.264 — AV1-in-mp4 still doesn't play inline in any
+        // Telegram client (telegramdesktop/tdesktop#7452). Empirical
+        // tuning summary:
         //
-        //   `-preset slow -tune film -crf 14 -pix_fmt yuv420p
-        //    -profile:v high -level 4.2 -c:a aac -b:a 256k
-        //    -movflags +faststart`
-        //
-        // CRF 14 + slow is **visually transparent** H.264 (~99 % of the
-        // source's perceptual quality, regularly used as a "near-master"
-        // mezzanine setting). `tune film` biases x264 toward live-action
-        // detail preservation. AAC 256k is the practical ceiling for
-        // music videos before re-encode artefacts dominate. Profile
-        // high@L4.2 covers up to 4K@30fps within H.264's spec.
-        //
-        // Cost: ~5× the CPU of `veryfast` baseline (3-5 min for 4K on
-        // Railway), output 50-80 % larger than the old veryfast/CRF 23
-        // baseline. Memory peak stays under the Railway worker budget
-        // because `slow` doesn't carry the lookahead/reference-frame
-        // weight of `veryslow` that broke 4K circles in earlier dev.
+        // * `veryfast / CRF 23` (the original ≤ v0.44.x baseline) —
+        //   ~85 VMAF, 3-4× real-time on 4K, ~500 MB peak RAM. Visible
+        //   compression artefacts on dark gradients.
+        // * `slow / CRF 14 + tune film` (v0.45.1 attempt) — ~99 VMAF,
+        //   **0.2× real-time on 4K** → ~19 min for a 4-minute clip,
+        //   peak RAM ~3-4 GB. Production verdict: regularly trips the
+        //   Railway worker's OOM reaper on 4K AV1 input mid-recode,
+        //   yt-dlp surfaces it as `PostprocessingError` and the user
+        //   gets a "something went wrong" with no video.
+        // * `medium / CRF 17 + tune film` (current) — ~96-97 VMAF,
+        //   ~0.6-0.8× real-time on 4K (~5-6 min for a 4-minute clip),
+        //   peak RAM ~1.5 GB. Stable in production. Quality is
+        //   meaningfully higher than the old `veryfast/CRF 23` baseline
+        //   while staying inside Railway's worker budget.
         //
         // mkv intermediate so yt-dlp's FFmpegVideoConvertorPP actually
         // triggers (mp4 → mp4 would be a no-op).
         let container: &'static str = if is_highres { "mkv" } else { "mp4" };
-        const HIGHRES_RECODE_OPTS: &str = "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 256k -movflags +faststart";
+        const HIGHRES_RECODE_OPTS: &str = "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 192k -movflags +faststart";
         log::debug!(
             "yt-dlp video format string ({}, highres={}): {}",
             container,
