@@ -1115,15 +1115,11 @@ pub async fn process_video_clip(
     );
 
     // Probe source resolution for adaptive encoder preset.
-    // 4K/8K source needs `medium` preset for max quality on the small Telegram
-    // viewport; everything ≤1080p stays on `fast` for speed (4× faster) since
-    // small-source → 640 downscale doesn't benefit from slower preset.
-    //
-    // We previously used `slow` here, but on Railway's 1–2 vCPU / limited-RAM
-    // workers ffmpeg got SIGKILL'd by the OOM reaper on 4K/8K input — and
-    // since the failure path retries with a video-only filter, the user got
-    // back a circle with no audio. `medium` keeps quality nearly identical at
-    // CRF 18 + lanczos while using ~2–3× less memory and CPU time.
+    // Probe source resolution — useful for diagnostics but no longer
+    // controls preset selection (we always use `veryslow` for video notes
+    // since v0.43.4). Long 4K segments can still OOM on Railway with
+    // `veryslow`; the smart-retry path (below) drops to `medium` + same
+    // dark-scene params if the first pass crashes.
     let source_is_highres = if has_video && is_video_note {
         let path_str = actual_input_path.to_string_lossy().to_string();
         matches!(
@@ -1134,7 +1130,7 @@ pub async fn process_video_clip(
         false
     };
     if source_is_highres {
-        log::info!("🎬 High-res source detected (height ≥ 1440) — using preset=medium for circle");
+        log::info!("🎬 High-res source detected (height ≥ 1440) — primary preset=veryslow, retry preset=medium");
     }
 
     log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
@@ -1357,21 +1353,40 @@ pub async fn process_video_clip(
                 }
                 c.arg("-map").arg(map_a_label);
             }
-            c.arg("-c:v")
-                .arg("libx264")
-                .arg("-preset")
-                .arg("ultrafast")
-                .arg("-crf")
-                .arg(crf);
+            // Smart retry-preset: when the first pass crashed with SIGKILL
+            // on a high-res video-note (Railway OOM with `veryslow` on a
+            // 4K source >30 s), drop to `medium` + the same dark-scene
+            // x264 params instead of `ultrafast`. `medium` uses ~3× less
+            // RAM than `veryslow` so it fits, and the resulting circle
+            // is still close to the verified-good `test_small.mp4` recipe
+            // — *not* the shakal output `ultrafast` produced.
+            //
+            // Non-video-note (regular cuts) keep `ultrafast` since size
+            // matters more than preset for full-size mp4 deliveries.
+            let retry_preset = if is_video_note { "medium" } else { "ultrafast" };
+            c.arg("-c:v").arg("libx264").arg("-preset").arg(retry_preset);
+            if is_video_note {
+                c.arg("-tune").arg("film").arg("-pix_fmt").arg("yuv420p");
+            }
+            c.arg("-crf").arg(crf);
             if is_video_note {
                 c.arg("-maxrate")
-                    .arg("1400k")
+                    .arg("1500k")
                     .arg("-bufsize")
-                    .arg("2800k")
+                    .arg("3000k")
                     .arg("-profile:v")
-                    .arg("high");
+                    .arg("high")
+                    .arg("-level")
+                    .arg("4.0")
+                    .arg("-g")
+                    .arg("48")
+                    .arg("-keyint_min")
+                    .arg("24")
+                    .arg("-x264-params")
+                    .arg(video_note_dark_scene().to_arg_string());
             }
-            c.arg("-c:a").arg("aac").arg("-b:a").arg("128k");
+            let audio_bitrate = if is_video_note { "96k" } else { "128k" };
+            c.arg("-c:a").arg("aac").arg("-b:a").arg(audio_bitrate);
             if custom_audio_path.is_some() && is_video_note {
                 c.arg("-shortest");
             }
