@@ -965,15 +965,21 @@ pub async fn send_video_with_retry(
         })?
         .len();
 
-    let standard_limit = 50 * 1024 * 1024; // 50 MB - standard limit for send_video
+    // Standard Telegram Bot API caps `sendVideo` at 50 MB. A self-hosted
+    // local Bot API server (`BOT_API_URL` pointing at our own instance)
+    // raises that to 5 GB. Use the dynamic ceiling so high-res video uploads
+    // go through `sendVideo` (inline-playable) on local API instead of
+    // silently falling back to `sendDocument`.
+    let standard_limit = doracore::core::config::validation::max_video_size_bytes();
     let use_document_fallback = file_size > standard_limit || send_as_document;
 
     if send_as_document {
         log::info!("User preference: sending video as document");
     } else if use_document_fallback {
         log::info!(
-            "File size ({:.2} MB) exceeds standard send_video limit (50 MB), will use send_document fallback",
-            file_size as f64 / (1024.0 * 1024.0)
+            "File size ({:.2} MB) exceeds send_video ceiling ({:.2} MB), will use send_document fallback",
+            file_size as f64 / (1024.0 * 1024.0),
+            standard_limit as f64 / (1024.0 * 1024.0)
         );
     }
 

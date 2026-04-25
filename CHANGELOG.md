@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **send_video document fallback used 50 MB cap even on local Bot API (5 GB)** (v0.42.2) — `crates/dorabot/src/download/send.rs:968`. The send-path checked `file_size > 50 MB` to decide between `sendVideo` (inline-playable) and `sendDocument` (file attachment). On local Bot API the actual ceiling is 5 GB, so 4K/8K H.264 mp4 outputs (typically 200 MB-1 GB after recode) silently degraded to document mode — user got mp4 but as a document, not inline. Replaced the hardcoded `50 * 1024 * 1024` with `doracore::core::config::validation::max_video_size_bytes()` (the same dynamic ceiling already used by the preview filter in v0.38.24). 568 dorabot lib tests green.
+
+### Fixed
 - **High-res mp4 actually re-encodes to H.264 now** (v0.42.1) — `crates/doracore/src/download/source/ytdlp.rs:349`. v0.42.0 set `container = "mp4"` and added `--recode-video mp4`, but yt-dlp's `FFmpegVideoConvertorPP.run()` checks `source_ext == target_ext` and **skips re-encoding when both are mp4**. AV1 streams from YouTube were happily muxed into mp4 (legal since 2019), then the convertor was a no-op, leaving AV1-in-mp4. Modern Telegram clients (2024+) decode AV1 inline; older clients and the web client show audio-only with a black video frame. User report: "видео не просматривается, только звук в нем есть". Fix: revert intermediate container to `mkv` for 1440p/2160p/4320p so the mkv→mp4 transition forces ffmpeg to actually run, then add `--postprocessor-args VideoConvertor:-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 192k -movflags +faststart` to lock down the codec settings (Railway-friendly preset, decent quality, faststart for inline streaming). Standard ≤1080p paths stay byte-identical (mp4 container, no recode). Output is now H.264/AAC mp4 — plays in EVERY Telegram client. 575 doracore + 568 dorabot lib tests green.
 
 ### Changed
