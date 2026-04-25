@@ -271,27 +271,20 @@ pub async fn show_video_quality_menu(
         .unwrap_or(false);
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
+    // 4320p (8K) intentionally hidden — Railway workers can't reliably
+    // recode 8K AV1 → H.264 (yt-dlp postprocessor SIGKILL'd at frame=0).
+    // Re-enable once we have a smart fallback in the download pipeline
+    // that drops to 2160p when 4320p postprocessing fails.
     let mut keyboard_rows = vec![
-        vec![
-            crate::telegram::cb(
-                if current_quality == "4320p" {
-                    "🎬 8K (4320p) ✓"
-                } else {
-                    "🎬 8K (4320p)"
-                }
-                .to_string(),
-                "quality:4320p",
-            ),
-            crate::telegram::cb(
-                if current_quality == "2160p" {
-                    "🎬 4K (2160p) ✓"
-                } else {
-                    "🎬 4K (2160p)"
-                }
-                .to_string(),
-                "quality:2160p",
-            ),
-        ],
+        vec![crate::telegram::cb(
+            if current_quality == "2160p" {
+                "🎬 4K (2160p) ✓"
+            } else {
+                "🎬 4K (2160p)"
+            }
+            .to_string(),
+            "quality:2160p",
+        )],
         vec![crate::telegram::cb(
             if current_quality == "1440p" {
                 "🎬 2K (1440p) ✓"

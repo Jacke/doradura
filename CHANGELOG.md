@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Hide 4320p (8K) option from quality picker** (v0.43.7) — `crates/dorabot/src/telegram/menu/settings.rs:274` + `callback_settings.rs:685`. Empirical signal: `youtu.be/PeOpxCiq8ow` at 4320p reproducibly fails with `PostprocessingError: frame=0 size=0kB speed=0.0469x` on Railway — yt-dlp downloads the AV1 streams fine but the H.264 recode pass either gets SIGKILL'd by the OOM reaper or chokes on 8K AV1 decode entirely (5 % real-time before kill). Hiding the button so users don't keep hitting a known-broken path. Existing users with `video_quality=4320p` get silently downgraded to `2160p` on next quality-menu interaction. Re-enable once we have a smart fallback in the download pipeline that drops 4320p → 2160p when postprocessing fails.
+
 ### Changed
 - **Lower video-note encoder memory footprint by ~14% to dodge Railway OOM** (v0.43.6) — `crates/dorabot/src/telegram/commands/circle.rs`. Pre-empt the OOM SIGKILL on long 4K segments by tightening x264's parallelism and re-ordering the filter graph so it never has to buffer full-resolution frames. Two related changes:
   1. **Filter graph rewrite for single-circle path**: scale `[0:v]→640²` *before* the trim/concat chain so downstream filters operate on 640² (~370 KB / frame) instead of 4K (~25 MB / frame). New helper `build_cut_filter_with_input` accepts a custom upstream stream label so the rest of the cut filter can read from `[v_pre]`. Subtitle burn still happens at 640² coordinates after concat. Quality identical — same lanczos op on the same pixels, just earlier in the chain.

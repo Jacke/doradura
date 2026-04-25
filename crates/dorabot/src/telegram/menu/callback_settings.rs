@@ -682,13 +682,27 @@ async fn handle_settings_quality(
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     let _ = bot.answer_callback_query(callback_id.clone()).await;
+    // 4320p kept in the validator for backward-compat with users whose
+    // setting was already 4320p, but the menu no longer offers it (see
+    // `show_video_quality_menu`). Selecting it from cached/old client
+    // state silently downgrades to 2160p — the highest tier our Railway
+    // recoder can reliably produce.
     const VALID_QUALITIES: &[&str] = &["best", "4320p", "2160p", "1440p", "1080p", "720p", "480p", "360p"];
     if !VALID_QUALITIES.contains(&quality) {
         log::warn!("Rejected invalid quality value from user {}: {:?}", chat_id.0, quality);
         return Ok(());
     }
+    let stored_quality = if quality == "4320p" {
+        log::info!(
+            "Downgrading user {} quality 4320p → 2160p (8K disabled, see settings.rs comment)",
+            chat_id.0
+        );
+        "2160p"
+    } else {
+        quality
+    };
     shared_storage
-        .set_user_video_quality(chat_id.0, quality)
+        .set_user_video_quality(chat_id.0, stored_quality)
         .await
         .map_err(db_err)?;
 
