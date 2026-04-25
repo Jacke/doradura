@@ -585,12 +585,25 @@ pub async fn download_phase(
                 // tasteful 50% default when we don't know the duration —
                 // better than the old "stuck at 96% downloading" UX.
                 if sp.phase == ProgressPhase::Merging {
-                    let merge_percent = match (sp.merge_position_secs, cached_duration_secs) {
-                        (Some(pos), Some(dur)) if dur > 0.0 => ((pos / dur) * 100.0).clamp(0.0, 99.0) as u8,
-                        (Some(_), _) => 50,  // unknown duration — animate at midpoint
-                        _ => 0,              // bare [Merger] line, just announce stage flip
+                    // Only flip the UI to "Merging" once we have a real
+                    // non-zero ffmpeg `time=…` position — the bare
+                    // `[Merger]` notification line by itself would lock
+                    // the message at "Merging 0 %" if yt-dlp swallows
+                    // ffmpeg's per-second progress (which it does
+                    // unless the user-supplied options re-enable it).
+                    // Better to keep showing "Downloading 100 %" than
+                    // a forever-stuck "Merging 0 %".
+                    let pos = match sp.merge_position_secs {
+                        Some(p) if p > 0.5 => p,
+                        _ => continue,
                     };
-                    if merge_percent >= last_merge_progress.saturating_add(5) || merge_percent == 0 {
+                    let merge_percent = match cached_duration_secs {
+                        Some(dur) if dur > 0.0 => ((pos / dur) * 100.0).clamp(1.0, 99.0) as u8,
+                        _ => 50, // unknown duration — animate at midpoint
+                    };
+                    if merge_percent >= last_merge_progress.saturating_add(5)
+                        || (merge_update_count == 0 && merge_percent > 0)
+                    {
                         last_merge_progress = merge_percent;
                         merge_update_count += 1;
                         let _ = progress_msg.update(
