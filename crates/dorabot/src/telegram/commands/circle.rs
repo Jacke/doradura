@@ -1113,6 +1113,23 @@ pub async fn process_video_clip(
         speed,
     );
 
+    // Probe source resolution for adaptive encoder preset.
+    // 4K/8K source needs `slow` preset for max quality on the small Telegram
+    // viewport; everything ≤1080p stays on `fast` for speed (4× faster) since
+    // small-source → 640 downscale doesn't benefit from slower preset.
+    let source_is_highres = if has_video && is_video_note {
+        let path_str = actual_input_path.to_string_lossy().to_string();
+        matches!(
+            doracore::download::metadata::probe_video_metadata(&path_str).await,
+            Some((_dur, _w, Some(h))) if h >= 1440
+        )
+    } else {
+        false
+    };
+    if source_is_highres {
+        log::info!("🎬 High-res source detected (height ≥ 1440) — using preset=slow for circle");
+    }
+
     log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
     log::info!("🎬 Input: {:?}, Output: {:?}", actual_input_path, output_path);
 
@@ -1177,12 +1194,14 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_v_label);
         cmd.arg("-map").arg("1:a");
         // No speed modification on custom audio - user chose specific audio.
-        // `fast` instead of `medium` — see preset rationale in the no-custom-audio
-        // branch below; same reasoning (~3-5× faster, visually identical at 640).
+        // Adaptive preset (mirrors no-custom-audio branch below):
+        //   high-res source → `slow` for maximum quality on Telegram viewport
+        //   else → `fast` for speed.
+        let preset = if source_is_highres { "slow" } else { "fast" };
         cmd.arg("-c:v")
             .arg("libx264")
             .arg("-preset")
-            .arg("fast")
+            .arg(preset)
             .arg("-crf")
             .arg(crf)
             .arg("-maxrate")
@@ -1206,11 +1225,24 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_a_label);
 
         if has_video {
-            // `fast` is ~3-5× faster than `medium` on multi-core CPUs and
-            // visually identical at 640×640 (Telegram circle viewport is
-            // ~240×240 on most clients). Critical for 4K sources where
-            // `medium` × 4K decode = 5-15 min on Railway 1-2 cores.
-            let preset = if is_video_note { "fast" } else { "ultrafast" };
+            // Adaptive preset for video notes:
+            //   * source ≥1440p (2K/4K/8K) → `slow` for maximum compression
+            //     efficiency at CRF 18 — the encoder spends extra cycles
+            //     extracting fine detail from the high-res source before the
+            //     640px downscale crushes it. ~3-5× slower than `fast` but
+            //     visibly sharper on the resulting circle.
+            //   * source ≤1080p → `fast` (default) — small source has nothing
+            //     extra to extract; `slow` would just waste CPU.
+            //   * non-video-note (regular cuts) → `ultrafast` (existing).
+            let preset = if is_video_note {
+                if source_is_highres {
+                    "slow"
+                } else {
+                    "fast"
+                }
+            } else {
+                "ultrafast"
+            };
             cmd.arg("-c:v")
                 .arg("libx264")
                 .arg("-preset")
