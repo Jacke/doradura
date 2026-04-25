@@ -357,17 +357,21 @@ impl YtDlpSource {
             Some("144p") => build_telegram_safe_format(Some(144)),
             _ => build_telegram_safe_format(None),
         };
-        // mkv as intermediate for high-res so --recode-video mp4 forces a real
-        // ffmpeg re-encode (see comment above). Standard <=1080p stays mp4.
-        let container: &'static str = if is_highres { "mkv" } else { "mp4" };
-        // Forces libx264 + AAC with sane Railway-friendly settings. Without
-        // this, yt-dlp's default convertor uses `-c:v libx264 -c:a aac` with
-        // implicit ffmpeg defaults (preset=medium, CRF=23 for 4K = 30+ min on
-        // 1-2 cores). preset=veryfast ≈ 4-5x faster, slight quality drop but
-        // still visually fine. `+faststart` puts moov atom up front for
-        // immediate Telegram streaming.
-        const HIGHRES_RECODE_OPTS: &str =
-            "VideoConvertor:-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 192k -movflags +faststart";
+        // **High-res strategy (post-recode-removal):** mux YouTube's AV1 (or
+        // VP9 fallback) video stream + AAC audio directly into an mp4
+        // container *without* re-encoding. The result is byte-identical
+        // to YouTube's source — zero quality loss, zero CPU spent on
+        // recode. Trade-off: AV1-in-mp4 only auto-plays inline in
+        // Telegram clients ≥iOS 16 / Android 12+ Telegram 9.5+ /
+        // Desktop 4.10+. Older clients fall back to "open with system
+        // player" / document download. Per user direction we accept this
+        // for the ~10-15 % of clients that can't decode AV1 — quality
+        // wins over universal compatibility.
+        //
+        // Note: we keep `mp4` for high-res too (was `mkv` previously)
+        // because mp4 + AV1 is widely supported in modern decoders and
+        // gives the bot a regular video message instead of a document.
+        let container: &'static str = "mp4";
         log::debug!(
             "yt-dlp video format string ({}, highres={}): {}",
             container,
@@ -386,14 +390,8 @@ impl YtDlpSource {
                 subprocess_timeout,
                 move |args, proxy_option| {
                     push_video_format_args(args, true, container);
-                    if is_highres {
-                        // Re-encode AV1/VP9 video stream to H.264 so the result
-                        // mp4 plays inline in EVERY Telegram client.
-                        args.push("--recode-video");
-                        args.push("mp4");
-                        args.push("--postprocessor-args");
-                        args.push(HIGHRES_RECODE_OPTS);
-                    }
+                    // High-res: NO recode — ship YouTube's AV1/VP9 stream
+                    // directly muxed into mp4. See comment above.
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
@@ -408,14 +406,8 @@ impl YtDlpSource {
                 {
                     let url_for_tier2 = url_str.clone();
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
-                        // Tier 2 (cookies + PO token)
+                        // Tier 2 (cookies + PO token); no high-res recode.
                         push_video_format_args(args, true, container);
-                        if is_highres {
-                            args.push("--recode-video");
-                            args.push("mp4");
-                            args.push("--postprocessor-args");
-                            args.push(HIGHRES_RECODE_OPTS);
-                        }
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
@@ -427,16 +419,11 @@ impl YtDlpSource {
                     }
                 },
                 move |args, proxy_option| {
-                    // Tier 3 (fixup never): same client logic as tier 2
+                    // Tier 3 (fixup never): same client logic as tier 2.
+                    // No recode — see header comment.
                     args.push("--fixup");
                     args.push("never");
                     push_video_format_args(args, false, container);
-                    if is_highres {
-                        args.push("--recode-video");
-                        args.push("mp4");
-                        args.push("--postprocessor-args");
-                        args.push(HIGHRES_RECODE_OPTS);
-                    }
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
                     args.push(default_youtube_extractor_args());
@@ -457,7 +444,10 @@ impl YtDlpSource {
 
         let duration = probe_duration_seconds(&actual_path).await;
 
-        // After --recode-video mp4 the result is always H.264 in mp4.
+        // No recode — yt-dlp muxes whatever codec YouTube serves
+        // (typically AV1 for 1440p+, H.264 for ≤1080p) into mp4.
+        // mime stays "video/mp4" — Telegram routes by container, not
+        // by inner codec.
         let mime = "video/mp4";
 
         Ok(DownloadOutput {
