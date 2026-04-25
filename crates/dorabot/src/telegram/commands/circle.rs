@@ -594,10 +594,14 @@ fn build_clip_filter_plan(
     let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
         // Single circle - apply video note formatting in ffmpeg
         // Subtitles are burned AFTER scale+crop so they render at 640x640 coordinates
+        // `flags=lanczos` produces a sharper downscale from large sources
+        // (e.g. 4K → 640px) than ffmpeg's default bicubic. Free quality win.
         let video_note_post = if let Some(sub_filter) = circle_sub_filter {
-            format!("scale=640:640:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p")
+            format!(
+                "scale=640:640:flags=lanczos:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p"
+            )
         } else {
-            "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()
+            "scale=640:640:flags=lanczos:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()
         };
         let video_note_post = video_note_post.as_str();
 
@@ -1172,11 +1176,13 @@ pub async fn process_video_clip(
         cmd.arg("-filter_complex").arg(&filter_v);
         cmd.arg("-map").arg(map_v_label);
         cmd.arg("-map").arg("1:a");
-        // No speed modification on custom audio - user chose specific audio
+        // No speed modification on custom audio - user chose specific audio.
+        // `fast` instead of `medium` — see preset rationale in the no-custom-audio
+        // branch below; same reasoning (~3-5× faster, visually identical at 640).
         cmd.arg("-c:v")
             .arg("libx264")
             .arg("-preset")
-            .arg("medium")
+            .arg("fast")
             .arg("-crf")
             .arg(crf)
             .arg("-maxrate")
@@ -1200,7 +1206,11 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_a_label);
 
         if has_video {
-            let preset = if is_video_note { "medium" } else { "ultrafast" };
+            // `fast` is ~3-5× faster than `medium` on multi-core CPUs and
+            // visually identical at 640×640 (Telegram circle viewport is
+            // ~240×240 on most clients). Critical for 4K sources where
+            // `medium` × 4K decode = 5-15 min on Railway 1-2 cores.
+            let preset = if is_video_note { "fast" } else { "ultrafast" };
             cmd.arg("-c:v")
                 .arg("libx264")
                 .arg("-preset")

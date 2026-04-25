@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Video-note (circle) creation slow + blurry on 4K source** (v0.42.3) — `crates/dorabot/src/telegram/commands/circle.rs:597,1203,1179`. User report: making a circle from a 4K download took several minutes and looked "как залупа". Two reasons: (1) ffmpeg `scale=640:640` used the default bicubic scaler which produces visible blur when downscaling 6x (3840→640); (2) x264 preset for video-note encoding was hard-coded to `medium`, which on Railway's 1-2 vCPUs takes 5-15 min for a 4K source decode + scale + encode. Fix: appended `flags=lanczos` to the `scale=` filter (sharper downscale at zero CPU cost) and switched the video-note preset from `medium` to `fast` (~3-5× faster, visually identical at the 240×240 viewport Telegram displays circles in). Both the standard-audio and custom-audio code paths updated. 568 dorabot lib tests green.
+
 - **send_video document fallback used 50 MB cap even on local Bot API (5 GB)** (v0.42.2) — `crates/dorabot/src/download/send.rs:968`. The send-path checked `file_size > 50 MB` to decide between `sendVideo` (inline-playable) and `sendDocument` (file attachment). On local Bot API the actual ceiling is 5 GB, so 4K/8K H.264 mp4 outputs (typically 200 MB-1 GB after recode) silently degraded to document mode — user got mp4 but as a document, not inline. Replaced the hardcoded `50 * 1024 * 1024` with `doracore::core::config::validation::max_video_size_bytes()` (the same dynamic ceiling already used by the preview filter in v0.38.24). 568 dorabot lib tests green.
 
 ### Fixed
