@@ -3,8 +3,8 @@ use sqlx::Row;
 
 use crate::storage::db::{self, DownloadHistoryEntry, GlobalStats, UserStats};
 
-use super::download_history::map_pg_download_history;
 use super::SharedStorage;
+use super::download_history::map_pg_download_history;
 
 impl SharedStorage {
     pub async fn save_feedback(

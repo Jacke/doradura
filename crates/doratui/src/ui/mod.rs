@@ -1,10 +1,10 @@
 //! Root UI renderer for dora TUI.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs};
-use ratatui::Frame;
 
 use crate::app::{App, ClickTarget, HistoryEntry, Particle, SlotState, ToastKind, YtdlpStartup};
 use crate::theme::ThemeColors;
@@ -59,10 +59,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.preview_state.is_visible() {
         preview::render_preview_popup(f, size, app);
     }
-    if let Some(idx) = app.history_popup {
-        if let Some(entry) = app.history.iter().rev().nth(idx).cloned() {
-            render_history_popup(f, size, &entry, app);
-        }
+    if let Some(idx) = app.history_popup
+        && let Some(entry) = app.history.iter().rev().nth(idx).cloned()
+    {
+        render_history_popup(f, size, &entry, app);
     }
 
     // yt-dlp startup popups render on top of everything (highest z-order).

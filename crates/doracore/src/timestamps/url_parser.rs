@@ -7,7 +7,7 @@
 //! - `&t=1h2m30s` (hours, minutes, seconds)
 //! - `#t=90` (fragment)
 
-use lazy_regex::{lazy_regex, Lazy, Regex};
+use lazy_regex::{Lazy, Regex, lazy_regex};
 use url::Url;
 
 /// Regex for parsing time values like "1h2m30s", "1m30s", "30s", "30"
@@ -36,20 +36,20 @@ static TIME_FORMAT_REGEX: Lazy<Regex> = lazy_regex!(r"^(?:(\d+)h)?(?:(\d+)m)?(\d
 pub fn parse_url_timestamp(url: &Url) -> Option<i64> {
     // Check query parameters for 't' or 'start'
     for (key, value) in url.query_pairs() {
-        if key == "t" || key == "start" || key == "time_continue" {
-            if let Some(secs) = parse_time_value(&value) {
-                return Some(secs);
-            }
+        if (key == "t" || key == "start" || key == "time_continue")
+            && let Some(secs) = parse_time_value(&value)
+        {
+            return Some(secs);
         }
     }
 
     // Check fragment (hash) for t=
     if let Some(fragment) = url.fragment() {
         // Handle #t=90 format
-        if let Some(value) = fragment.strip_prefix("t=") {
-            if let Some(secs) = parse_time_value(value) {
-                return Some(secs);
-            }
+        if let Some(value) = fragment.strip_prefix("t=")
+            && let Some(secs) = parse_time_value(value)
+        {
+            return Some(secs);
         }
         // Handle #90 format (just seconds)
         if let Ok(secs) = fragment.parse::<i64>() {

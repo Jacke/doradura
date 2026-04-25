@@ -19,7 +19,7 @@ use crate::download::metadata::{
     get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
 };
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress};
-use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
+use crate::download::ytdlp_errors::{YtDlpErrorType, analyze_ytdlp_error, get_error_message};
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
@@ -655,10 +655,10 @@ where
 
     let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path);
     tier3_args_fn(&mut fixup_args, proxy_option);
-    if media_type == "video" {
-        if let Some(pos) = fixup_args.iter().position(|a| *a == "--format") {
-            fixup_args.insert(pos + 1, extra_arg);
-        }
+    if media_type == "video"
+        && let Some(pos) = fixup_args.iter().position(|a| *a == "--format")
+    {
+        fixup_args.insert(pos + 1, extra_arg);
     }
     append_section_args(&mut fixup_args, section_spec);
     fixup_args.push(url_str);
@@ -1249,10 +1249,9 @@ fn run_ytdlp_with_progress(
         return Ok(());
     }
 
-    let stderr_text = if let Ok(mut lines) = stderr_lines.lock() {
-        lines.make_contiguous().join("\n")
-    } else {
-        String::new()
+    let stderr_text = match stderr_lines.lock() {
+        Ok(mut lines) => lines.make_contiguous().join("\n"),
+        _ => String::new(),
     };
 
     let error_type = analyze_ytdlp_error(&stderr_text);

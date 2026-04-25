@@ -24,8 +24,8 @@
 
 use crate::core::alerts::AlertManager;
 use crate::core::rate_limiter::RateLimiter;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;

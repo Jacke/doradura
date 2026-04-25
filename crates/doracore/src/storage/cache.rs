@@ -171,8 +171,8 @@ pub async fn cleanup_cache() -> usize {
     METADATA_CACHE.cleanup().await
 }
 
-use crate::storage::db::{get_connection, DbPool};
 use crate::storage::SharedStorage;
+use crate::storage::db::{DbPool, get_connection};
 
 /// Generates a short ID from a URL (first 12 characters of hash)
 fn generate_url_id(url: &str) -> String {
@@ -198,23 +198,29 @@ pub async fn store_url(db_pool: &DbPool, shared_storage: Option<&SharedStorage>,
     let expires_at_str = expires_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
     if let Some(storage) = shared_storage {
-        if let Err(e) = storage.store_cached_url(&id, url, &expires_at_str).await {
-            log::error!("Failed to store URL in shared cache: {}", e);
-        } else {
-            log::debug!("Stored URL in shared cache: {} -> {}", id, url);
+        match storage.store_cached_url(&id, url, &expires_at_str).await {
+            Err(e) => {
+                log::error!("Failed to store URL in shared cache: {}", e);
+            }
+            _ => {
+                log::debug!("Stored URL in shared cache: {} -> {}", id, url);
+            }
         }
         return id;
     }
 
     match get_connection(db_pool) {
         Ok(conn) => {
-            if let Err(e) = conn.execute(
+            match conn.execute(
                 "INSERT OR REPLACE INTO url_cache (id, url, expires_at) VALUES (?1, ?2, ?3)",
                 rusqlite::params![id, url, expires_at_str],
             ) {
-                log::warn!("Failed to store URL in cache: {}", e);
-            } else {
-                log::debug!("Stored URL in DB cache: {} -> {}", id, url);
+                Err(e) => {
+                    log::warn!("Failed to store URL in cache: {}", e);
+                }
+                _ => {
+                    log::debug!("Stored URL in DB cache: {} -> {}", id, url);
+                }
             }
         }
         Err(e) => {

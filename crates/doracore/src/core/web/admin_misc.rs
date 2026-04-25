@@ -317,11 +317,10 @@ pub(super) async fn admin_api_health(_admin: RequireAdmin, State(state): State<W
         let mut queue = serde_json::Map::new();
         if let Ok(mut stmt) =
             conn.prepare("SELECT COALESCE(status, 'unknown'), COUNT(*) FROM task_queue GROUP BY status")
+            && let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
         {
-            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
-                for row in rows.flatten() {
-                    queue.insert(row.0, json!(row.1));
-                }
+            for row in rows.flatten() {
+                queue.insert(row.0, json!(row.1));
             }
         }
 
@@ -337,11 +336,10 @@ pub(super) async fn admin_api_health(_admin: RequireAdmin, State(state): State<W
         if let Ok(mut stmt) = conn.prepare(
             "SELECT COALESCE(error_type, 'unknown'), COUNT(*) FROM error_log \
              WHERE timestamp >= datetime('now', '-24 hours') GROUP BY error_type ORDER BY COUNT(*) DESC LIMIT 10",
-        ) {
-            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
-                for row in rows.flatten() {
-                    error_types.insert(row.0, json!(row.1));
-                }
+        ) && let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        {
+            for row in rows.flatten() {
+                error_types.insert(row.0, json!(row.1));
             }
         }
 

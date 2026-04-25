@@ -112,13 +112,16 @@ mod tests {
 
     #[test]
     fn test_recording_mode_from_env() {
-        std::env::set_var("TELEGRAM_RECORD_MODE", "true");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("TELEGRAM_RECORD_MODE", "true") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Enabled);
 
-        std::env::set_var("TELEGRAM_RECORD_MODE", "verbose");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("TELEGRAM_RECORD_MODE", "verbose") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Verbose);
 
-        std::env::remove_var("TELEGRAM_RECORD_MODE");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("TELEGRAM_RECORD_MODE") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Disabled);
     }
 

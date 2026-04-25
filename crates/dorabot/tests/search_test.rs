@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo test --package doradura --test search_test -- --nocapture
 
-use doradura::download::search::{search, SearchSource, YtdlpFlatEntry};
+use doradura::download::search::{SearchSource, YtdlpFlatEntry, search};
 
 /// Test that yt-dlp JSON parsing works for YouTube flat-playlist output.
 #[test]

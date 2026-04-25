@@ -56,14 +56,14 @@ fn download_youtube_video_with_ytdlp() {
     if let Ok(entries) = fs::read_dir(&tmp_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("test_video.") {
-                    let md = fs::metadata(&path).expect("metadata failed");
-                    assert!(md.len() > 0, "downloaded file is empty: {}", path.display());
-                    found = true;
-                    // Cleanup after ourselves
-                    let _ = fs::remove_file(&path);
-                }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && name.starts_with("test_video.")
+            {
+                let md = fs::metadata(&path).expect("metadata failed");
+                assert!(md.len() > 0, "downloaded file is empty: {}", path.display());
+                found = true;
+                // Cleanup after ourselves
+                let _ = fs::remove_file(&path);
             }
         }
     }

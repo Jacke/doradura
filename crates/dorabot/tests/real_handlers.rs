@@ -15,7 +15,7 @@ use doradura::download::DownloadQueue;
 use doradura::downsub::DownsubGateway;
 use doradura::storage::create_pool;
 use doradura::telegram::bot_api_logger::Bot as CustomBot;
-use doradura::telegram::{schema, HandlerDeps, HandlerError};
+use doradura::telegram::{HandlerDeps, HandlerError, schema};
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQuery, Message};
 

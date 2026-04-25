@@ -4,7 +4,7 @@
 //! - Resize images
 //! - Format conversion (JPG, PNG, WebP)
 
-use super::{temp_output_path, ConversionError, ConversionResult};
+use super::{ConversionError, ConversionResult, temp_output_path};
 use std::path::Path;
 use tokio::process::Command;
 

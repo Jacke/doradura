@@ -1,7 +1,7 @@
 use crate::core::escape_markdown;
-use crate::storage::{cache, db::DbPool, SharedStorage};
-use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
+use crate::storage::{SharedStorage, cache, db::DbPool};
 use crate::telegram::Bot;
+use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InputFile, MessageId};
@@ -173,10 +173,10 @@ pub async fn send_preview(
     text.push_str("\nChoose a format\\:");
 
     // Delete the old preview message if specified
-    if let Some(old_msg_id) = old_preview_msg_id {
-        if let Err(e) = bot.delete_message(chat_id, old_msg_id).await {
-            log::warn!("Failed to delete old preview message: {:?}", e);
-        }
+    if let Some(old_msg_id) = old_preview_msg_id
+        && let Err(e) = bot.delete_message(chat_id, old_msg_id).await
+    {
+        log::warn!("Failed to delete old preview message: {:?}", e);
     }
 
     // Build inline keyboard

@@ -5,7 +5,7 @@
 //! `InlineKeyboardMarkup`, injects `"style"` based on callback-data
 //! patterns, and sends the result through the bot's reqwest client.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId, ParseMode};
 
@@ -59,12 +59,11 @@ pub fn inject_styles(keyboard: &InlineKeyboardMarkup) -> Value {
         for button in row {
             let mut btn_json = serde_json::to_value(button).unwrap_or_default();
 
-            if let Some(cb_data) = btn_json.get("callback_data").and_then(Value::as_str) {
-                if let Some(style) = style_for_callback(cb_data) {
-                    if let Some(obj) = btn_json.as_object_mut() {
-                        obj.insert("style".into(), json!(style));
-                    }
-                }
+            if let Some(cb_data) = btn_json.get("callback_data").and_then(Value::as_str)
+                && let Some(style) = style_for_callback(cb_data)
+                && let Some(obj) = btn_json.as_object_mut()
+            {
+                obj.insert("style".into(), json!(style));
             }
 
             json_row.push(btn_json);

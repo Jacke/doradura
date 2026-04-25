@@ -6,9 +6,9 @@
 //! - `sr:add:{pl_id}:{idx}` — add result[idx] to playlist
 //! - `sr:src:{src}` — switch source
 
-use crate::download::search::{format_duration, search, SearchResult, SearchSource};
-use crate::storage::db::DbPool;
+use crate::download::search::{SearchResult, SearchSource, format_duration, search};
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -147,10 +147,9 @@ pub async fn handle_standalone_search(
                 if let Ok(msg) = bot
                     .send_message(chat_id, crate::i18n::t(&lang, "commands.search-no-results"))
                     .await
+                    && matches!(context, SearchContext::PlayerMode { .. })
                 {
-                    if matches!(context, SearchContext::PlayerMode { .. }) {
-                        let _ = shared_storage.add_player_message(chat_id.0, msg.id.0).await;
-                    }
+                    let _ = shared_storage.add_player_message(chat_id.0, msg.id.0).await;
                 }
                 return;
             }
@@ -304,54 +303,54 @@ pub async fn handle_search_callback(
 
     // sr:dl:{idx} — download (and add to playlist if in playlist context)
     if let Some(idx_str) = data.strip_prefix("sr:dl:") {
-        if let Ok(idx) = idx_str.parse::<usize>() {
-            if let Some(result) = session.results.get(idx) {
-                bot.try_delete(chat_id, message_id).await;
+        if let Ok(idx) = idx_str.parse::<usize>()
+            && let Some(result) = session.results.get(idx)
+        {
+            bot.try_delete(chat_id, message_id).await;
 
-                // If in playlist context, also add track to the playlist
-                match &session.context {
-                    SearchContext::PlayerMode { playlist_id } | SearchContext::AddToPlaylist { playlist_id } => {
-                        let pl_id = *playlist_id;
-                        match shared_storage.get_playlist(pl_id).await {
-                            Ok(Some(pl)) if pl.user_id == chat_id.0 => {
-                                let _ = shared_storage
-                                    .add_playlist_item(
-                                        pl_id,
-                                        &result.title,
-                                        Some(&result.artist),
-                                        &result.url,
-                                        result.duration_secs.map(|d| d as i32),
-                                        None,
-                                        session.source.source_name(),
-                                    )
-                                    .await;
-                            }
-                            _ => {}
+            // If in playlist context, also add track to the playlist
+            match &session.context {
+                SearchContext::PlayerMode { playlist_id } | SearchContext::AddToPlaylist { playlist_id } => {
+                    let pl_id = *playlist_id;
+                    match shared_storage.get_playlist(pl_id).await {
+                        Ok(Some(pl)) if pl.user_id == chat_id.0 => {
+                            let _ = shared_storage
+                                .add_playlist_item(
+                                    pl_id,
+                                    &result.title,
+                                    Some(&result.artist),
+                                    &result.url,
+                                    result.duration_secs.map(|d| d as i32),
+                                    None,
+                                    session.source.source_name(),
+                                )
+                                .await;
                         }
+                        _ => {}
                     }
-                    SearchContext::Standalone => {}
                 }
-
-                // Add to download queue respecting user's format preference
-                let format = match shared_storage.get_user_download_format(chat_id.0).await {
-                    Ok(fmt) => fmt,
-                    Err(_) => "mp3".to_string(),
-                };
-                let is_video = format == "mp4";
-                let dl_format = format
-                    .parse::<crate::download::queue::DownloadFormat>()
-                    .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
-                let task = crate::download::queue::DownloadTask::builder()
-                    .url(result.url.clone())
-                    .chat_id(chat_id)
-                    .maybe_message_id(None)
-                    .is_video(is_video)
-                    .format(dl_format)
-                    .maybe_video_quality(None)
-                    .maybe_audio_bitrate(None)
-                    .build();
-                download_queue.add_task(task, Some(db_pool.clone())).await;
+                SearchContext::Standalone => {}
             }
+
+            // Add to download queue respecting user's format preference
+            let format = match shared_storage.get_user_download_format(chat_id.0).await {
+                Ok(fmt) => fmt,
+                Err(_) => "mp3".to_string(),
+            };
+            let is_video = format == "mp4";
+            let dl_format = format
+                .parse::<crate::download::queue::DownloadFormat>()
+                .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
+            let task = crate::download::queue::DownloadTask::builder()
+                .url(result.url.clone())
+                .chat_id(chat_id)
+                .maybe_message_id(None)
+                .is_video(is_video)
+                .format(dl_format)
+                .maybe_video_quality(None)
+                .maybe_audio_bitrate(None)
+                .build();
+            download_queue.add_task(task, Some(db_pool.clone())).await;
         }
         return Ok(());
     }
@@ -359,29 +358,28 @@ pub async fn handle_search_callback(
     // sr:add:{pl_id}:{idx} — add to playlist
     if let Some(rest) = data.strip_prefix("sr:add:") {
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            if let (Ok(pl_id), Ok(idx)) = (parts[0].parse::<i64>(), parts[1].parse::<usize>()) {
-                if let Some(result) = session.results.get(idx) {
-                    match shared_storage.get_playlist(pl_id).await {
-                        Ok(Some(pl)) if pl.user_id == chat_id.0 => {}
-                        _ => return Ok(()),
-                    }
-                    let _ = shared_storage
-                        .add_playlist_item(
-                            pl_id,
-                            &result.title,
-                            Some(&result.artist),
-                            &result.url,
-                            result.duration_secs.map(|d| d as i32),
-                            None,
-                            session.source.source_name(),
-                        )
-                        .await;
-                    let _ = bot
-                        .send_message(chat_id, format!("➕ Added \"{}\" to playlist", result.title))
-                        .await;
-                }
+        if parts.len() == 2
+            && let (Ok(pl_id), Ok(idx)) = (parts[0].parse::<i64>(), parts[1].parse::<usize>())
+            && let Some(result) = session.results.get(idx)
+        {
+            match shared_storage.get_playlist(pl_id).await {
+                Ok(Some(pl)) if pl.user_id == chat_id.0 => {}
+                _ => return Ok(()),
             }
+            let _ = shared_storage
+                .add_playlist_item(
+                    pl_id,
+                    &result.title,
+                    Some(&result.artist),
+                    &result.url,
+                    result.duration_secs.map(|d| d as i32),
+                    None,
+                    session.source.source_name(),
+                )
+                .await;
+            let _ = bot
+                .send_message(chat_id, format!("➕ Added \"{}\" to playlist", result.title))
+                .await;
         }
         return Ok(());
     }
@@ -389,24 +387,23 @@ pub async fn handle_search_callback(
     // sr:p:{src}:{page} — paginate
     if let Some(rest) = data.strip_prefix("sr:p:") {
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            if let Ok(page) = parts[1].parse::<usize>() {
-                bot.try_delete(chat_id, message_id).await;
-                if let Ok(Some(msg_id)) = show_search_results(
-                    bot,
-                    chat_id,
-                    &session.results,
-                    &session.query,
-                    session.source,
-                    page,
-                    &session.context,
-                )
-                .await
-                {
-                    if matches!(session.context, SearchContext::PlayerMode { .. }) {
-                        let _ = shared_storage.add_player_message(chat_id.0, msg_id.0).await;
-                    }
-                }
+        if parts.len() == 2
+            && let Ok(page) = parts[1].parse::<usize>()
+        {
+            bot.try_delete(chat_id, message_id).await;
+            if let Ok(Some(msg_id)) = show_search_results(
+                bot,
+                chat_id,
+                &session.results,
+                &session.query,
+                session.source,
+                page,
+                &session.context,
+            )
+            .await
+                && matches!(session.context, SearchContext::PlayerMode { .. })
+            {
+                let _ = shared_storage.add_player_message(chat_id.0, msg_id.0).await;
             }
         }
         return Ok(());
@@ -438,10 +435,9 @@ pub async fn handle_search_callback(
                     if let Ok(Some(msg_id)) =
                         show_search_results(bot, chat_id, &results, &session.query, new_source, 0, &session.context)
                             .await
+                        && matches!(session.context, SearchContext::PlayerMode { .. })
                     {
-                        if matches!(session.context, SearchContext::PlayerMode { .. }) {
-                            let _ = shared_storage.add_player_message(chat_id.0, msg_id.0).await;
-                        }
+                        let _ = shared_storage.add_player_message(chat_id.0, msg_id.0).await;
                     }
                 }
                 Err(e) => {

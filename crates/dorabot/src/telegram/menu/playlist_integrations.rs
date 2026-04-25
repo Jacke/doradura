@@ -17,8 +17,8 @@ use crate::download::progress::ProgressMessage;
 use crate::download::search::format_duration;
 use crate::download::send::send_audio_with_retry;
 use crate::download::source::bot_global;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
@@ -605,14 +605,13 @@ async fn play_all(
 
             // Try vault cache first
             let track_url = track.resolved_url.as_deref().or(track.source_url.as_deref());
-            if let Some(url_str) = track_url {
-                if let Some(cached_fid) =
+            if let Some(url_str) = track_url
+                && let Some(cached_fid) =
                     crate::download::vault::check_vault_cache(&shared_storage_clone, chat_id.0, url_str).await
-                {
-                    let input = InputFile::file_id(FileId(cached_fid));
-                    if bot_clone.send_audio(chat_id, input).await.is_ok() {
-                        continue;
-                    }
+            {
+                let input = InputFile::file_id(FileId(cached_fid));
+                if bot_clone.send_audio(chat_id, input).await.is_ok() {
+                    continue;
                 }
             }
 
@@ -916,12 +915,12 @@ async fn download_single_track(
 
     // Try vault cache first
     let track_url_str = track.resolved_url.as_deref().or(track.source_url.as_deref());
-    if let Some(url_s) = track_url_str {
-        if let Some(cached_fid) = crate::download::vault::check_vault_cache(shared_storage, chat_id.0, url_s).await {
-            let input = InputFile::file_id(FileId(cached_fid));
-            if bot.send_audio(chat_id, input).await.is_ok() {
-                return;
-            }
+    if let Some(url_s) = track_url_str
+        && let Some(cached_fid) = crate::download::vault::check_vault_cache(shared_storage, chat_id.0, url_s).await
+    {
+        let input = InputFile::file_id(FileId(cached_fid));
+        if bot.send_audio(chat_id, input).await.is_ok() {
+            return;
         }
     }
 
@@ -1077,7 +1076,7 @@ async fn retry_not_found(
     tokio::spawn(async move {
         let mut found: i32 = 0;
         for (i, (track_id, title, artist)) in not_found.iter().enumerate() {
-            let search_query = if let Some(ref art) = artist {
+            let search_query = if let Some(art) = artist {
                 format!("{} - {}", art, title)
             } else {
                 title.clone()
@@ -1091,15 +1090,15 @@ async fn retry_not_found(
             )
             .await;
 
-            if let Ok(results) = result {
-                if let Some(first) = results.first() {
-                    match shared_storage_clone
-                        .update_synced_track_status(*track_id, "matched", Some(&first.url))
-                        .await
-                    {
-                        Ok(_) => found += 1,
-                        Err(e) => log::error!("Failed to update synced track {} status: {}", track_id, e),
-                    }
+            if let Ok(results) = result
+                && let Some(first) = results.first()
+            {
+                match shared_storage_clone
+                    .update_synced_track_status(*track_id, "matched", Some(&first.url))
+                    .await
+                {
+                    Ok(_) => found += 1,
+                    Err(e) => log::error!("Failed to update synced track {} status: {}", track_id, e),
                 }
             }
 

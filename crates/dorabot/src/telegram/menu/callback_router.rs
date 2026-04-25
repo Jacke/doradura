@@ -4,14 +4,14 @@ use crate::download::queue::DownloadQueue;
 use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
 use crate::i18n;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::storage::SubtitleCache;
-use crate::telegram::admin;
+use crate::storage::db::DbPool;
 use crate::telegram::Bot;
+use crate::telegram::admin;
 use std::sync::Arc;
-use teloxide::prelude::*;
 use teloxide::RequestError;
+use teloxide::prelude::*;
 
 use super::audio_effects::{handle_audio_cut_callback, handle_audio_effects_callback};
 use super::callback_admin;
@@ -25,7 +25,7 @@ use super::settings::show_download_type_menu;
 /// `if let Err(e) = fut.await { log::error!("<label> error: {}", e); }`
 /// pattern into one line per dispatch arm.
 macro_rules! try_forward {
-    ($label:literal, $fut:expr) => {
+    ($label:literal, $fut:expr_2021) => {
         if let Err(e) = $fut.await {
             log::error!(concat!($label, " callback error: {}"), e);
         }
@@ -584,14 +584,14 @@ async fn handle_dl_tl_toggle(
 
     for row in &mut new_buttons {
         for button in row {
-            if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb) = button.kind {
-                if cb == &format!("dl:tl:{}", url_id) {
-                    button.text = if currently_on {
-                        "☐ 📝 Lyrics".to_string()
-                    } else {
-                        "☑ 📝 Lyrics".to_string()
-                    };
-                }
+            if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb) = button.kind
+                && cb == &format!("dl:tl:{}", url_id)
+            {
+                button.text = if currently_on {
+                    "☐ 📝 Lyrics".to_string()
+                } else {
+                    "☑ 📝 Lyrics".to_string()
+                };
             }
         }
     }
@@ -653,14 +653,14 @@ async fn handle_dl_tm_toggle(
 
     for row in &mut new_buttons {
         for button in row {
-            if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb) = button.kind {
-                if cb == &format!("dl:tm:{}", url_id) {
-                    button.text = if currently_on {
-                        "☐ 🎵 MP3".to_string()
-                    } else {
-                        "☑ + 🎵 MP3".to_string()
-                    };
-                }
+            if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb) = button.kind
+                && cb == &format!("dl:tm:{}", url_id)
+            {
+                button.text = if currently_on {
+                    "☐ 🎵 MP3".to_string()
+                } else {
+                    "☑ + 🎵 MP3".to_string()
+                };
             }
         }
     }

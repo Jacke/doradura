@@ -12,9 +12,9 @@
 use crate::core::config;
 use crate::core::escape_markdown;
 use crate::download::source::vlipsy::scrape_clip_page;
+use crate::storage::SharedStorage;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
-use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use crate::telegram::BotExt;
 use reqwest::Client;
@@ -73,22 +73,20 @@ pub async fn send_vlipsy_preview(
     bot.try_delete(chat_id, processing_msg_id).await;
 
     // Try to send with thumbnail
-    if let Some(thumb_url) = &info.thumbnail_url {
-        if let Ok(response) = reqwest::get(thumb_url).await {
-            if response.status().is_success() {
-                if let Ok(bytes) = response.bytes().await {
-                    let bytes_vec = bytes.to_vec();
-                    let result = bot
-                        .send_photo(chat_id, InputFile::memory(bytes_vec))
-                        .caption(&text)
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .reply_markup(keyboard.clone())
-                        .await;
-                    if result.is_ok() {
-                        return Ok(());
-                    }
-                }
-            }
+    if let Some(thumb_url) = &info.thumbnail_url
+        && let Ok(response) = reqwest::get(thumb_url).await
+        && response.status().is_success()
+        && let Ok(bytes) = response.bytes().await
+    {
+        let bytes_vec = bytes.to_vec();
+        let result = bot
+            .send_photo(chat_id, InputFile::memory(bytes_vec))
+            .caption(&text)
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard.clone())
+            .await;
+        if result.is_ok() {
+            return Ok(());
         }
     }
 

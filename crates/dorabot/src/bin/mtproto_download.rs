@@ -250,10 +250,10 @@ async fn main() -> anyhow::Result<()> {
             let mut count = 0;
             for file in files {
                 // Filter by format if specified
-                if let Some(ref fmt) = format {
-                    if &file.format != fmt {
-                        continue;
-                    }
+                if let Some(ref fmt) = format
+                    && &file.format != fmt
+                {
+                    continue;
                 }
 
                 count += 1;
@@ -484,10 +484,10 @@ async fn main() -> anyhow::Result<()> {
 
             for file in files {
                 // Filter by user_id if provided
-                if let Some(uid) = user_id {
-                    if file.user_id != uid {
-                        continue;
-                    }
+                if let Some(uid) = user_id
+                    && file.user_id != uid
+                {
+                    continue;
                 }
 
                 if let Some(msg_id) = file.message_id {

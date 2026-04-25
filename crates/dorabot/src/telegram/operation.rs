@@ -36,9 +36,9 @@
 
 use crate::core::extract_retry_after;
 use crate::core::utils::escape_markdown_v2;
-use crate::telegram::reactions::{emoji, try_set_reaction};
 use crate::telegram::Bot;
 use crate::telegram::BotExt;
+use crate::telegram::reactions::{emoji, try_set_reaction};
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 use teloxide::prelude::*;
@@ -640,12 +640,12 @@ impl Operation<InProgress> {
     pub async fn delete_progress_message(&mut self) -> anyhow::Result<()> {
         self.inner.cancel_clear_task();
 
-        if let Some(msg_id) = self.inner.progress_message_id.take() {
-            if let Err(e) = self.inner.bot.delete_message(self.inner.chat_id, msg_id).await {
-                let err_str = e.to_string();
-                if !err_str.contains("message to delete not found") && !err_str.contains("MESSAGE_ID_INVALID") {
-                    return Err(e.into());
-                }
+        if let Some(msg_id) = self.inner.progress_message_id.take()
+            && let Err(e) = self.inner.bot.delete_message(self.inner.chat_id, msg_id).await
+        {
+            let err_str = e.to_string();
+            if !err_str.contains("message to delete not found") && !err_str.contains("MESSAGE_ID_INVALID") {
+                return Err(e.into());
             }
         }
         Ok(())
@@ -766,12 +766,12 @@ impl Operation<Completed> {
     pub async fn delete_progress_message(&mut self) -> anyhow::Result<()> {
         self.inner.cancel_clear_task();
 
-        if let Some(msg_id) = self.inner.progress_message_id.take() {
-            if let Err(e) = self.inner.bot.delete_message(self.inner.chat_id, msg_id).await {
-                let err_str = e.to_string();
-                if !err_str.contains("message to delete not found") && !err_str.contains("MESSAGE_ID_INVALID") {
-                    return Err(e.into());
-                }
+        if let Some(msg_id) = self.inner.progress_message_id.take()
+            && let Err(e) = self.inner.bot.delete_message(self.inner.chat_id, msg_id).await
+        {
+            let err_str = e.to_string();
+            if !err_str.contains("message to delete not found") && !err_str.contains("MESSAGE_ID_INVALID") {
+                return Err(e.into());
             }
         }
         Ok(())
@@ -892,22 +892,28 @@ mod tests {
     #[test]
     fn test_status_is_terminal() {
         assert!(!OperationStatus::Starting(OperationInfo::default()).is_terminal());
-        assert!(!OperationStatus::Progress {
-            info: OperationInfo::default(),
-            progress: 50,
-            stage: None
-        }
-        .is_terminal());
-        assert!(OperationStatus::Success {
-            info: OperationInfo::default(),
-            message: None
-        }
-        .is_terminal());
-        assert!(OperationStatus::Error {
-            info: OperationInfo::default(),
-            error: "err".to_string()
-        }
-        .is_terminal());
+        assert!(
+            !OperationStatus::Progress {
+                info: OperationInfo::default(),
+                progress: 50,
+                stage: None
+            }
+            .is_terminal()
+        );
+        assert!(
+            OperationStatus::Success {
+                info: OperationInfo::default(),
+                message: None
+            }
+            .is_terminal()
+        );
+        assert!(
+            OperationStatus::Error {
+                info: OperationInfo::default(),
+                error: "err".to_string()
+            }
+            .is_terminal()
+        );
     }
 
     #[test]

@@ -442,22 +442,22 @@ fn test_full_diagnostics() {
 
     // 2. Versions
     println!("\n📋 2. VERSIONS:");
-    if command_exists("yt-dlp") {
-        if let Ok(output) = Command::new("yt-dlp").arg("--version").output() {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("   yt-dlp: {}", version);
-        }
+    if command_exists("yt-dlp")
+        && let Ok(output) = Command::new("yt-dlp").arg("--version").output()
+    {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        println!("   yt-dlp: {}", version);
     }
 
-    if command_exists("ffmpeg") {
-        if let Ok(output) = Command::new("ffmpeg").arg("-version").output() {
-            let version_line = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("unknown")
-                .to_string();
-            println!("   ffmpeg: {}", version_line);
-        }
+    if command_exists("ffmpeg")
+        && let Ok(output) = Command::new("ffmpeg").arg("-version").output()
+    {
+        let version_line = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
+        println!("   ffmpeg: {}", version_line);
     }
 
     // 3. Cookies configuration

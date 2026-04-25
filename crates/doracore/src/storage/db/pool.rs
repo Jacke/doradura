@@ -7,7 +7,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result};
 use std::time::Duration;
 
-use super::{DbConnection, CONNECTION_TIMEOUT_SECS};
+use super::{CONNECTION_TIMEOUT_SECS, DbConnection};
 
 /// Create a new database connection pool
 ///
@@ -74,13 +74,14 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
     // WAL is a persistent database-level setting — only needs to be set once,
     // but re-setting is a no-op so it's safe to do on every startup.
     match pool.get() {
-        Ok(conn) => {
-            if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;") {
+        Ok(conn) => match conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;") {
+            Err(e) => {
                 log::warn!("Failed to enable WAL mode: {}", e);
-            } else {
+            }
+            _ => {
                 log::info!("SQLite WAL mode enabled");
             }
-        }
+        },
         Err(e) => log::warn!("Failed to get connection for WAL setup: {}", e),
     }
 

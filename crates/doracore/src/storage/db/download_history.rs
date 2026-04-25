@@ -356,10 +356,9 @@ pub fn get_download_history_entry(
         })
     })?;
 
-    if let Some(row) = rows.next() {
-        Ok(Some(row?))
-    } else {
-        Ok(None)
+    match rows.next() {
+        Some(row) => Ok(Some(row?)),
+        _ => Ok(None),
     }
 }
 

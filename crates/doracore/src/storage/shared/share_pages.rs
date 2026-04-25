@@ -4,8 +4,8 @@ use sqlx::Row;
 
 use crate::storage::db;
 
-use super::types::SharePageRecord;
 use super::SharedStorage;
+use super::types::SharePageRecord;
 
 impl SharedStorage {
     pub async fn create_share_page_record(

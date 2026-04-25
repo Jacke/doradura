@@ -6,7 +6,7 @@
 //!
 //! Used in experimental mode for preview metadata.
 
-use lazy_regex::{lazy_regex, Lazy, Regex};
+use lazy_regex::{Lazy, Regex, lazy_regex};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -121,11 +121,11 @@ async fn scrape_inner(video_id: &str) -> Option<YtPageMetadata> {
     let player: PlayerResponse = serde_json::from_str(json_str).ok()?;
 
     // Check playability
-    if let Some(ref status) = player.playability_status {
-        if status.status.as_deref() != Some("OK") {
-            log::debug!("YouTube playability: {:?} — {:?}", status.status, status.reason);
-            return None;
-        }
+    if let Some(ref status) = player.playability_status
+        && status.status.as_deref() != Some("OK")
+    {
+        log::debug!("YouTube playability: {:?} — {:?}", status.status, status.reason);
+        return None;
     }
 
     let details = player.video_details?;

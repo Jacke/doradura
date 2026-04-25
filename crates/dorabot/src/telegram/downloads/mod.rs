@@ -15,7 +15,7 @@ use crate::core::escape_markdown;
 use crate::downsub::DownsubGateway;
 use crate::storage::{DbPool, SharedStorage, SubtitleCache};
 use crate::telegram::Bot;
-use crate::timestamps::{format_timestamp, select_best_timestamps, VideoTimestamp};
+use crate::timestamps::{VideoTimestamp, format_timestamp, select_best_timestamps};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};

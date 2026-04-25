@@ -22,11 +22,7 @@ pub async fn watchdog_check() -> WatchdogStatus {
     // Check for expiring cookies
     let expiring_soon =
         if let (Some(days), Some(name)) = (diagnostic.soonest_expiry_days, &diagnostic.soonest_expiry_name) {
-            if days < 7 {
-                Some((name.clone(), days))
-            } else {
-                None
-            }
+            if days < 7 { Some((name.clone(), days)) } else { None }
         } else {
             None
         };

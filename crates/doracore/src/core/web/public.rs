@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Json, Response};
 use indoc::formatdoc;
 use serde_json::json;
@@ -15,7 +15,7 @@ use crate::storage::SharePageRecord;
 
 use super::auth::{check_rate_limit, extract_ip};
 use super::helpers::{constant_time_eq, html_escape, is_safe_url};
-use super::types::{ErrorResponse, WebState, SHARE_MAX_PER_MIN, SHARE_RATE_LIMIT, SHARE_WINDOW_SECS};
+use super::types::{ErrorResponse, SHARE_MAX_PER_MIN, SHARE_RATE_LIMIT, SHARE_WINDOW_SECS, WebState};
 
 // ---------------------------------------------------------------------------
 // Handlers

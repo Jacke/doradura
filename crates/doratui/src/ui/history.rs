@@ -1,9 +1,9 @@
 //! History panel: completed downloads table with keyboard scrolling + live search filter.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table};
-use ratatui::Frame;
 
 use crate::app::{App, ClickTarget};
 

@@ -23,8 +23,8 @@ use crate::download::send::{
     send_audio_with_retry, send_error_with_sticker, send_error_with_sticker_and_message, send_video_with_retry,
 };
 use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, SourceProgress, SourceRegistry};
-use crate::storage::db::{self as db, DbPool};
 use crate::storage::SharedStorage;
+use crate::storage::db::{self as db, DbPool};
 use crate::telegram::Bot;
 use anyhow::Context;
 use doracore::download::ProgressPhase;
@@ -197,8 +197,8 @@ impl PipelineFormat {
     /// Returns the quality label for metrics.
     pub fn quality_label(&self) -> &str {
         match self {
-            PipelineFormat::Audio { ref bitrate, .. } => bitrate.as_deref().unwrap_or("default"),
-            PipelineFormat::Video { ref quality, .. } => quality.as_deref().unwrap_or("default"),
+            PipelineFormat::Audio { bitrate, .. } => bitrate.as_deref().unwrap_or("default"),
+            PipelineFormat::Video { quality, .. } => quality.as_deref().unwrap_or("default"),
         }
     }
 
@@ -213,8 +213,8 @@ impl PipelineFormat {
     /// Returns the time_range regardless of variant.
     pub fn time_range(&self) -> &Option<(String, String)> {
         match self {
-            PipelineFormat::Audio { ref time_range, .. } => time_range,
-            PipelineFormat::Video { ref time_range, .. } => time_range,
+            PipelineFormat::Audio { time_range, .. } => time_range,
+            PipelineFormat::Video { time_range, .. } => time_range,
         }
     }
 }
@@ -373,23 +373,23 @@ pub async fn download_phase(
     // and refines this if available.
     if config::download::is_highres_quality(pipeline_video_quality(format)) {
         let min_bytes = highres_min_disk_bytes();
-        if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER) {
-            if info.available_bytes < min_bytes {
-                log::error!(
-                    "High-res precheck: only {:.2} GB free, need {:.2} GB",
-                    info.available_gb(),
-                    min_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
-                );
-                send_error_with_sticker_and_message(
-                    bot,
-                    chat_id,
-                    Some("❌ Not enough free disk space for 4K/8K. Try lower quality."),
-                )
-                .await;
-                return Err(PipelineError::PreCheck(
-                    "Insufficient disk space for high-res download".to_string(),
-                ));
-            }
+        if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER)
+            && info.available_bytes < min_bytes
+        {
+            log::error!(
+                "High-res precheck: only {:.2} GB free, need {:.2} GB",
+                info.available_gb(),
+                min_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+            );
+            send_error_with_sticker_and_message(
+                bot,
+                chat_id,
+                Some("❌ Not enough free disk space for 4K/8K. Try lower quality."),
+            )
+            .await;
+            return Err(PipelineError::PreCheck(
+                "Insufficient disk space for high-res download".to_string(),
+            ));
         }
     }
 
@@ -491,24 +491,24 @@ pub async fn download_phase(
             // Refined disk-space check for high-res: require 3× estimated size.
             if config::download::is_highres_quality(pipeline_video_quality(format)) {
                 let required = (estimated_size * HIGHRES_DISK_MULTIPLIER).max(highres_min_disk_bytes());
-                if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER) {
-                    if info.available_bytes < required {
-                        let required_gb = required as f64 / (1024.0 * 1024.0 * 1024.0);
-                        let avail_gb = info.available_gb();
-                        log::error!(
-                            "High-res disk check failed: need {:.1} GB, have {:.1} GB",
-                            required_gb,
-                            avail_gb
-                        );
-                        let msg = format!(
-                            "❌ Not enough disk space for this download: need ~{:.1} GB, have {:.1} GB. Try lower quality.",
-                            required_gb, avail_gb
-                        );
-                        send_error_with_sticker_and_message(bot, chat_id, Some(&msg)).await;
-                        return Err(PipelineError::PreCheck(
-                            "Insufficient disk space for high-res".to_string(),
-                        ));
-                    }
+                if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER)
+                    && info.available_bytes < required
+                {
+                    let required_gb = required as f64 / (1024.0 * 1024.0 * 1024.0);
+                    let avail_gb = info.available_gb();
+                    log::error!(
+                        "High-res disk check failed: need {:.1} GB, have {:.1} GB",
+                        required_gb,
+                        avail_gb
+                    );
+                    let msg = format!(
+                        "❌ Not enough disk space for this download: need ~{:.1} GB, have {:.1} GB. Try lower quality.",
+                        required_gb, avail_gb
+                    );
+                    send_error_with_sticker_and_message(bot, chat_id, Some(&msg)).await;
+                    return Err(PipelineError::PreCheck(
+                        "Insufficient disk space for high-res".to_string(),
+                    ));
                 }
             }
         }
@@ -520,13 +520,13 @@ pub async fn download_phase(
         .max_file_size(max_size);
 
     match format {
-        PipelineFormat::Audio { ref bitrate, .. } => {
-            if let Some(ref br) = bitrate {
+        PipelineFormat::Audio { bitrate, .. } => {
+            if let Some(br) = bitrate {
                 builder = builder.audio_bitrate(br);
             }
         }
-        PipelineFormat::Video { ref quality, .. } => {
-            if let Some(ref q) = quality {
+        PipelineFormat::Video { quality, .. } => {
+            if let Some(q) = quality {
                 builder = builder.video_quality(q);
             }
         }
@@ -616,9 +616,9 @@ pub async fn download_phase(
                     download_update_count += 1;
 
                     // Check disk space every ~25% of download to abort early if disk fills up
-                    if download_update_count.is_multiple_of(5) {
-                        if let Ok(info) = crate::core::disk::get_disk_space(&config::DOWNLOAD_FOLDER) {
-                            if !info.has_enough_space() {
+                    if download_update_count.is_multiple_of(5)
+                        && let Ok(info) = crate::core::disk::get_disk_space(&config::DOWNLOAD_FOLDER)
+                            && !info.has_enough_space() {
                                 log::error!(
                                     "Pipeline: disk space critical during download ({:.2} GB free), aborting",
                                     info.available_gb()
@@ -631,8 +631,6 @@ pub async fn download_phase(
                                     )),
                                 )));
                             }
-                        }
-                    }
 
                     let _ = progress_msg.update(
                         &bot_for_progress,
@@ -718,48 +716,46 @@ pub async fn execute(
     let canonical_url = doracore::download::url_canonical::canonicalize_url(url.as_str());
 
     // ── Vault cache lookup (audio only) ──
-    if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(shared_storage) = shared_storage {
-            if let Some(cached_fid) =
-                crate::download::vault::check_vault_cache(shared_storage, chat_id.0, &canonical_url).await
-            {
-                log::info!(
-                    "Pipeline: vault cache hit for {} (chat {})",
-                    sanitize_for_log(url.as_str()),
-                    chat_id
-                );
-                let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
-                match bot.send_audio(chat_id, input).await {
-                    Ok(sent_message) => {
-                        doracore::core::metrics::FILE_ID_CACHE_TOTAL
-                            .with_label_values(&["vault", "hit"])
-                            .inc();
-                        let file_size = sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64;
-                        let duration = sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0);
-                        return Ok(PipelineResult {
-                            sent_message,
-                            file_size,
-                            duration,
-                            title: String::new(),
-                            artist: String::new(),
-                            display_title: Arc::from("(cached)"),
-                            download_path: String::new(),
-                            output: DownloadOutput {
-                                file_path: String::new(),
-                                file_size: 0,
-                                duration_secs: Some(duration),
-                                mime_hint: None,
-                                additional_files: None,
-                            },
-                        });
-                    }
-                    Err(e) => {
-                        doracore::core::metrics::FILE_ID_CACHE_TOTAL
-                            .with_label_values(&["vault", "send_failed"])
-                            .inc();
-                        log::warn!("Pipeline: vault cache send failed, falling through: {}", e);
-                    }
-                }
+    if matches!(format, PipelineFormat::Audio { .. })
+        && let Some(shared_storage) = shared_storage
+        && let Some(cached_fid) =
+            crate::download::vault::check_vault_cache(shared_storage, chat_id.0, &canonical_url).await
+    {
+        log::info!(
+            "Pipeline: vault cache hit for {} (chat {})",
+            sanitize_for_log(url.as_str()),
+            chat_id
+        );
+        let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
+        match bot.send_audio(chat_id, input).await {
+            Ok(sent_message) => {
+                doracore::core::metrics::FILE_ID_CACHE_TOTAL
+                    .with_label_values(&["vault", "hit"])
+                    .inc();
+                let file_size = sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64;
+                let duration = sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0);
+                return Ok(PipelineResult {
+                    sent_message,
+                    file_size,
+                    duration,
+                    title: String::new(),
+                    artist: String::new(),
+                    display_title: Arc::from("(cached)"),
+                    download_path: String::new(),
+                    output: DownloadOutput {
+                        file_path: String::new(),
+                        file_size: 0,
+                        duration_secs: Some(duration),
+                        mime_hint: None,
+                        additional_files: None,
+                    },
+                });
+            }
+            Err(e) => {
+                doracore::core::metrics::FILE_ID_CACHE_TOTAL
+                    .with_label_values(&["vault", "send_failed"])
+                    .inc();
+                log::warn!("Pipeline: vault cache send failed, falling through: {}", e);
             }
         }
     }
@@ -768,8 +764,8 @@ pub async fn execute(
     // Only for full downloads (no time_range = no cuts), where we can guarantee identical output.
     if format.time_range().is_none() {
         let (vq, ab) = match format {
-            PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref()),
-            PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
+            PipelineFormat::Audio { bitrate, .. } => (None, bitrate.as_deref()),
+            PipelineFormat::Video { quality, .. } => (quality.as_deref(), None),
         };
         let cached_fid = if let Some(storage) = shared_storage {
             storage
@@ -778,12 +774,11 @@ pub async fn execute(
                 .ok()
                 .flatten()
         } else if let Some(pool) = db_pool {
-            if let Ok(conn) = db::get_connection(pool) {
-                db::find_cached_file_id(&conn, &canonical_url, format.label(), vq, ab)
+            match db::get_connection(pool) {
+                Ok(conn) => db::find_cached_file_id(&conn, &canonical_url, format.label(), vq, ab)
                     .ok()
-                    .flatten()
-            } else {
-                None
+                    .flatten(),
+                _ => None,
             }
         } else {
             None
@@ -1022,43 +1017,43 @@ pub async fn execute(
     };
 
     // Send additional carousel items (Instagram multi-item posts)
-    if let Some(ref extras) = download_output.additional_files {
-        if !extras.is_empty() {
-            use teloxide::types::{InputFile, InputMedia, InputMediaPhoto, InputMediaVideo};
-            let media_group: Vec<InputMedia> = extras
-                .iter()
-                .filter_map(|item| {
-                    if !std::path::Path::new(&item.file_path).exists() {
-                        return None;
-                    }
-                    let file = InputFile::file(&item.file_path);
-                    if item.mime_type.starts_with("video/") {
-                        Some(InputMedia::Video(InputMediaVideo::new(file)))
-                    } else {
-                        Some(InputMedia::Photo(InputMediaPhoto::new(file)))
-                    }
-                })
-                .collect();
-
-            if !media_group.is_empty() {
-                // Telegram send_media_group requires 2-10 items
-                // If only 1 extra, send individually; otherwise batch
-                if media_group.len() == 1 {
-                    let item = &extras[0];
-                    let file = InputFile::file(&item.file_path);
-                    if item.mime_type.starts_with("video/") {
-                        let _ = bot.send_video(chat_id, file).await;
-                    } else {
-                        let _ = bot.send_photo(chat_id, file).await;
-                    }
+    if let Some(ref extras) = download_output.additional_files
+        && !extras.is_empty()
+    {
+        use teloxide::types::{InputFile, InputMedia, InputMediaPhoto, InputMediaVideo};
+        let media_group: Vec<InputMedia> = extras
+            .iter()
+            .filter_map(|item| {
+                if !std::path::Path::new(&item.file_path).exists() {
+                    return None;
+                }
+                let file = InputFile::file(&item.file_path);
+                if item.mime_type.starts_with("video/") {
+                    Some(InputMedia::Video(InputMediaVideo::new(file)))
                 } else {
-                    match bot.send_media_group(chat_id, media_group).await {
-                        Ok(_) => {
-                            log::info!("Pipeline: sent {} additional carousel items", extras.len());
-                        }
-                        Err(e) => {
-                            log::warn!("Pipeline: failed to send carousel media group: {}", e);
-                        }
+                    Some(InputMedia::Photo(InputMediaPhoto::new(file)))
+                }
+            })
+            .collect();
+
+        if !media_group.is_empty() {
+            // Telegram send_media_group requires 2-10 items
+            // If only 1 extra, send individually; otherwise batch
+            if media_group.len() == 1 {
+                let item = &extras[0];
+                let file = InputFile::file(&item.file_path);
+                if item.mime_type.starts_with("video/") {
+                    let _ = bot.send_video(chat_id, file).await;
+                } else {
+                    let _ = bot.send_photo(chat_id, file).await;
+                }
+            } else {
+                match bot.send_media_group(chat_id, media_group).await {
+                    Ok(_) => {
+                        log::info!("Pipeline: sent {} additional carousel items", extras.len());
+                    }
+                    Err(e) => {
+                        log::warn!("Pipeline: failed to send carousel media group: {}", e);
                     }
                 }
             }
@@ -1098,8 +1093,8 @@ pub async fn execute(
         };
 
         let (video_quality_opt, audio_bitrate_opt) = match format {
-            PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref().or(Some("320k"))),
-            PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
+            PipelineFormat::Audio { bitrate, .. } => (None, bitrate.as_deref().or(Some("320k"))),
+            PipelineFormat::Video { quality, .. } => (quality.as_deref(), None),
         };
 
         match storage
@@ -1141,10 +1136,13 @@ pub async fn execute(
                     else {
                         return;
                     };
-                    if let Err(e) = storage_c.set_download_category(user_id_c, db_id, Some(&category)).await {
-                        log::warn!("Failed to auto-set category for download {}: {}", db_id, e);
-                    } else {
-                        log::info!("auto-categorized download {} → '{}'", db_id, category);
+                    match storage_c.set_download_category(user_id_c, db_id, Some(&category)).await {
+                        Err(e) => {
+                            log::warn!("Failed to auto-set category for download {}: {}", db_id, e);
+                        }
+                        _ => {
+                            log::info!("auto-categorized download {} → '{}'", db_id, category);
+                        }
                     }
                 });
             }
@@ -1155,25 +1153,25 @@ pub async fn execute(
     }
 
     // ── Step 10b: Send to vault (audio only, fire-and-forget) ──
-    if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(shared_storage) = shared_storage {
-            let file_id_for_vault = sent_message
-                .audio()
-                .map(|a| a.file.id.0.clone())
-                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
-            if let Some(fid) = file_id_for_vault {
-                crate::download::vault::send_to_vault_background(
-                    bot.clone(),
-                    Arc::clone(shared_storage),
-                    chat_id.0,
-                    canonical_url.clone(),
-                    fid,
-                    Some(title.clone()),
-                    if artist.is_empty() { None } else { Some(artist.clone()) },
-                    Some(duration as i32),
-                    Some(file_size as i64),
-                );
-            }
+    if matches!(format, PipelineFormat::Audio { .. })
+        && let Some(shared_storage) = shared_storage
+    {
+        let file_id_for_vault = sent_message
+            .audio()
+            .map(|a| a.file.id.0.clone())
+            .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+        if let Some(fid) = file_id_for_vault {
+            crate::download::vault::send_to_vault_background(
+                bot.clone(),
+                Arc::clone(shared_storage),
+                chat_id.0,
+                canonical_url.clone(),
+                fid,
+                Some(title.clone()),
+                if artist.is_empty() { None } else { Some(artist.clone()) },
+                Some(duration as i32),
+                Some(file_size as i64),
+            );
         }
     }
 
@@ -1227,17 +1225,17 @@ pub fn schedule_cleanup(download_path: String) {
 pub fn schedule_cleanup_with_extras(download_path: String, extra_paths: Vec<String>) {
     tokio::spawn(async move {
         tokio::time::sleep(config::download::cleanup_delay()).await;
-        if let Err(e) = fs_err::tokio::remove_file(&download_path).await {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!("Failed to delete file: {}", e);
-            }
+        if let Err(e) = fs_err::tokio::remove_file(&download_path).await
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("Failed to delete file: {}", e);
         }
         cleanup_partial_download(&download_path);
         for path in &extra_paths {
-            if let Err(e) = fs_err::tokio::remove_file(path).await {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!("Failed to delete extra file: {}", e);
-                }
+            if let Err(e) = fs_err::tokio::remove_file(path).await
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                log::warn!("Failed to delete extra file: {}", e);
             }
         }
     });
@@ -1333,15 +1331,15 @@ pub async fn handle_pipeline_error(
     };
 
     // Send admin alert for critical errors
-    if error.is_critical() {
-        if let Some(alert_mgr) = alert_manager {
-            let context = crate::core::alerts::DownloadContext::with_live_status().await;
-            if let Err(alert_err) = alert_mgr
-                .alert_download_failure(chat_id.0, url.as_str(), &error_str, 3, Some(&context))
-                .await
-            {
-                log::error!("Failed to send critical error alert: {}", alert_err);
-            }
+    if error.is_critical()
+        && let Some(alert_mgr) = alert_manager
+    {
+        let context = crate::core::alerts::DownloadContext::with_live_status().await;
+        if let Err(alert_err) = alert_mgr
+            .alert_download_failure(chat_id.0, url.as_str(), &error_str, 3, Some(&context))
+            .await
+        {
+            log::error!("Failed to send critical error alert: {}", alert_err);
         }
     }
 
@@ -1444,13 +1442,13 @@ fn sanitize_metadata(title: String, artist: String) -> (String, String) {
     };
 
     // If artist is still empty, try to parse "Artist - Title" from the title
-    if artist.is_empty() {
-        if let Some(pos) = title.find(" - ") {
-            let artist_part = title[..pos].trim();
-            let title_part = title[pos + 3..].trim();
-            if !artist_part.is_empty() && !title_part.is_empty() && artist_part.len() <= 80 {
-                return (title_part.to_string(), artist_part.to_string());
-            }
+    if artist.is_empty()
+        && let Some(pos) = title.find(" - ")
+    {
+        let artist_part = title[..pos].trim();
+        let title_part = title[pos + 3..].trim();
+        if !artist_part.is_empty() && !title_part.is_empty() && artist_part.len() <= 80 {
+            return (title_part.to_string(), artist_part.to_string());
         }
     }
 

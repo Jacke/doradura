@@ -214,12 +214,11 @@ pub fn is_message_addressed_to_bot(msg: &Message, bot_username: Option<&str>, bo
     }
 
     // Check if the message is a reply to a bot message
-    if let Some(reply_to) = msg.reply_to_message() {
-        if let Some(from) = &reply_to.from {
-            if from.id == bot_id {
-                return true;
-            }
-        }
+    if let Some(reply_to) = msg.reply_to_message()
+        && let Some(from) = &reply_to.from
+        && from.id == bot_id
+    {
+        return true;
     }
 
     // Check message text for bot mention
@@ -235,15 +234,15 @@ pub fn is_message_addressed_to_bot(msg: &Message, bot_username: Option<&str>, bo
                     // Extract mention using UTF-16 offsets
                     let start_utf16 = entity.offset;
                     let end_utf16 = entity.offset + entity.length;
-                    if end_utf16 <= utf16_units.len() {
-                        if let Ok(mention) = String::from_utf16(&utf16_units[start_utf16..end_utf16]) {
-                            // Remove @ for comparison
-                            let mention_username = mention.strip_prefix('@').unwrap_or(&mention);
-                            if let Some(username) = bot_username {
-                                if mention_username.eq_ignore_ascii_case(username) {
-                                    return true;
-                                }
-                            }
+                    if end_utf16 <= utf16_units.len()
+                        && let Ok(mention) = String::from_utf16(&utf16_units[start_utf16..end_utf16])
+                    {
+                        // Remove @ for comparison
+                        let mention_username = mention.strip_prefix('@').unwrap_or(&mention);
+                        if let Some(username) = bot_username
+                            && mention_username.eq_ignore_ascii_case(username)
+                        {
+                            return true;
                         }
                     }
                 }

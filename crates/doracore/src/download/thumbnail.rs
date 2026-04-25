@@ -7,7 +7,7 @@
 //! - Generating thumbnails from video files using ffmpeg
 
 use crate::core::error::AppError;
-use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
+use crate::core::process::{FFMPEG_TIMEOUT, run_with_timeout};
 use crate::download::error::DownloadError;
 use tokio::process::Command;
 

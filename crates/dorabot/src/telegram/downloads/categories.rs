@@ -3,8 +3,8 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
 use crate::telegram::BotExt;
 
-use super::is_youtube_url;
 use super::CallbackCtx;
+use super::is_youtube_url;
 
 pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> ResponseResult<()> {
     match action {

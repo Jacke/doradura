@@ -9,12 +9,12 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
-use crate::core::{extract_retry_after, is_timeout_or_network_error, BOT_API_RESPONSE_REGEX, BOT_API_START_REGEX};
+use crate::core::{BOT_API_RESPONSE_REGEX, BOT_API_START_REGEX, extract_retry_after, is_timeout_or_network_error};
 use crate::download::error::DownloadError;
 use crate::download::metadata::probe_video_metadata;
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::thumbnail::{
-    compress_thumbnail_jpeg, convert_webp_to_jpeg, detect_image_format, generate_thumbnail_from_video, ImageFormat,
+    ImageFormat, compress_thumbnail_jpeg, convert_webp_to_jpeg, detect_image_format, generate_thumbnail_from_video,
 };
 use crate::telegram::Bot;
 use rand::Rng;
@@ -22,13 +22,13 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
+use teloxide::RequestError;
 use teloxide::prelude::*;
 use teloxide::types::{InputFile, ParseMode};
-use teloxide::RequestError;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncRead, ReadBuf};
 
@@ -122,10 +122,10 @@ fn log_bot_api_speed_for_file(download_path: &str) {
         if let Some(caps) = response_re.captures(line) {
             let time = caps.get(1).and_then(|v| v.as_str().parse::<f64>().ok());
             let query_id = caps.get(2).map(|v| v.as_str().to_string());
-            if let (Some(time), Some(query_id)) = (time, query_id) {
-                if let Some(entry) = entries.get_mut(&query_id) {
-                    entry.response_time = Some(time);
-                }
+            if let (Some(time), Some(query_id)) = (time, query_id)
+                && let Some(entry) = entries.get_mut(&query_id)
+            {
+                entry.response_time = Some(time);
             }
         }
     }
@@ -147,22 +147,22 @@ fn log_bot_api_speed_for_file(download_path: &str) {
         }
     }
 
-    if let Some(entry) = best {
-        if let Some(response_time) = entry.response_time {
-            let duration = response_time - entry.start_time;
-            if duration > 0.0 {
-                let size_mb = entry.size as f64 / (1024.0 * 1024.0);
-                let speed_mbs = size_mb / duration;
-                log::info!(
-                    "Local Bot API speed: method={}, file={}, size={:.1} MB, duration={:.1}s, speed={:.2} MB/s, api_url={}",
-                    entry.method,
-                    entry.name,
-                    size_mb,
-                    duration,
-                    speed_mbs,
-                    bot_api_url
-                );
-            }
+    if let Some(entry) = best
+        && let Some(response_time) = entry.response_time
+    {
+        let duration = response_time - entry.start_time;
+        if duration > 0.0 {
+            let size_mb = entry.size as f64 / (1024.0 * 1024.0);
+            let speed_mbs = size_mb / duration;
+            log::info!(
+                "Local Bot API speed: method={}, file={}, size={:.1} MB, duration={:.1}s, speed={:.2} MB/s, api_url={}",
+                entry.method,
+                entry.name,
+                size_mb,
+                duration,
+                speed_mbs,
+                bot_api_url
+            );
         }
     }
 }
@@ -739,7 +739,9 @@ where
 
                         // Send notification to user
                         let notification_msg = match file_type {
-                            "video" => "Video successfully uploaded to Telegram and is being processed.\n\nIt will appear in the chat within a few minutes.\n\nProcessing large files may take up to 10-15 minutes.",
+                            "video" => {
+                                "Video successfully uploaded to Telegram and is being processed.\n\nIt will appear in the chat within a few minutes.\n\nProcessing large files may take up to 10-15 minutes."
+                            }
                             _ => "File uploaded to Telegram and is being processed. It will appear in chat shortly.",
                         };
 
@@ -1016,8 +1018,10 @@ pub async fn send_video_with_retry(
 
                             // Check size (Telegram requires <= 200 KB)
                             if bytes_vec.len() > 200 * 1024 {
-                                log::warn!("[THUMBNAIL] Thumbnail size ({} KB) exceeds Telegram limit (200 KB). May cause issues.",
-                                    bytes_vec.len() as f64 / 1024.0);
+                                log::warn!(
+                                    "[THUMBNAIL] Thumbnail size ({} KB) exceeds Telegram limit (200 KB). May cause issues.",
+                                    bytes_vec.len() as f64 / 1024.0
+                                );
                             }
 
                             // Check format (Telegram requires JPEG or PNG)
@@ -1027,12 +1031,16 @@ pub async fn send_video_with_retry(
                                     Some(bytes_vec)
                                 }
                                 ImageFormat::WebP => {
-                                    log::warn!("[THUMBNAIL] Thumbnail is WebP format, Telegram may not support it properly. Trying anyway...");
+                                    log::warn!(
+                                        "[THUMBNAIL] Thumbnail is WebP format, Telegram may not support it properly. Trying anyway..."
+                                    );
                                     Some(bytes_vec)
                                 }
                                 ImageFormat::Unknown => {
-                                    log::warn!("[THUMBNAIL] Unknown thumbnail format, may cause black screen. First bytes: {:?}",
-                                        bytes_vec.iter().take(10).collect::<Vec<_>>());
+                                    log::warn!(
+                                        "[THUMBNAIL] Unknown thumbnail format, may cause black screen. First bytes: {:?}",
+                                        bytes_vec.iter().take(10).collect::<Vec<_>>()
+                                    );
                                     Some(bytes_vec)
                                 }
                             }
@@ -1285,13 +1293,13 @@ pub async fn send_video_with_retry(
 
     // If sending as video failed and file > 50 MB, try as document
     if result.is_err() && use_document_fallback {
-        if let Err(AppError::Download(ref msg)) = result {
-            if is_timeout_or_network_error(msg.message()) {
-                log::warn!(
-                    "send_video failed with timeout/network error; skipping send_document fallback to avoid duplicates"
-                );
-                return result;
-            }
+        if let Err(AppError::Download(ref msg)) = result
+            && is_timeout_or_network_error(msg.message())
+        {
+            log::warn!(
+                "send_video failed with timeout/network error; skipping send_document fallback to avoid duplicates"
+            );
+            return result;
         }
 
         log::info!("send_video failed, trying send_document as fallback for large file");

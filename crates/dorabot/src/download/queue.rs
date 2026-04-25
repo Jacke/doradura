@@ -398,10 +398,10 @@ impl DownloadQueue {
     ///
     /// Returns the 1-based position in the queue, or `None` if no task was found.
     pub async fn get_queue_position(&self, chat_id: ChatId) -> Option<usize> {
-        if let Some(ref storage) = self.shared_storage {
-            if let Ok(position) = storage.get_queue_position(chat_id.0).await {
-                return position;
-            }
+        if let Some(ref storage) = self.shared_storage
+            && let Ok(position) = storage.get_queue_position(chat_id.0).await
+        {
+            return position;
         }
         let queue = self.queue.lock().await;
         queue.iter().position(|task| task.chat_id == chat_id).map(|pos| pos + 1)
@@ -426,10 +426,10 @@ impl DownloadQueue {
     /// # }
     /// ```
     pub async fn size(&self) -> usize {
-        if let Some(ref storage) = self.shared_storage {
-            if let Ok(size) = storage.count_active_tasks().await {
-                return size;
-            }
+        if let Some(ref storage) = self.shared_storage
+            && let Ok(size) = storage.count_active_tasks().await
+        {
+            return size;
         }
         let queue = self.queue.lock().await;
         queue.len()
@@ -461,10 +461,10 @@ impl DownloadQueue {
     /// # }
     /// ```
     pub async fn filter_tasks_by_chat_id(&self, chat_id: ChatId) -> Vec<DownloadTask> {
-        if let Some(ref storage) = self.shared_storage {
-            if let Ok(entries) = storage.get_pending_tasks_for_user(chat_id.0).await {
-                return entries.into_iter().map(Self::task_from_entry).collect();
-            }
+        if let Some(ref storage) = self.shared_storage
+            && let Ok(entries) = storage.get_pending_tasks_for_user(chat_id.0).await
+        {
+            return entries.into_iter().map(Self::task_from_entry).collect();
         }
         let queue = self.queue.lock().await;
         queue.iter().filter(|task| task.chat_id == chat_id).cloned().collect()
@@ -673,7 +673,7 @@ impl DownloadQueue {
 
         let mut flushed = 0;
         for task in queue.iter() {
-            if let Err(e) = crate::storage::db::save_task_to_queue(
+            match crate::storage::db::save_task_to_queue(
                 &conn,
                 &task.id,
                 task.chat_id.0,
@@ -689,9 +689,12 @@ impl DownloadQueue {
                 task.priority as i32,
                 &Self::idempotency_key(task),
             ) {
-                log::error!("Graceful shutdown: failed to save task {}: {}", task.id, e);
-            } else {
-                flushed += 1;
+                Err(e) => {
+                    log::error!("Graceful shutdown: failed to save task {}: {}", task.id, e);
+                }
+                _ => {
+                    flushed += 1;
+                }
             }
         }
         flushed

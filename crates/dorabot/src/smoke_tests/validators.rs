@@ -243,11 +243,11 @@ pub fn validate_audio_file(path: &Path) -> AudioFileValidation {
     }
 
     // Verify duration is reasonable (at least 1 second)
-    if let Some(duration) = validation.duration {
-        if duration == 0 {
-            validation.error = Some("Audio duration is 0 seconds".to_string());
-            return validation;
-        }
+    if let Some(duration) = validation.duration
+        && duration == 0
+    {
+        validation.error = Some("Audio duration is 0 seconds".to_string());
+        return validation;
     }
 
     validation.is_valid = true;

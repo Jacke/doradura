@@ -6,8 +6,8 @@ use sqlx::Row;
 
 use crate::storage::db;
 
-use super::types::PreviewContext;
 use super::SharedStorage;
+use super::types::PreviewContext;
 
 /// Ensures the `preview_contexts` table exists with all columns (including `speed`).
 /// Uses `OnceLock` so the DDL only executes once per process lifetime.

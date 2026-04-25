@@ -8,7 +8,7 @@ use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, MediaMetadata, SourceProgress};
 use async_trait::async_trait;
-use lazy_regex::{lazy_regex, Lazy, Regex};
+use lazy_regex::{Lazy, Regex, lazy_regex};
 use reqwest::Client;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -97,18 +97,18 @@ fn html_decode(s: &str) -> String {
 fn extract_duration(html: &str) -> Option<u32> {
     // Try JSON-LD duration first: "duration":5.39
     // DUR_JSON_RE is a module-level LazyLock — compiled exactly once.
-    if let Some(caps) = DUR_JSON_RE.captures(html) {
-        if let Ok(secs) = caps[1].parse::<f64>() {
-            return Some(secs.ceil() as u32);
-        }
+    if let Some(caps) = DUR_JSON_RE.captures(html)
+        && let Ok(secs) = caps[1].parse::<f64>()
+    {
+        return Some(secs.ceil() as u32);
     }
 
     // Fallback: description "(Xs)"
     // DUR_DESC_RE is a module-level LazyLock — compiled exactly once.
-    if let Some(caps) = DUR_DESC_RE.captures(html) {
-        if let Ok(secs) = caps[1].parse::<u32>() {
-            return Some(secs);
-        }
+    if let Some(caps) = DUR_DESC_RE.captures(html)
+        && let Ok(secs) = caps[1].parse::<u32>()
+    {
+        return Some(secs);
     }
 
     None

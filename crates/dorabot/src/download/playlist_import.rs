@@ -1,6 +1,6 @@
 //! Playlist import from external URLs (YouTube, Spotify) using yt-dlp.
 
-use crate::download::search::{append_proxy_args, source_name_from_url, YtdlpFlatEntry};
+use crate::download::search::{YtdlpFlatEntry, append_proxy_args, source_name_from_url};
 use crate::storage::SharedStorage;
 use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;

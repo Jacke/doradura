@@ -361,14 +361,14 @@ impl InstagramSource {
         })?;
 
         // Detect doc_id expiry or error responses
-        if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
-            if message.contains("useragent mismatch") || message.contains("doc_id") {
-                log::error!("InstagramSource: possible doc_id expiry: {}", message);
-                return Err(AppError::Download(DownloadError::Instagram(format!(
-                    "doc_id may be expired: {}",
-                    message
-                ))));
-            }
+        if let Some(message) = body.get("message").and_then(|v| v.as_str())
+            && (message.contains("useragent mismatch") || message.contains("doc_id"))
+        {
+            log::error!("InstagramSource: possible doc_id expiry: {}", message);
+            return Err(AppError::Download(DownloadError::Instagram(format!(
+                "doc_id may be expired: {}",
+                message
+            ))));
         }
 
         // Navigate the GraphQL response structure
@@ -377,12 +377,12 @@ impl InstagramSource {
             .or_else(|| body.pointer("/data/shortcode_media"))
             .ok_or_else(|| {
                 // Check for specific error patterns
-                if let Some(message) = body.pointer("/message").and_then(|v| v.as_str()) {
-                    if message.contains("checkpoint_required") || message.contains("login_required") {
-                        return AppError::Download(DownloadError::Instagram(
-                            "Private account or login required".to_string(),
-                        ));
-                    }
+                if let Some(message) = body.pointer("/message").and_then(|v| v.as_str())
+                    && (message.contains("checkpoint_required") || message.contains("login_required"))
+                {
+                    return AppError::Download(DownloadError::Instagram(
+                        "Private account or login required".to_string(),
+                    ));
                 }
                 AppError::Download(DownloadError::Instagram(
                     "Post not found or media unavailable".to_string(),
@@ -1352,11 +1352,7 @@ impl DownloadSource for InstagramSource {
                             }
                         }
                     }
-                    if extras.is_empty() {
-                        None
-                    } else {
-                        Some(extras)
-                    }
+                    if extras.is_empty() { None } else { Some(extras) }
                 } else {
                     None
                 };

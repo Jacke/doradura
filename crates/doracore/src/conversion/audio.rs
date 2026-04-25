@@ -4,7 +4,7 @@
 //! - WAV, FLAC, OGG, M4A, Opus, AAC <-> MP3
 //! - Configurable bitrate for lossy formats
 
-use super::{temp_output_path, ConversionError, ConversionResult};
+use super::{ConversionError, ConversionResult, temp_output_path};
 use std::path::Path;
 use tokio::process::Command;
 

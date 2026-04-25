@@ -1,5 +1,5 @@
 // ── Re-export shared progress types from doracore ─────────────────────────────
-pub use doracore::download::progress::{create_progress_bar, source_display_name, DownloadStatus, ProgressBarStyle};
+pub use doracore::download::progress::{DownloadStatus, ProgressBarStyle, create_progress_bar, source_display_name};
 
 use crate::core::extract_retry_after;
 use crate::telegram::{Bot, BotExt};
@@ -61,12 +61,11 @@ impl ProgressMessage {
         if let Some(msg_id) = self.message_id {
             // Throttle edits: skip if last successful edit was < 1.5s ago
             // (except for non-Downloading statuses which are important transitions)
-            if matches!(status, DownloadStatus::Downloading { .. }) {
-                if let Some(last) = self.last_edit_at {
-                    if last.elapsed() < Self::EDIT_THROTTLE {
-                        return Ok(());
-                    }
-                }
+            if matches!(status, DownloadStatus::Downloading { .. })
+                && let Some(last) = self.last_edit_at
+                && last.elapsed() < Self::EDIT_THROTTLE
+            {
+                return Ok(());
             }
 
             // Update existing message

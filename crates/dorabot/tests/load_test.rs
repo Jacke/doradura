@@ -17,8 +17,8 @@ use load_test_metrics::{LoadTestMetrics, MetricsConfig, MetricsSummary, PassCrit
 use mocks::{MockDownloader, MockDownloaderConfig};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;

@@ -1,10 +1,10 @@
 //! Queue tab: active downloads with waveform gauges, sparklines, and URL input bar.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::{App, SlotState};
 

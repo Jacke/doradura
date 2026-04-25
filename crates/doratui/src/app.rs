@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::settings::DoraSettings;
-use crate::theme::{palette, ThemeColors};
+use crate::theme::{ThemeColors, palette};
 
 /// Re-export LogoScheme so that `ui/logo.rs` and other modules can import from `crate::app`.
 pub use crate::theme::LogoScheme;
@@ -694,20 +694,20 @@ impl App {
             .slots
             .iter()
             .filter_map(|s| {
-                if let SlotState::Celebrating { started, .. } = &s.state {
-                    if started.elapsed() >= Duration::from_secs(1) {
-                        let rect = self.slot_screen_rects.get(&s.id).copied().unwrap_or_default();
-                        return Some((s.id, rect));
-                    }
+                if let SlotState::Celebrating { started, .. } = &s.state
+                    && started.elapsed() >= Duration::from_secs(1)
+                {
+                    let rect = self.slot_screen_rects.get(&s.id).copied().unwrap_or_default();
+                    return Some((s.id, rect));
                 }
                 None
             })
             .collect();
         for (id, rect) in celebrating_done {
-            if let Some(slot) = self.slot_mut(id) {
-                if let SlotState::Celebrating { path, .. } = std::mem::replace(&mut slot.state, SlotState::Pending) {
-                    slot.state = SlotState::Done { path };
-                }
+            if let Some(slot) = self.slot_mut(id)
+                && let SlotState::Celebrating { path, .. } = std::mem::replace(&mut slot.state, SlotState::Pending)
+            {
+                slot.state = SlotState::Done { path };
             }
             // Spawn particles only when we have a valid screen rect.
             if rect.width > 0 && rect.height > 0 {
@@ -967,10 +967,10 @@ fn history_path() -> std::path::PathBuf {
 /// Load history from disk; returns empty vec on error.
 pub fn history_load() -> Vec<HistoryEntry> {
     let path = history_path();
-    if let Ok(content) = fs_err::read_to_string(&path) {
-        if let Ok(entries) = serde_json::from_str::<Vec<HistoryEntry>>(&content) {
-            return entries;
-        }
+    if let Ok(content) = fs_err::read_to_string(&path)
+        && let Ok(entries) = serde_json::from_str::<Vec<HistoryEntry>>(&content)
+    {
+        return entries;
     }
     Vec::new()
 }

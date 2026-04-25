@@ -13,8 +13,8 @@ use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
 use crate::download::progress::{ProgressBarStyle, ProgressMessage};
 use crate::download::source::bot_global;
 use crate::storage::SharedStorage;
-use crate::telegram::ext::BotExt;
 use crate::telegram::Bot;
+use crate::telegram::ext::BotExt;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::time::timeout;
@@ -93,10 +93,10 @@ pub async fn download_and_send_audio(
             crate::i18n::lang_from_code("ru")
         };
         let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
-        if let Some(ref storage) = shared_storage_clone {
-            if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
-                progress_msg.style = ProgressBarStyle::parse(&style_str);
-            }
+        if let Some(ref storage) = shared_storage_clone
+            && let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await
+        {
+            progress_msg.style = ProgressBarStyle::parse(&style_str);
         }
 
         // Global timeout for entire download operation
@@ -144,36 +144,36 @@ pub async fn download_and_send_audio(
             }
 
             // Share page: create after successful audio send (YouTube only, fire-and-forget)
-            if crate::core::share::is_youtube_url(url.as_str()) {
-                if let Some(ref storage) = shared_storage_clone {
-                    let storage_share = std::sync::Arc::clone(storage);
-                    let url_str = url.to_string();
-                    let title_share = pipeline_result.title.clone();
-                    let artist_share = pipeline_result.artist.clone();
-                    let duration_share = pipeline_result.duration;
-                    let bot_share = bot_clone.clone();
-                    tokio::spawn(async move {
-                        let thumb = crate::core::share::youtube_thumbnail_url(&url_str);
-                        let artist_opt = if artist_share.trim().is_empty() {
-                            None
-                        } else {
-                            Some(artist_share.as_str())
-                        };
-                        if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
-                            &storage_share,
-                            &url_str,
-                            &title_share,
-                            artist_opt,
-                            thumb.as_deref(),
-                            Some(duration_share as u64),
-                        )
-                        .await
-                        {
-                            send_share_message(&bot_share, chat_id, &title_share, &share_url, streaming_links.as_ref())
-                                .await;
-                        }
-                    });
-                }
+            if crate::core::share::is_youtube_url(url.as_str())
+                && let Some(ref storage) = shared_storage_clone
+            {
+                let storage_share = std::sync::Arc::clone(storage);
+                let url_str = url.to_string();
+                let title_share = pipeline_result.title.clone();
+                let artist_share = pipeline_result.artist.clone();
+                let duration_share = pipeline_result.duration;
+                let bot_share = bot_clone.clone();
+                tokio::spawn(async move {
+                    let thumb = crate::core::share::youtube_thumbnail_url(&url_str);
+                    let artist_opt = if artist_share.trim().is_empty() {
+                        None
+                    } else {
+                        Some(artist_share.as_str())
+                    };
+                    if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
+                        &storage_share,
+                        &url_str,
+                        &title_share,
+                        artist_opt,
+                        thumb.as_deref(),
+                        Some(duration_share as u64),
+                    )
+                    .await
+                    {
+                        send_share_message(&bot_share, chat_id, &title_share, &share_url, streaming_links.as_ref())
+                            .await;
+                    }
+                });
             }
 
             // Schedule file cleanup (including any carousel extras)
@@ -298,18 +298,21 @@ async fn add_audio_effects_button(
                             vec![crate::telegram::cb("🎵 Lyrics", format!("lyr:{}", session_id_clone))],
                         ]);
 
-                        if let Err(e) = bot_for_button
+                        match bot_for_button
                             .edit_message_reply_markup(chat_id, sent_message_id)
                             .reply_markup(keyboard)
                             .await
                         {
-                            log::warn!("Failed to add audio effects button: {}", e);
-                        } else {
-                            log::info!(
-                                "Added audio effects button to message {} for session {}",
-                                sent_message_id.0,
-                                session_id_clone
-                            );
+                            Err(e) => {
+                                log::warn!("Failed to add audio effects button: {}", e);
+                            }
+                            _ => {
+                                log::info!(
+                                    "Added audio effects button to message {} for session {}",
+                                    sent_message_id.0,
+                                    session_id_clone
+                                );
+                            }
                         }
                     });
                 }
@@ -344,23 +347,23 @@ async fn send_share_message(
     let mut has_links = false;
 
     if let Some(links) = streaming_links {
-        if let Some(ref url) = links.spotify {
-            if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("💚 Spotify", u));
-                has_links = true;
-            }
+        if let Some(ref url) = links.spotify
+            && let Ok(u) = url.parse()
+        {
+            row1.push(InlineKeyboardButton::url("💚 Spotify", u));
+            has_links = true;
         }
-        if let Some(ref url) = links.apple_music {
-            if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("🍎 Apple", u));
-                has_links = true;
-            }
+        if let Some(ref url) = links.apple_music
+            && let Ok(u) = url.parse()
+        {
+            row1.push(InlineKeyboardButton::url("🍎 Apple", u));
+            has_links = true;
         }
-        if let Some(ref url) = links.youtube_music {
-            if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("🔴 YT Music", u));
-                has_links = true;
-            }
+        if let Some(ref url) = links.youtube_music
+            && let Ok(u) = url.parse()
+        {
+            row1.push(InlineKeyboardButton::url("🔴 YT Music", u));
+            has_links = true;
         }
     }
 

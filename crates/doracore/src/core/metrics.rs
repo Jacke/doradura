@@ -9,9 +9,9 @@
 use std::sync::LazyLock;
 
 use prometheus::{
-    register_counter, register_counter_vec, register_gauge, register_gauge_vec, register_histogram,
-    register_histogram_vec, register_int_counter_vec, register_int_gauge, Counter, CounterVec, Gauge, GaugeVec,
-    Histogram, HistogramVec, IntCounterVec, IntGauge,
+    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramVec, IntCounterVec, IntGauge, register_counter,
+    register_counter_vec, register_gauge, register_gauge_vec, register_histogram, register_histogram_vec,
+    register_int_counter_vec, register_int_gauge,
 };
 
 /// Declare a Prometheus metric static with uniform panic-on-registration-failure handling.
@@ -60,14 +60,14 @@ macro_rules! metric {
                 .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
         });
     };
-    ($(#[$attr:meta])* pub $name:ident: Histogram = $id:literal, $help:literal, buckets = $buckets:expr) => {
+    ($(#[$attr:meta])* pub $name:ident: Histogram = $id:literal, $help:literal, buckets = $buckets:expr_2021) => {
         $(#[$attr])*
         pub static $name: LazyLock<Histogram> = LazyLock::new(|| {
             register_histogram!($id, $help, $buckets)
                 .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
         });
     };
-    ($(#[$attr:meta])* pub $name:ident: HistogramVec = $id:literal, $help:literal, labels = [$($lbl:literal),+ $(,)?], buckets = $buckets:expr) => {
+    ($(#[$attr:meta])* pub $name:ident: HistogramVec = $id:literal, $help:literal, labels = [$($lbl:literal),+ $(,)?], buckets = $buckets:expr_2021) => {
         $(#[$attr])*
         pub static $name: LazyLock<HistogramVec> = LazyLock::new(|| {
             register_histogram_vec!($id, $help, &[$($lbl),+], $buckets)
@@ -940,11 +940,11 @@ pub fn record_message_type(message_type: &str) {
 pub fn update_process_memory() {
     if let Ok(statm) = fs_err::read_to_string("/proc/self/statm") {
         // Fields: size resident shared text lib data dt (in pages)
-        if let Some(rss_pages) = statm.split_whitespace().nth(1) {
-            if let Ok(pages) = rss_pages.parse::<u64>() {
-                let page_size = 4096u64; // standard Linux page size
-                PROCESS_RESIDENT_MEMORY_BYTES.set((pages * page_size) as f64);
-            }
+        if let Some(rss_pages) = statm.split_whitespace().nth(1)
+            && let Ok(pages) = rss_pages.parse::<u64>()
+        {
+            let page_size = 4096u64; // standard Linux page size
+            PROCESS_RESIDENT_MEMORY_BYTES.set((pages * page_size) as f64);
         }
     }
 }

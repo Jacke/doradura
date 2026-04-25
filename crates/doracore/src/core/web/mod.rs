@@ -6,12 +6,12 @@
 use std::sync::Arc;
 
 use axum::{
+    Router,
     extract::{ConnectInfo, DefaultBodyLimit, Request},
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Router,
 };
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::TcpListener;
@@ -50,10 +50,10 @@ fn trusted_client_ip(req: &Request, socket_addr: IpAddr) -> IpAddr {
 
     if let Some(xff) = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         let parts: Vec<&str> = xff.split(',').map(str::trim).collect();
-        if parts.len() >= hops {
-            if let Ok(ip) = parts[parts.len() - hops].parse::<IpAddr>() {
-                return ip;
-            }
+        if parts.len() >= hops
+            && let Ok(ip) = parts[parts.len() - hops].parse::<IpAddr>()
+        {
+            return ip;
         }
     }
     socket_addr

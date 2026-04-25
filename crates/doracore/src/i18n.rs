@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fluent_templates::{fluent_bundle::FluentValue, static_loader, Loader};
+use fluent_templates::{Loader, fluent_bundle::FluentValue, static_loader};
 use std::sync::LazyLock;
 use unic_langid::LanguageIdentifier;
 
@@ -10,8 +10,8 @@ use unic_langid::LanguageIdentifier;
 /// without pulling in `fluent_templates` directly.
 pub use fluent_templates::fluent_bundle::FluentArgs;
 
-use crate::storage::db;
 use crate::storage::SharedStorage;
+use crate::storage::db;
 
 static_loader! {
     static LOCALES = {
@@ -80,11 +80,12 @@ pub async fn user_lang_from_storage_with_fallback(
     match storage.get_user_language(telegram_id).await {
         Ok(lang_code) => {
             // If user has default "ru" but Telegram says otherwise, adopt Telegram locale
-            if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported) {
-                if lang_code == "ru" && telegram_code != "ru" {
-                    let _ = storage.set_user_language(telegram_id, telegram_code).await;
-                    return lang_from_code(telegram_code);
-                }
+            if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported)
+                && lang_code == "ru"
+                && telegram_code != "ru"
+            {
+                let _ = storage.set_user_language(telegram_id, telegram_code).await;
+                return lang_from_code(telegram_code);
             }
             lang_from_code(&lang_code)
         }
@@ -104,21 +105,21 @@ pub fn user_lang_from_pool_with_fallback(
     telegram_id: i64,
     telegram_lang_code: Option<&str>,
 ) -> LanguageIdentifier {
-    let db_lang = if let Ok(conn) = db::get_connection(db_pool) {
-        db::get_user_language(&conn, telegram_id).ok()
-    } else {
-        None
+    let db_lang = match db::get_connection(db_pool) {
+        Ok(conn) => db::get_user_language(&conn, telegram_id).ok(),
+        _ => None,
     };
 
     if let Some(lang_code) = db_lang.as_deref() {
         let lang = lang_from_code(lang_code);
-        if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported) {
-            if lang_code == "ru" && telegram_code != "ru" {
-                if let Ok(conn) = db::get_connection(db_pool) {
-                    let _ = db::set_user_language(&conn, telegram_id, telegram_code);
-                }
-                return lang_from_code(telegram_code);
+        if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported)
+            && lang_code == "ru"
+            && telegram_code != "ru"
+        {
+            if let Ok(conn) = db::get_connection(db_pool) {
+                let _ = db::set_user_language(&conn, telegram_id, telegram_code);
             }
+            return lang_from_code(telegram_code);
         }
         return lang;
     }
@@ -151,7 +152,7 @@ pub fn t(lang: &LanguageIdentifier, key: &str) -> String {
 /// floats, and `&str` all work. Trailing commas are allowed.
 #[macro_export]
 macro_rules! fluent_args {
-    ($($key:expr => $val:expr),* $(,)?) => {{
+    ($($key:expr_2021 => $val:expr_2021),* $(,)?) => {{
         #[allow(unused_mut)]
         let mut args = $crate::i18n::FluentArgs::new();
         $(args.set($key, $val);)*

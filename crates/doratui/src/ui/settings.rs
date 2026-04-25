@@ -1,14 +1,14 @@
 //! Settings tab renderer for the dora TUI.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::{App, ClickTarget};
 use crate::settings::{AUDIO_BITRATES, FORMATS, RATE_LIMITS, THEME_FLAVOURS, VIDEO_QUALITIES};
-use crate::theme::{palette, CatppuccinFlavour, ThemeColors};
+use crate::theme::{CatppuccinFlavour, ThemeColors, palette};
 
 // ── Settings item descriptors ─────────────────────────────────────────────────
 
@@ -254,7 +254,7 @@ fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
             // Layout: [ARROW_W=4][LABEL_W=20][← VALUE →]
             if item.kind == ItemKind::Cycle {
                 let cycle_x = area.x + ARROW_W + LABEL_W; // no leading spaces for cycle items
-                                                          // "← " — click zone width 2 (arrow + space)
+                // "← " — click zone width 2 (arrow + space)
                 app.click_map
                     .push((Rect::new(cycle_x, row_y, 2, 1), ClickTarget::SettingsCycleLeft(idx)));
                 // " →" — skip "← " (2) + value chars + " " (1) = at col 3+val_len

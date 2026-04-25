@@ -3,14 +3,14 @@
 //! Handles displaying and managing user-uploaded media files with conversion options.
 
 use crate::conversion::video::{
-    calculate_video_note_split, compress, extract_audio, is_too_long_for_split, to_gif, to_video_note,
-    to_video_notes_split, CompressionOptions, GifOptions, VideoNoteOptions, VIDEO_NOTE_MAX_DURATION,
+    CompressionOptions, GifOptions, VIDEO_NOTE_MAX_DURATION, VideoNoteOptions, calculate_video_note_split, compress,
+    extract_audio, is_too_long_for_split, to_gif, to_video_note, to_video_notes_split,
 };
 use crate::core::escape_markdown;
 use crate::storage::uploads::UploadEntry;
 use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::BotExt;
-use crate::telegram::{download_file_from_telegram, Bot};
+use crate::telegram::{Bot, download_file_from_telegram};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId};
@@ -108,10 +108,10 @@ pub async fn show_videos_page(
             metadata_parts.push(format_duration(dur));
         }
 
-        if let Some(w) = upload.width {
-            if let Some(h) = upload.height {
-                metadata_parts.push(format!("{}x{}", w, h));
-            }
+        if let Some(w) = upload.width
+            && let Some(h) = upload.height
+        {
+            metadata_parts.push(format!("{}x{}", w, h));
         }
 
         if !metadata_parts.is_empty() {
@@ -354,10 +354,10 @@ fn build_upload_info_text(upload: &UploadEntry) -> String {
     if let Some(dur) = upload.duration {
         info_parts.push(format_duration(dur));
     }
-    if let Some(w) = upload.width {
-        if let Some(h) = upload.height {
-            info_parts.push(format!("{}x{}", w, h));
-        }
+    if let Some(w) = upload.width
+        && let Some(h) = upload.height
+    {
+        info_parts.push(format!("{}x{}", w, h));
     }
 
     let info_str = if info_parts.is_empty() {

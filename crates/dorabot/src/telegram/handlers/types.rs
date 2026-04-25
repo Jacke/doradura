@@ -10,11 +10,11 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::download::queue::DownloadQueue;
 use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
-use crate::storage::db;
 use crate::storage::SharedStorage;
 use crate::storage::SubtitleCache;
-use crate::telegram::notifications::notify_admin_new_user;
+use crate::storage::db;
 use crate::telegram::Bot;
+use crate::telegram::notifications::notify_admin_new_user;
 
 /// Error type for handlers
 pub type HandlerError = Box<dyn std::error::Error + Send + Sync + 'static>;

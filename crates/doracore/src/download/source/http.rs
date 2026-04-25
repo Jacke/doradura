@@ -203,20 +203,20 @@ impl HttpSource {
     /// Extract filename from Content-Disposition header or URL path.
     fn extract_filename(response: &reqwest::Response, url: &Url) -> String {
         // Try Content-Disposition header first
-        if let Some(cd) = response.headers().get("content-disposition") {
-            if let Ok(cd_str) = cd.to_str() {
-                // Parse: attachment; filename="file.mp3" or filename*=UTF-8''file.mp3
-                if let Some(start) = cd_str.find("filename=") {
-                    let value = &cd_str[start + 9..];
-                    let filename = value.trim_start_matches('"').split('"').next().unwrap_or("download");
-                    // Sanitize: strip path components to prevent traversal
-                    let safe_name = std::path::Path::new(filename)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("download");
-                    if !safe_name.is_empty() && !safe_name.contains('\0') {
-                        return safe_name.to_string();
-                    }
+        if let Some(cd) = response.headers().get("content-disposition")
+            && let Ok(cd_str) = cd.to_str()
+        {
+            // Parse: attachment; filename="file.mp3" or filename*=UTF-8''file.mp3
+            if let Some(start) = cd_str.find("filename=") {
+                let value = &cd_str[start + 9..];
+                let filename = value.trim_start_matches('"').split('"').next().unwrap_or("download");
+                // Sanitize: strip path components to prevent traversal
+                let safe_name = std::path::Path::new(filename)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("download");
+                if !safe_name.is_empty() && !safe_name.contains('\0') {
+                    return safe_name.to_string();
                 }
             }
         }
@@ -467,14 +467,14 @@ impl DownloadSource for HttpSource {
             downloaded += chunk.len() as u64;
 
             // Check max file size
-            if let Some(max_size) = request.max_file_size {
-                if downloaded > max_size {
-                    crate::core::utils::try_remove_file(&request.output_path).await;
-                    return Err(AppError::Validation(format!(
-                        "File exceeds maximum size: {} bytes > {} bytes",
-                        downloaded, max_size
-                    )));
-                }
+            if let Some(max_size) = request.max_file_size
+                && downloaded > max_size
+            {
+                crate::core::utils::try_remove_file(&request.output_path).await;
+                return Err(AppError::Validation(format!(
+                    "File exceeds maximum size: {} bytes > {} bytes",
+                    downloaded, max_size
+                )));
             }
 
             // Send progress

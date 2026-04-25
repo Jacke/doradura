@@ -1,6 +1,6 @@
 use crate::i18n;
-use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
+use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::telegram::Bot;
 use crate::telegram::BotExt;
 use std::sync::Arc;
@@ -245,21 +245,21 @@ pub async fn send_ringtone_instructions(
     let asset_dir = std::path::Path::new(platform.asset_dir());
     let mut local_images: Vec<std::path::PathBuf> = Vec::new();
 
-    if asset_dir.is_dir() {
-        if let Ok(mut entries) = fs_err::tokio::read_dir(asset_dir).await {
-            let mut paths = Vec::new();
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let p = entry.path();
-                if let Some(ext) = p.extension() {
-                    let ext_low = ext.to_string_lossy().to_lowercase();
-                    if ext_low == "jpg" || ext_low == "jpeg" || ext_low == "png" {
-                        paths.push(p);
-                    }
+    if asset_dir.is_dir()
+        && let Ok(mut entries) = fs_err::tokio::read_dir(asset_dir).await
+    {
+        let mut paths = Vec::new();
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let p = entry.path();
+            if let Some(ext) = p.extension() {
+                let ext_low = ext.to_string_lossy().to_lowercase();
+                if ext_low == "jpg" || ext_low == "jpeg" || ext_low == "png" {
+                    paths.push(p);
                 }
             }
-            paths.sort();
-            local_images = paths;
         }
+        paths.sort();
+        local_images = paths;
     }
 
     // Check if we have cached file_ids in DB for ALL steps
@@ -317,12 +317,11 @@ pub async fn send_ringtone_instructions(
                     let step = i + 1;
                     let key = format!("{}{}", key_prefix, step);
                     // The largest photo in each message
-                    if let Some(photos) = msg.photo() {
-                        if let Some(largest) = photos.iter().max_by_key(|p| p.width * p.height) {
-                            if let Err(e) = shared_storage.set_bot_asset(&key, &largest.file.id.0).await {
-                                log::warn!("Failed to cache ringtone instruction file_id: {}", e);
-                            }
-                        }
+                    if let Some(photos) = msg.photo()
+                        && let Some(largest) = photos.iter().max_by_key(|p| p.width * p.height)
+                        && let Err(e) = shared_storage.set_bot_asset(&key, &largest.file.id.0).await
+                    {
+                        log::warn!("Failed to cache ringtone instruction file_id: {}", e);
                     }
                 }
             }

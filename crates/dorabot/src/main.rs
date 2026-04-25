@@ -49,7 +49,8 @@ async fn main() -> Result<()> {
             log::info!("Running bot with cookies refresh (webhook: {})", webhook);
             if let Some(cookies_path) = cookies {
                 // Safety: runs before any concurrent access to env vars
-                std::env::set_var("YTDL_COOKIES_FILE", cookies_path);
+                // TODO: Audit that the environment access only happens in single-threaded code.
+                unsafe { std::env::set_var("YTDL_COOKIES_FILE", cookies_path) };
             }
             doradura::startup::run_bot(webhook).await
         }

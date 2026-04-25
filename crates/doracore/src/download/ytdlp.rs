@@ -4,7 +4,7 @@ use crate::download::error::DownloadError;
 use std::process::Command;
 use std::sync::LazyLock;
 use tokio::process::Command as TokioCommand;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use tokio_util::sync::CancellationToken;
 
 /// Auto-update interval for yt-dlp (1 hour)

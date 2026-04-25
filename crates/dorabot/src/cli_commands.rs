@@ -72,10 +72,18 @@ pub async fn run_cli_download(
         }
         "mp4" => {
             let quality_format = match quality.as_str() {
-                "1080p" => "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
-                "720p" => "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]",
-                "480p" => "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]",
-                "360p" => "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]",
+                "1080p" => {
+                    "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+                }
+                "720p" => {
+                    "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]"
+                }
+                "480p" => {
+                    "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]"
+                }
+                "360p" => {
+                    "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]"
+                }
                 _ => "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
             };
             println!("Video quality: {}", quality);
@@ -167,12 +175,13 @@ pub async fn run_cli_download(
             args.extend_from_slice(&["--proxy".to_string(), proxy_config.url.clone()]);
         }
 
-        if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
-            if !cookies_file.is_empty() && std::path::Path::new(cookies_file).exists() {
-                args.extend_from_slice(&["--cookies".to_string(), cookies_file.clone()]);
-                if verbose && attempt == 0 {
-                    println!("Using cookies from: {}", cookies_file);
-                }
+        if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE
+            && !cookies_file.is_empty()
+            && std::path::Path::new(cookies_file).exists()
+        {
+            args.extend_from_slice(&["--cookies".to_string(), cookies_file.clone()]);
+            if verbose && attempt == 0 {
+                println!("Using cookies from: {}", cookies_file);
             }
         }
 
@@ -284,11 +293,12 @@ pub async fn run_cli_info(url: String, json: bool) -> Result<()> {
             "--no-check-certificate".to_string(),
         ];
 
-        if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
-            if !cookies_file.is_empty() && std::path::Path::new(cookies_file).exists() {
-                args.insert(0, "--cookies".to_string());
-                args.insert(1, cookies_file.clone());
-            }
+        if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE
+            && !cookies_file.is_empty()
+            && std::path::Path::new(cookies_file).exists()
+        {
+            args.insert(0, "--cookies".to_string());
+            args.insert(1, cookies_file.clone());
         }
 
         args.extend_from_slice(&[
@@ -320,11 +330,12 @@ pub async fn run_cli_info(url: String, json: bool) -> Result<()> {
             "--no-check-certificate".to_string(),
         ];
 
-        if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
-            if !cookies_file.is_empty() && std::path::Path::new(cookies_file).exists() {
-                args.insert(0, "--cookies".to_string());
-                args.insert(1, cookies_file.clone());
-            }
+        if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE
+            && !cookies_file.is_empty()
+            && std::path::Path::new(cookies_file).exists()
+        {
+            args.insert(0, "--cookies".to_string());
+            args.insert(1, cookies_file.clone());
         }
 
         args.extend_from_slice(&[

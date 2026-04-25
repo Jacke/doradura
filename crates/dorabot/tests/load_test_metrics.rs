@@ -203,10 +203,10 @@ impl LoadTestMetrics {
         if self.config.collect_request_timing {
             let mut samples = self.timing_samples.write();
             let len = samples.len();
-            if len > 0 {
-                if let Some(sample) = samples.get_mut(sample_id % len) {
-                    sample.started_at = Some(Instant::now());
-                }
+            if len > 0
+                && let Some(sample) = samples.get_mut(sample_id % len)
+            {
+                sample.started_at = Some(Instant::now());
             }
         }
     }
@@ -224,21 +224,21 @@ impl LoadTestMetrics {
         if self.config.collect_request_timing {
             let mut samples = self.timing_samples.write();
             let len = samples.len();
-            if len > 0 {
-                if let Some(sample) = samples.get_mut(sample_id % len) {
-                    sample.completed_at = Some(Instant::now());
-                    sample.success = success;
+            if len > 0
+                && let Some(sample) = samples.get_mut(sample_id % len)
+            {
+                sample.completed_at = Some(Instant::now());
+                sample.success = success;
 
-                    // Update histograms
-                    if let Some(wait) = sample.queue_wait_time() {
-                        self.record_to_histogram(&self.queue_wait_histogram, wait.as_millis() as u64);
-                    }
-                    if let Some(proc) = sample.processing_time() {
-                        self.record_to_histogram(&self.processing_histogram, proc.as_millis() as u64);
-                    }
-                    if let Some(total) = sample.total_time() {
-                        self.record_to_histogram(&self.total_latency_histogram, total.as_millis() as u64);
-                    }
+                // Update histograms
+                if let Some(wait) = sample.queue_wait_time() {
+                    self.record_to_histogram(&self.queue_wait_histogram, wait.as_millis() as u64);
+                }
+                if let Some(proc) = sample.processing_time() {
+                    self.record_to_histogram(&self.processing_histogram, proc.as_millis() as u64);
+                }
+                if let Some(total) = sample.total_time() {
+                    self.record_to_histogram(&self.total_latency_histogram, total.as_millis() as u64);
                 }
             }
         }

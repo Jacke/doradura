@@ -348,8 +348,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[derive(Debug)]
     struct TestError(bool); // bool = is_retryable
@@ -388,11 +388,7 @@ mod tests {
             let counter = counter_clone.clone();
             async move {
                 let attempt = counter.fetch_add(1, Ordering::SeqCst);
-                if attempt < 2 {
-                    Err(TestError(true))
-                } else {
-                    Ok(42)
-                }
+                if attempt < 2 { Err(TestError(true)) } else { Ok(42) }
             }
         })
         .await;

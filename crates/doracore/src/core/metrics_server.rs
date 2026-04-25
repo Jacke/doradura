@@ -4,11 +4,11 @@
 //! It runs on a separate port (configurable via METRICS_PORT env var, default 9090).
 
 use axum::{
+    Router,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use prometheus::{Encoder, TextEncoder};
 use std::net::SocketAddr;

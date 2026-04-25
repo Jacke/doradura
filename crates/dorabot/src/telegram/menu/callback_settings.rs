@@ -1,15 +1,15 @@
 use crate::core::subscription::{create_subscription_invoice, show_subscription_info};
 use crate::extension::ExtensionRegistry;
 use crate::i18n;
+use crate::storage::SharedStorage;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
-use crate::storage::SharedStorage;
 use crate::telegram::setup_chat_bot_commands;
 use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
+use teloxide::RequestError;
 use teloxide::prelude::*;
 use teloxide::types::CallbackQueryId;
-use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
 
 use super::main_menu::{
@@ -514,57 +514,60 @@ async fn handle_settings_language_select_new(
         .any(|(code, _)| code.eq_ignore_ascii_case(lang_code))
     {
         let username = from.username.clone();
-        if let Err(e) = shared_storage
+        match shared_storage
             .create_user_with_language(chat_id.0, username.clone(), Some(lang_code))
             .await
         {
-            log::warn!("Failed to create user with language: {}", e);
-            let _ = bot
-                .answer_callback_query(callback_id.clone())
-                .text("Failed to save language. Please try again.")
-                .await;
-        } else {
-            log::info!(
-                "New user created with language: chat_id={}, language={}",
-                chat_id.0,
-                lang_code
-            );
-            // Notify admins about new user
-            use crate::telegram::notifications::notify_admin_new_user;
-            let bot_notify = bot.clone();
-            let user_id = chat_id.0;
-            let first_name = from.first_name.clone();
-            let lang_str = lang_code.to_string();
-            tokio::spawn(async move {
-                notify_admin_new_user(
-                    &bot_notify,
-                    user_id,
-                    username.as_deref(),
-                    Some(&first_name),
-                    Some(&lang_str),
-                    Some("/start → language"),
-                )
-                .await;
-            });
-
-            let new_lang = i18n::lang_from_code(lang_code);
-            if let Err(e) = setup_chat_bot_commands(bot, chat_id, &new_lang).await {
-                log::warn!("Failed to set chat-specific commands for lang {}: {}", lang_code, e);
+            Err(e) => {
+                log::warn!("Failed to create user with language: {}", e);
+                let _ = bot
+                    .answer_callback_query(callback_id.clone())
+                    .text("Failed to save language. Please try again.")
+                    .await;
             }
-            let _ = bot
-                .answer_callback_query(callback_id.clone())
-                .text(i18n::t(&new_lang, "menu.language_saved"))
-                .await;
+            _ => {
+                log::info!(
+                    "New user created with language: chat_id={}, language={}",
+                    chat_id.0,
+                    lang_code
+                );
+                // Notify admins about new user
+                use crate::telegram::notifications::notify_admin_new_user;
+                let bot_notify = bot.clone();
+                let user_id = chat_id.0;
+                let first_name = from.first_name.clone();
+                let lang_str = lang_code.to_string();
+                tokio::spawn(async move {
+                    notify_admin_new_user(
+                        &bot_notify,
+                        user_id,
+                        username.as_deref(),
+                        Some(&first_name),
+                        Some(&lang_str),
+                        Some("/start → language"),
+                    )
+                    .await;
+                });
 
-            bot.try_delete(chat_id, message_id).await;
-            let _ = show_enhanced_main_menu(bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
+                let new_lang = i18n::lang_from_code(lang_code);
+                if let Err(e) = setup_chat_bot_commands(bot, chat_id, &new_lang).await {
+                    log::warn!("Failed to set chat-specific commands for lang {}: {}", lang_code, e);
+                }
+                let _ = bot
+                    .answer_callback_query(callback_id.clone())
+                    .text(i18n::t(&new_lang, "menu.language_saved"))
+                    .await;
 
-            // Send random voice message in background
-            let bot_voice = bot.clone();
-            let chat_id_voice = chat_id;
-            tokio::spawn(async move {
-                crate::telegram::voice::send_random_voice_message(bot_voice, chat_id_voice).await;
-            });
+                bot.try_delete(chat_id, message_id).await;
+                let _ = show_enhanced_main_menu(bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
+
+                // Send random voice message in background
+                let bot_voice = bot.clone();
+                let chat_id_voice = chat_id;
+                tokio::spawn(async move {
+                    crate::telegram::voice::send_random_voice_message(bot_voice, chat_id_voice).await;
+                });
+            }
         }
     } else {
         let fallback_lang = i18n::lang_from_code("ru");
@@ -597,38 +600,44 @@ async fn handle_settings_language_set(
         .iter()
         .any(|(code, _)| code.eq_ignore_ascii_case(lang_code))
     {
-        if let Ok(None) = shared_storage.get_user(chat_id.0).await {
-            log::info!(
-                "Creating user before setting language: chat_id={}, username={:?}",
-                chat_id.0,
-                from.username
-            );
-            let username = from.username.clone();
-            if let Err(e) = shared_storage
-                .create_user_with_language(chat_id.0, username.clone(), Some(lang_code))
-                .await
-            {
-                log::warn!("Failed to create user before setting language: {}", e);
-            } else {
-                use crate::telegram::notifications::notify_admin_new_user;
-                let bot_notify = bot.clone();
-                let user_id = chat_id.0;
-                let first_name = from.first_name.clone();
-                let lang_str = lang_code.to_string();
-                tokio::spawn(async move {
-                    notify_admin_new_user(
-                        &bot_notify,
-                        user_id,
-                        username.as_deref(),
-                        Some(&first_name),
-                        Some(&lang_str),
-                        Some("language change"),
-                    )
-                    .await;
-                });
+        match shared_storage.get_user(chat_id.0).await {
+            Ok(None) => {
+                log::info!(
+                    "Creating user before setting language: chat_id={}, username={:?}",
+                    chat_id.0,
+                    from.username
+                );
+                let username = from.username.clone();
+                match shared_storage
+                    .create_user_with_language(chat_id.0, username.clone(), Some(lang_code))
+                    .await
+                {
+                    Err(e) => {
+                        log::warn!("Failed to create user before setting language: {}", e);
+                    }
+                    _ => {
+                        use crate::telegram::notifications::notify_admin_new_user;
+                        let bot_notify = bot.clone();
+                        let user_id = chat_id.0;
+                        let first_name = from.first_name.clone();
+                        let lang_str = lang_code.to_string();
+                        tokio::spawn(async move {
+                            notify_admin_new_user(
+                                &bot_notify,
+                                user_id,
+                                username.as_deref(),
+                                Some(&first_name),
+                                Some(&lang_str),
+                                Some("language change"),
+                            )
+                            .await;
+                        });
+                    }
+                }
             }
-        } else {
-            let _ = shared_storage.set_user_language(chat_id.0, lang_code).await;
+            _ => {
+                let _ = shared_storage.set_user_language(chat_id.0, lang_code).await;
+            }
         }
 
         let new_lang = i18n::lang_from_code(lang_code);
@@ -1076,37 +1085,37 @@ async fn handle_settings_video_send_type_toggle(
             .await
             .map_err(db_err)?;
 
-        if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) = q_message {
-            if let Some(keyboard) = regular_msg.reply_markup() {
-                let mut new_buttons = keyboard.inline_keyboard.clone();
+        if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) = q_message
+            && let Some(keyboard) = regular_msg.reply_markup()
+        {
+            let mut new_buttons = keyboard.inline_keyboard.clone();
 
-                for row in &mut new_buttons {
-                    for button in row {
-                        if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb_data) = button.kind {
-                            if cb_data.starts_with("video_send_type:toggle:") {
-                                button.text = if new_value == 0 {
-                                    "📹 Send as: Media ✓".to_string()
-                                } else {
-                                    "📄 Send as: Document ✓".to_string()
-                                };
-                                log::debug!("Updated toggle button text to: {}", button.text);
-                            }
-                        }
+            for row in &mut new_buttons {
+                for button in row {
+                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb_data) = button.kind
+                        && cb_data.starts_with("video_send_type:toggle:")
+                    {
+                        button.text = if new_value == 0 {
+                            "📹 Send as: Media ✓".to_string()
+                        } else {
+                            "📄 Send as: Document ✓".to_string()
+                        };
+                        log::debug!("Updated toggle button text to: {}", button.text);
                     }
                 }
-
-                let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
-                let _ = bot
-                    .edit_message_reply_markup(chat_id, message_id)
-                    .reply_markup(new_keyboard)
-                    .await;
-
-                log::info!(
-                    "✅ Updated video preview keyboard for user {} (url_id: {})",
-                    chat_id.0,
-                    url_id
-                );
             }
+
+            let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
+            let _ = bot
+                .edit_message_reply_markup(chat_id, message_id)
+                .reply_markup(new_keyboard)
+                .await;
+
+            log::info!(
+                "✅ Updated video preview keyboard for user {} (url_id: {})",
+                chat_id.0,
+                url_id
+            );
         }
     }
     Ok(())

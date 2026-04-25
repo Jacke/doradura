@@ -1,10 +1,10 @@
 //! Lyrics tab: search input and scrollable lyrics display.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::{App, ClickTarget};
 

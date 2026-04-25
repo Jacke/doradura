@@ -76,9 +76,5 @@ pub async fn fetch_streaming_links(source_url: &str) -> Option<StreamingLinks> {
         amazon_music: get("amazonMusic"),
     };
 
-    if links.has_any() {
-        Some(links)
-    } else {
-        None
-    }
+    if links.has_any() { Some(links) } else { None }
 }

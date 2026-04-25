@@ -9,7 +9,7 @@ pub mod recorder;
 pub mod snapshots;
 
 #[allow(unused_imports)]
-pub use fixtures::{create_message_json, TestEnvironment};
+pub use fixtures::{TestEnvironment, create_message_json};
 #[allow(unused_imports)]
 pub use helpers::create_test_chat_id;
 #[allow(unused_imports)]

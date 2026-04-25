@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo bench --bench queue_benchmark
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -5,7 +5,7 @@
 use crate::download::source::instagram::InstagramSource;
 use crate::watcher::traits::{CheckResult, ContentWatcher, MediaAttachment, WatchUpdate};
 use async_trait::async_trait;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
 /// Bitmask constants for Instagram content types.
 pub const MASK_POSTS: u32 = 1;

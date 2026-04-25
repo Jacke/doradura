@@ -69,10 +69,8 @@ pub async fn handle_browser_login_command(bot: &Bot, chat_id: ChatId, user_id: i
                     && !novnc_url.contains("127.0.0.1"));
 
             let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-            if is_public_url {
-                if let Ok(url) = novnc_url.parse() {
-                    rows.push(vec![InlineKeyboardButton::url("🌐 Open noVNC", url)]);
-                }
+            if is_public_url && let Ok(url) = novnc_url.parse() {
+                rows.push(vec![InlineKeyboardButton::url("🌐 Open noVNC", url)]);
             }
             rows.push(vec![
                 crate::telegram::cb("✅ Done — export cookies", "admin:browser_login_done".to_string()),

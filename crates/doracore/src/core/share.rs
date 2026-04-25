@@ -112,12 +112,12 @@ pub fn extract_youtube_video_id(url: &str) -> Option<String> {
     }
 
     // youtube.com/watch?v=VIDEO_ID
-    if url.contains("youtube.com/") {
-        if let Ok(parsed) = url::Url::parse(url) {
-            for (key, val) in parsed.query_pairs() {
-                if key == "v" && !val.is_empty() {
-                    return Some(val.into_owned());
-                }
+    if url.contains("youtube.com/")
+        && let Ok(parsed) = url::Url::parse(url)
+    {
+        for (key, val) in parsed.query_pairs() {
+            if key == "v" && !val.is_empty() {
+                return Some(val.into_owned());
             }
         }
     }

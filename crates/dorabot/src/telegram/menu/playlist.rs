@@ -19,8 +19,8 @@
 
 use crate::core::types::Plan;
 use crate::download::search::format_duration;
-use crate::storage::db::{self, DbPool};
 use crate::storage::SharedStorage;
+use crate::storage::db::{self, DbPool};
 use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -239,17 +239,18 @@ pub async fn handle_playlist_name_input(
                 }
             }
         }
-        NameAction::Rename(pl_id) => {
-            if let Err(e) = shared_storage.rename_playlist(pl_id, chat_id.0, text).await {
+        NameAction::Rename(pl_id) => match shared_storage.rename_playlist(pl_id, chat_id.0, text).await {
+            Err(e) => {
                 log::error!("Failed to rename playlist: {}", e);
                 let _ = bot.send_message(chat_id, "Failed to rename playlist.").await;
-            } else {
+            }
+            _ => {
                 let _ = bot
                     .send_message(chat_id, format!("✏️ Playlist renamed to \"{}\"", text))
                     .await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
-        }
+        },
     }
 }
 
@@ -538,16 +539,16 @@ pub async fn handle_playlist_callback(
     // pl:view:{pl_id}:{page}
     if let Some(rest) = data.strip_prefix("pl:view:") {
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            if let (Ok(pl_id), Ok(page)) = (parts[0].parse::<i64>(), parts[1].parse::<usize>()) {
-                // Allow viewing own playlists or public playlists
-                match shared_storage.get_playlist(pl_id).await {
-                    Ok(Some(pl)) if pl.user_id == chat_id.0 || pl.is_public => {}
-                    _ => return Ok(()),
-                }
-                bot.try_delete(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, page, &db_pool, &shared_storage).await;
+        if parts.len() == 2
+            && let (Ok(pl_id), Ok(page)) = (parts[0].parse::<i64>(), parts[1].parse::<usize>())
+        {
+            // Allow viewing own playlists or public playlists
+            match shared_storage.get_playlist(pl_id).await {
+                Ok(Some(pl)) if pl.user_id == chat_id.0 || pl.is_public => {}
+                _ => return Ok(()),
             }
+            bot.try_delete(chat_id, message_id).await;
+            let _ = show_playlist_view(bot, chat_id, pl_id, page, &db_pool, &shared_storage).await;
         }
         return Ok(());
     }
@@ -621,19 +622,19 @@ pub async fn handle_playlist_callback(
     // pl:pub:{pl_id}:{0|1}
     if let Some(rest) = data.strip_prefix("pl:pub:") {
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            if let (Ok(pl_id), Ok(val)) = (parts[0].parse::<i64>(), parts[1].parse::<i32>()) {
-                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
-                    return Ok(());
-                }
-                if let Err(e) = shared_storage.set_playlist_public(pl_id, val != 0).await {
-                    log::error!("Failed to set playlist {} public={}: {}", pl_id, val != 0, e);
-                    let _ = bot.send_message(chat_id, "Failed to update playlist visibility.").await;
-                    return Ok(());
-                }
-                bot.try_delete(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
+        if parts.len() == 2
+            && let (Ok(pl_id), Ok(val)) = (parts[0].parse::<i64>(), parts[1].parse::<i32>())
+        {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
+                return Ok(());
             }
+            if let Err(e) = shared_storage.set_playlist_public(pl_id, val != 0).await {
+                log::error!("Failed to set playlist {} public={}: {}", pl_id, val != 0, e);
+                let _ = bot.send_message(chat_id, "Failed to update playlist visibility.").await;
+                return Ok(());
+            }
+            bot.try_delete(chat_id, message_id).await;
+            let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
         }
         return Ok(());
     }
@@ -683,41 +684,41 @@ pub async fn handle_playlist_callback(
     // pl:addf:{pl_id}:{src}
     if let Some(rest) = data.strip_prefix("pl:addf:") {
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            if let Ok(pl_id) = parts[0].parse::<i64>() {
-                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
-                    return Ok(());
-                }
-                bot.try_delete(chat_id, message_id).await;
-                match parts[1] {
-                    "y" | "s" => {
-                        // Prompt for search — will be handled by search module
-                        let _ = bot.send_message(chat_id, "🔍 Type your search query:").await;
-                        // Set search context
-                        use super::search::{set_search_session, SearchContext, SearchSession};
-                        // We store the context for future search handling
-                        let _ = set_search_session(
-                            &shared_storage,
-                            chat_id.0,
-                            &SearchSession {
-                                query: String::new(),
-                                results: vec![],
-                                source: if parts[1] == "y" {
-                                    crate::download::search::SearchSource::YouTube
-                                } else {
-                                    crate::download::search::SearchSource::SoundCloud
-                                },
-                                context: SearchContext::AddToPlaylist { playlist_id: pl_id },
+        if parts.len() == 2
+            && let Ok(pl_id) = parts[0].parse::<i64>()
+        {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
+                return Ok(());
+            }
+            bot.try_delete(chat_id, message_id).await;
+            match parts[1] {
+                "y" | "s" => {
+                    // Prompt for search — will be handled by search module
+                    let _ = bot.send_message(chat_id, "🔍 Type your search query:").await;
+                    // Set search context
+                    use super::search::{SearchContext, SearchSession, set_search_session};
+                    // We store the context for future search handling
+                    let _ = set_search_session(
+                        &shared_storage,
+                        chat_id.0,
+                        &SearchSession {
+                            query: String::new(),
+                            results: vec![],
+                            source: if parts[1] == "y" {
+                                crate::download::search::SearchSource::YouTube
+                            } else {
+                                crate::download::search::SearchSource::SoundCloud
                             },
-                        )
-                        .await;
-                    }
-                    "h" => {
-                        // Show download history for adding
-                        let _ = show_history_for_add(bot, chat_id, pl_id, 0, &shared_storage).await;
-                    }
-                    _ => {}
+                            context: SearchContext::AddToPlaylist { playlist_id: pl_id },
+                        },
+                    )
+                    .await;
                 }
+                "h" => {
+                    // Show download history for adding
+                    let _ = show_history_for_add(bot, chat_id, pl_id, 0, &shared_storage).await;
+                }
+                _ => {}
             }
         }
         return Ok(());
@@ -726,19 +727,19 @@ pub async fn handle_playlist_callback(
     // pl:rm:{pl_id}:{item_id}
     if let Some(rest) = data.strip_prefix("pl:rm:") {
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            if let (Ok(pl_id), Ok(item_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
-                    return Ok(());
-                }
-                if let Err(e) = shared_storage.remove_playlist_item(item_id).await {
-                    log::error!("Failed to remove playlist item {}: {}", item_id, e);
-                    let _ = bot.send_message(chat_id, "Failed to remove track.").await;
-                    return Ok(());
-                }
-                bot.try_delete(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
+        if parts.len() == 2
+            && let (Ok(pl_id), Ok(item_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>())
+        {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
+                return Ok(());
             }
+            if let Err(e) = shared_storage.remove_playlist_item(item_id).await {
+                log::error!("Failed to remove playlist item {}: {}", item_id, e);
+                let _ = bot.send_message(chat_id, "Failed to remove track.").await;
+                return Ok(());
+            }
+            bot.try_delete(chat_id, message_id).await;
+            let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
         }
         return Ok(());
     }
@@ -746,24 +747,24 @@ pub async fn handle_playlist_callback(
     // pl:mv:{pl_id}:{item_id}:{d}
     if let Some(rest) = data.strip_prefix("pl:mv:") {
         let parts: Vec<&str> = rest.splitn(3, ':').collect();
-        if parts.len() == 3 {
-            if let (Ok(pl_id), Ok(item_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
-                    return Ok(());
-                }
-                let direction = match parts[2] {
-                    "u" => -1,
-                    "d" => 1,
-                    _ => 0,
-                };
-                if direction != 0 {
-                    if let Err(e) = shared_storage.reorder_playlist_item(item_id, direction).await {
-                        log::error!("Failed to reorder playlist item {}: {}", item_id, e);
-                    }
-                }
-                bot.try_delete(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
+        if parts.len() == 3
+            && let (Ok(pl_id), Ok(item_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>())
+        {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
+                return Ok(());
             }
+            let direction = match parts[2] {
+                "u" => -1,
+                "d" => 1,
+                _ => 0,
+            };
+            if direction != 0
+                && let Err(e) = shared_storage.reorder_playlist_item(item_id, direction).await
+            {
+                log::error!("Failed to reorder playlist item {}: {}", item_id, e);
+            }
+            bot.try_delete(chat_id, message_id).await;
+            let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
         }
         return Ok(());
     }
@@ -788,28 +789,28 @@ pub async fn handle_playlist_callback(
     // pl:hadd:{pl_id}:{entry_id}:{page} — add from download history
     if let Some(rest) = data.strip_prefix("pl:hadd:") {
         let parts: Vec<&str> = rest.splitn(3, ':').collect();
-        if parts.len() >= 2 {
-            if let (Ok(pl_id), Ok(entry_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
-                    return Ok(());
-                }
-                if let Ok(Some(entry)) = shared_storage.get_download_history_entry(chat_id.0, entry_id).await {
-                    let source = crate::download::search::source_name_from_url(&entry.url);
-                    let _ = shared_storage
-                        .add_playlist_item(
-                            pl_id,
-                            &entry.title,
-                            entry.author.as_deref(),
-                            &entry.url,
-                            entry.duration.map(|d| d as i32),
-                            entry.file_id.as_deref(),
-                            source,
-                        )
-                        .await;
-                    let _ = bot
-                        .send_message(chat_id, format!("➕ Added \"{}\" to playlist", entry.title))
-                        .await;
-                }
+        if parts.len() >= 2
+            && let (Ok(pl_id), Ok(entry_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>())
+        {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
+                return Ok(());
+            }
+            if let Ok(Some(entry)) = shared_storage.get_download_history_entry(chat_id.0, entry_id).await {
+                let source = crate::download::search::source_name_from_url(&entry.url);
+                let _ = shared_storage
+                    .add_playlist_item(
+                        pl_id,
+                        &entry.title,
+                        entry.author.as_deref(),
+                        &entry.url,
+                        entry.duration.map(|d| d as i32),
+                        entry.file_id.as_deref(),
+                        source,
+                    )
+                    .await;
+                let _ = bot
+                    .send_message(chat_id, format!("➕ Added \"{}\" to playlist", entry.title))
+                    .await;
             }
         }
         return Ok(());

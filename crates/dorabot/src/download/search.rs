@@ -140,15 +140,13 @@ pub async fn search(
     let cache_key = format!("{}:{}", source.cache_key(), query.to_lowercase());
 
     // Check cache
-    if let Some(pool) = db_pool {
-        if let Ok(conn) = db::get_connection(pool) {
-            if let Ok(Some(cached)) = db::get_cached_search(&conn, &cache_key, CACHE_TTL_MINUTES) {
-                if let Ok(results) = serde_json::from_str::<Vec<SearchResult>>(&cached) {
-                    log::debug!("Search cache hit for '{}'", cache_key);
-                    return Ok(results);
-                }
-            }
-        }
+    if let Some(pool) = db_pool
+        && let Ok(conn) = db::get_connection(pool)
+        && let Ok(Some(cached)) = db::get_cached_search(&conn, &cache_key, CACHE_TTL_MINUTES)
+        && let Ok(results) = serde_json::from_str::<Vec<SearchResult>>(&cached)
+    {
+        log::debug!("Search cache hit for '{}'", cache_key);
+        return Ok(results);
     }
 
     let search_query = format!("{}{}:{}", source.prefix(), limit, query);
@@ -235,15 +233,15 @@ pub async fn search(
     }
 
     // Cache results and periodically clean up stale entries
-    if let Some(pool) = db_pool {
-        if let Ok(conn) = db::get_connection(pool) {
-            if let Ok(json) = serde_json::to_string(&results) {
-                let _ = db::cache_search_results(&conn, &cache_key, &json);
-            }
-            // Cleanup stale cache entries ~5% of the time
-            if rand::random::<u8>() < 13 {
-                let _ = db::cleanup_search_cache(&conn, CACHE_TTL_MINUTES);
-            }
+    if let Some(pool) = db_pool
+        && let Ok(conn) = db::get_connection(pool)
+    {
+        if let Ok(json) = serde_json::to_string(&results) {
+            let _ = db::cache_search_results(&conn, &cache_key, &json);
+        }
+        // Cleanup stale cache entries ~5% of the time
+        if rand::random::<u8>() < 13 {
+            let _ = db::cleanup_search_cache(&conn, CACHE_TTL_MINUTES);
         }
     }
 

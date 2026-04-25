@@ -13,17 +13,17 @@
 
 use crate::core::config;
 use crate::download::source::instagram::InstagramSource;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::cb;
 use crate::telegram::{Bot, BotExt};
-use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
+use crate::watcher::traits::WatchNotification;
 use futures_util::StreamExt as _;
-use sqlx::{pool::PoolConnection, Postgres};
+use sqlx::{Postgres, pool::PoolConnection};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQueryId, ChatId, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, InputMediaVideo, MessageId,
@@ -172,13 +172,12 @@ pub async fn show_subscribe_confirm(
     if let Ok(Some(existing)) = shared_storage
         .has_content_subscription(chat_id.0, "instagram", username)
         .await
+        && existing.is_active
     {
-        if existing.is_active {
-            let _ = bot
-                .send_message(chat_id, format!("You're already subscribed to @{}!", username))
-                .await;
-            return;
-        }
+        let _ = bot
+            .send_message(chat_id, format!("You're already subscribed to @{}!", username))
+            .await;
+        return;
     }
 
     if current_count >= max_subs {
@@ -291,26 +290,26 @@ pub async fn handle_subscription_callback(
         }
         "manage" => {
             // cw:manage:<id>
-            if parts.len() >= 3 {
-                if let Ok(sub_id) = parts[2].parse::<i64>() {
-                    show_manage_subscription(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
-                }
+            if parts.len() >= 3
+                && let Ok(sub_id) = parts[2].parse::<i64>()
+            {
+                show_manage_subscription(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
             }
         }
         "unsub" => {
             // cw:unsub:<id>
-            if parts.len() >= 3 {
-                if let Ok(sub_id) = parts[2].parse::<i64>() {
-                    handle_unsubscribe(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
-                }
+            if parts.len() >= 3
+                && let Ok(sub_id) = parts[2].parse::<i64>()
+            {
+                handle_unsubscribe(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
             }
         }
         "tog" => {
             // cw:tog:<id>:<bit>
-            if parts.len() >= 4 {
-                if let (Ok(sub_id), Ok(bit)) = (parts[2].parse::<i64>(), parts[3].parse::<u32>()) {
-                    handle_toggle_content_type(bot, chat_id, message_id, sub_id, bit, &db_pool, &shared_storage).await;
-                }
+            if parts.len() >= 4
+                && let (Ok(sub_id), Ok(bit)) = (parts[2].parse::<i64>(), parts[3].parse::<u32>())
+            {
+                handle_toggle_content_type(bot, chat_id, message_id, sub_id, bit, &db_pool, &shared_storage).await;
             }
         }
         "list" => {
@@ -517,16 +516,16 @@ async fn handle_unsubscribe(
     let _ = db_pool;
     // Get sub info before deactivating; verify ownership
     let sub_info = shared_storage.get_content_subscription(sub_id).await.ok().flatten();
-    if let Some(ref sub) = sub_info {
-        if sub.user_id != chat_id.0 {
-            log::warn!(
-                "User {} attempted to access subscription {} owned by {}",
-                chat_id.0,
-                sub_id,
-                sub.user_id
-            );
-            return;
-        }
+    if let Some(ref sub) = sub_info
+        && sub.user_id != chat_id.0
+    {
+        log::warn!(
+            "User {} attempted to access subscription {} owned by {}",
+            chat_id.0,
+            sub_id,
+            sub.user_id
+        );
+        return;
     }
     let display_name = sub_info.map(|s| s.display_name).unwrap_or_default();
 
@@ -607,11 +606,11 @@ async fn download_media_to_temp(client: &reqwest::Client, url: &str, is_video: b
     }
 
     // Check content-length if available
-    if let Some(len) = resp.content_length() {
-        if len > MAX_SIZE {
-            log::warn!("Media too large ({} bytes), skipping: {}", len, url);
-            return None;
-        }
+    if let Some(len) = resp.content_length()
+        && len > MAX_SIZE
+    {
+        log::warn!("Media too large ({} bytes), skipping: {}", len, url);
+        return None;
     }
 
     let ext = if is_video { "mp4" } else { "jpg" };

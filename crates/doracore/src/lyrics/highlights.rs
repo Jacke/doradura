@@ -7,7 +7,7 @@
 //!    extracts chorus/hook lines from already-parsed section structure.
 
 use crate::core::llm;
-use crate::lyrics::{parse_sections, LyricsSection};
+use crate::lyrics::{LyricsSection, parse_sections};
 
 /// Maximum lines to include in the highlight snippet.
 const MAX_HIGHLIGHT_LINES: usize = 6;

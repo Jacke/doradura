@@ -2,7 +2,7 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args_with_proxy, get_proxy_chain, is_proxy_related_error};
-use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
+use crate::download::ytdlp_errors::{YtDlpErrorType, analyze_ytdlp_error, get_error_message};
 use crate::telegram::types::{AudioTrackInfo, VideoFormatInfo};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -115,10 +115,10 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
             .get("filesize")
             .or_else(|| format.get("filesize_approx"))
             .and_then(|v| v.as_u64());
-        if let Some(size) = size {
-            if best_audio_size.is_none_or(|current| size > current) {
-                best_audio_size = Some(size);
-            }
+        if let Some(size) = size
+            && best_audio_size.is_none_or(|current| size > current)
+        {
+            best_audio_size = Some(size);
         }
     }
 
@@ -134,13 +134,12 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
         let mut height = format.get("height").and_then(|v| v.as_u64());
         let resolution_field = format.get("resolution").and_then(|v| v.as_str());
 
-        if width.is_none() || height.is_none() {
-            if let Some(resolution) = resolution_field {
-                if let Some((parsed_width, parsed_height)) = parse_resolution_string(resolution) {
-                    width = width.or(Some(parsed_width));
-                    height = height.or(Some(parsed_height));
-                }
-            }
+        if (width.is_none() || height.is_none())
+            && let Some(resolution) = resolution_field
+            && let Some((parsed_width, parsed_height)) = parse_resolution_string(resolution)
+        {
+            width = width.or(Some(parsed_width));
+            height = height.or(Some(parsed_height));
         }
 
         // Prefer format_note from yt-dlp (most accurate, e.g. "360p" for 640x352)
@@ -152,12 +151,11 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
         if quality.is_none() {
             quality = quality_from_dimensions(width, height);
         }
-        if quality.is_none() {
-            if let Some(resolution) = resolution_field {
-                if let Some((parsed_width, parsed_height)) = parse_resolution_string(resolution) {
-                    quality = quality_from_dimensions(Some(parsed_width), Some(parsed_height));
-                }
-            }
+        if quality.is_none()
+            && let Some(resolution) = resolution_field
+            && let Some((parsed_width, parsed_height)) = parse_resolution_string(resolution)
+        {
+            quality = quality_from_dimensions(Some(parsed_width), Some(parsed_height));
         }
 
         let quality = match quality {
@@ -172,20 +170,20 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
 
         // Fallback: estimate from tbr (kbits/s) × duration when yt-dlp omits file size
         // for adaptive DASH streams (common for 720p+). Same formula as yt-dlp filesize_approx.
-        if size_bytes.is_none() {
-            if let (Some(tbr), Some(dur)) = (
+        if size_bytes.is_none()
+            && let (Some(tbr), Some(dur)) = (
                 format.get("tbr").and_then(|v| v.as_f64()),
                 json.get("duration").and_then(|v| v.as_f64()),
-            ) {
-                size_bytes = Some((tbr * 125.0 * dur) as u64); // tbr kbps × 1000/8 × secs
-            }
+            )
+        {
+            size_bytes = Some((tbr * 125.0 * dur) as u64); // tbr kbps × 1000/8 × secs
         }
 
         let acodec = format.get("acodec").and_then(|v| v.as_str()).unwrap_or("");
-        if acodec == "none" {
-            if let (Some(size), Some(audio_size)) = (size_bytes, best_audio_size) {
-                size_bytes = Some(size + audio_size);
-            }
+        if acodec == "none"
+            && let (Some(size), Some(audio_size)) = (size_bytes, best_audio_size)
+        {
+            size_bytes = Some(size + audio_size);
         }
 
         let resolution = match (width, height) {
@@ -416,10 +414,10 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
 
         let entry = by_quality.entry(quality.to_string()).or_insert((None, None));
         // Keep the maximum size (best bitrate format)
-        if let Some(new_size) = size_bytes {
-            if entry.0.is_none_or(|current| new_size > current) {
-                entry.0 = Some(new_size);
-            }
+        if let Some(new_size) = size_bytes
+            && entry.0.is_none_or(|current| new_size > current)
+        {
+            entry.0 = Some(new_size);
         }
         if entry.1.is_none() {
             entry.1 = resolution;
@@ -445,31 +443,32 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
     for line in formats_output.lines() {
         if line.contains("audio only") {
             // Look for m4a or webm audio with the highest bitrate
-            if line.contains("m4a") || line.contains("webm") {
-                if let Some(mib_pos) = line.find("MiB") {
-                    let before_mib = &line[..mib_pos];
-                    let mut num_chars = Vec::new();
-                    let mut found_digit = false;
+            if (line.contains("m4a") || line.contains("webm"))
+                && let Some(mib_pos) = line.find("MiB")
+            {
+                let before_mib = &line[..mib_pos];
+                let mut num_chars = Vec::new();
+                let mut found_digit = false;
 
-                    for ch in before_mib.chars().rev() {
-                        if ch.is_ascii_digit() || ch == '.' {
-                            num_chars.push(ch);
-                            found_digit = true;
-                        } else if found_digit {
-                            break;
-                        }
+                for ch in before_mib.chars().rev() {
+                    if ch.is_ascii_digit() || ch == '.' {
+                        num_chars.push(ch);
+                        found_digit = true;
+                    } else if found_digit {
+                        break;
                     }
+                }
 
-                    if !num_chars.is_empty() {
-                        num_chars.reverse();
-                        let size_str: String = num_chars.into_iter().collect();
-                        if let Ok(size_mb) = size_str.trim().parse::<f64>() {
-                            if size_mb > 0.0 && size_mb < 1000.0 {
-                                let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
-                                if best_audio_size.is_none_or(|current| size_bytes > current) {
-                                    best_audio_size = Some(size_bytes);
-                                }
-                            }
+                if !num_chars.is_empty() {
+                    num_chars.reverse();
+                    let size_str: String = num_chars.into_iter().collect();
+                    if let Ok(size_mb) = size_str.trim().parse::<f64>()
+                        && size_mb > 0.0
+                        && size_mb < 1000.0
+                    {
+                        let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
+                        if best_audio_size.is_none_or(|current| size_bytes > current) {
+                            best_audio_size = Some(size_bytes);
                         }
                     }
                 }
@@ -569,10 +568,13 @@ fn extract_dimensions_from_line(line: &str) -> Option<(u64, u64)> {
                 }
                 if i > h_start {
                     let height_str = &line[h_start..i];
-                    if let (Ok(w), Ok(h)) = (width_str.parse::<u64>(), height_str.parse::<u64>()) {
-                        if w > 0 && h > 0 && w <= 10000 && h <= 10000 {
-                            return Some((w, h));
-                        }
+                    if let (Ok(w), Ok(h)) = (width_str.parse::<u64>(), height_str.parse::<u64>())
+                        && w > 0
+                        && h > 0
+                        && w <= 10000
+                        && h <= 10000
+                    {
+                        return Some((w, h));
                     }
                 }
             }
@@ -605,10 +607,11 @@ fn extract_size_from_line(line: &str) -> Option<u64> {
                 .rev()
                 .filter(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
-            if let Ok(size) = num_str.parse::<f64>() {
-                if size > 0.0 && size < 100_000.0 {
-                    return Some((size * multiplier) as u64);
-                }
+            if let Ok(size) = num_str.parse::<f64>()
+                && size > 0.0
+                && size < 100_000.0
+            {
+                return Some((size * multiplier) as u64);
             }
         }
     }
@@ -948,10 +951,10 @@ sb0 mhtml 48x48          │                    mhtml │ images                
             let resolution = extract_resolution_from_line(line);
             let size_bytes = extract_size_from_line(line);
             let entry = by_quality.entry(quality.to_string()).or_insert((None, None));
-            if let Some(new_size) = size_bytes {
-                if entry.0.is_none_or(|current| new_size > current) {
-                    entry.0 = Some(new_size);
-                }
+            if let Some(new_size) = size_bytes
+                && entry.0.is_none_or(|current| new_size > current)
+            {
+                entry.0 = Some(new_size);
             }
             if entry.1.is_none() {
                 entry.1 = resolution;

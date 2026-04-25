@@ -1,7 +1,7 @@
 //! Database operations for content subscriptions.
 
 use anyhow::Context;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value as JsonValue;
 
 /// A content subscription row from the database.

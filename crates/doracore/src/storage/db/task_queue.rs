@@ -171,10 +171,9 @@ pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQ
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query_map([&task_id as &dyn rusqlite::ToSql], map_task_queue_entry)?;
 
-    if let Some(row) = rows.next() {
-        Ok(Some(row?))
-    } else {
-        Ok(None)
+    match rows.next() {
+        Some(row) => Ok(Some(row?)),
+        _ => Ok(None),
     }
 }
 

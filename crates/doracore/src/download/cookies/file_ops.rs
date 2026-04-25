@@ -1,12 +1,12 @@
 //! File I/O and atomic cookie-file updates.
 
 use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
-use super::types::{diagnose_cookies_content, CookiesDiagnostic};
+use super::types::{CookiesDiagnostic, diagnose_cookies_content};
 
 /// Mutex to prevent concurrent cookie file writes (race condition protection)
 pub(super) static COOKIES_WRITE_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));

@@ -16,7 +16,7 @@ use super::validators::{
     validate_video_file,
 };
 use crate::core::config;
-use crate::download::metadata::{validate_cookies_file_format, ProxyConfig};
+use crate::download::metadata::{ProxyConfig, validate_cookies_file_format};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
@@ -95,28 +95,28 @@ pub async fn test_cookies_validation() -> SmokeTestResult {
     let test_name = "cookies_validation";
 
     // Check if cookies file is configured
-    if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
-        if !cookies_file.is_empty() {
-            // Expand path
-            let expanded = shellexpand::tilde(cookies_file);
-            let cookies_path = expanded.to_string();
+    if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE
+        && !cookies_file.is_empty()
+    {
+        // Expand path
+        let expanded = shellexpand::tilde(cookies_file);
+        let cookies_path = expanded.to_string();
 
-            // Check file exists
-            if !Path::new(&cookies_path).exists() {
-                return SmokeTestResult::failed(
-                    test_name,
-                    start.elapsed(),
-                    &format!("Cookies file not found: {}", cookies_path),
-                );
-            }
-
-            // Validate format
-            if !validate_cookies_file_format(&cookies_path) {
-                return SmokeTestResult::failed(test_name, start.elapsed(), "Cookies file has invalid Netscape format");
-            }
-
-            return SmokeTestResult::passed(test_name, start.elapsed());
+        // Check file exists
+        if !Path::new(&cookies_path).exists() {
+            return SmokeTestResult::failed(
+                test_name,
+                start.elapsed(),
+                &format!("Cookies file not found: {}", cookies_path),
+            );
         }
+
+        // Validate format
+        if !validate_cookies_file_format(&cookies_path) {
+            return SmokeTestResult::failed(test_name, start.elapsed(), "Cookies file has invalid Netscape format");
+        }
+
+        return SmokeTestResult::passed(test_name, start.elapsed());
     }
 
     // Check browser cookies config
@@ -646,7 +646,7 @@ pub async fn test_web_server_health() -> SmokeTestResult {
                 test_name,
                 start.elapsed(),
                 &format!("Failed to build HTTP client: {}", e),
-            )
+            );
         }
     };
 
@@ -657,7 +657,7 @@ pub async fn test_web_server_health() -> SmokeTestResult {
     match timeout(Duration::from_secs(10), client.get(&health_url).send()).await {
         Err(_) => return SmokeTestResult::timeout(test_name, Duration::from_secs(10)),
         Ok(Err(e)) => {
-            return SmokeTestResult::failed(test_name, start.elapsed(), &format!("GET /health failed: {}", e))
+            return SmokeTestResult::failed(test_name, start.elapsed(), &format!("GET /health failed: {}", e));
         }
         Ok(Ok(resp)) => {
             if !resp.status().is_success() {
@@ -687,7 +687,7 @@ pub async fn test_web_server_health() -> SmokeTestResult {
                 test_name,
                 start.elapsed(),
                 &format!("GET /api/s/nonexistent failed: {}", e),
-            )
+            );
         }
         Ok(Ok(resp)) => {
             if resp.status() != reqwest::StatusCode::NOT_FOUND {

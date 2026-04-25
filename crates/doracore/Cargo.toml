@@ -1,7 +1,7 @@
 [package]
 name = "doracore"
 version = "0.26.0"
-edition = "2021"
+edition = "2024"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "Core library for Doradura — download engine, storage, i18n, lyrics (no Telegram)"
 license = "MIT"

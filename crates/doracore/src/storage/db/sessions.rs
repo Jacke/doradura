@@ -2,7 +2,7 @@
 //!
 //! Extracted from the main `db` module for better organization.
 
-use super::{get_user, DbConnection};
+use super::{DbConnection, get_user};
 use rusqlite::Result;
 use std::sync::Once;
 

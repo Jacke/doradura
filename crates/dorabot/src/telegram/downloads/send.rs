@@ -4,9 +4,9 @@ use teloxide::types::{InlineKeyboardMarkup, ParseMode};
 
 use crate::core::{escape_markdown, escape_markdown_url};
 
+use super::CallbackCtx;
 use super::is_youtube_url;
 use super::subtitles::{add_audio_tools_buttons_from_history, add_video_cut_button_from_history, send_document_forced};
-use super::CallbackCtx;
 
 pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> ResponseResult<()> {
     match action {
@@ -116,109 +116,108 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     log::error!("📥 Failed to get download entry: {}", e);
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?
+                && download.file_id.is_some()
             {
-                if download.file_id.is_some() {
-                    // Show options: resend as audio/document/video
-                    let mut options = Vec::new();
+                // Show options: resend as audio/document/video
+                let mut options = Vec::new();
 
-                    if download.format == "mp3" {
-                        // Row 1: send formats
-                        options.push(vec![
-                            crate::telegram::cb(
-                                "🎵 As audio".to_string(),
-                                format!("downloads:send:audio:{}", download_id),
-                            ),
-                            crate::telegram::cb(
-                                "📎 As document".to_string(),
-                                format!("downloads:send:document:{}", download_id),
-                            ),
-                        ]);
-                        // Row 2: transform actions
-                        options.push(vec![
-                            crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
-                            crate::telegram::cb("🎙 Voice".to_string(), format!("downloads:voice:{}", download_id)),
-                            crate::telegram::cb(
-                                "🔔 Ringtone".to_string(),
-                                format!("ringtone:select:download:{}", download_id),
-                            ),
-                        ]);
-                        // Row 3: speed + lyrics + cover
+                if download.format == "mp3" {
+                    // Row 1: send formats
+                    options.push(vec![
+                        crate::telegram::cb(
+                            "🎵 As audio".to_string(),
+                            format!("downloads:send:audio:{}", download_id),
+                        ),
+                        crate::telegram::cb(
+                            "📎 As document".to_string(),
+                            format!("downloads:send:document:{}", download_id),
+                        ),
+                    ]);
+                    // Row 2: transform actions
+                    options.push(vec![
+                        crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
+                        crate::telegram::cb("🎙 Voice".to_string(), format!("downloads:voice:{}", download_id)),
+                        crate::telegram::cb(
+                            "🔔 Ringtone".to_string(),
+                            format!("ringtone:select:download:{}", download_id),
+                        ),
+                    ]);
+                    // Row 3: speed + lyrics + cover
+                    options.push(vec![
+                        crate::telegram::cb("⚙️ Speed".to_string(), format!("downloads:speed:{}", download_id)),
+                        crate::telegram::cb("📝 Lyrics".to_string(), format!("downloads:lyrics:{}", download_id)),
+                        crate::telegram::cb("🖼 Cover".to_string(), format!("downloads:cover:{}", download_id)),
+                    ]);
+                } else {
+                    // Row 1: send formats
+                    options.push(vec![
+                        crate::telegram::cb(
+                            "🎬 As video".to_string(),
+                            format!("downloads:send:video:{}", download_id),
+                        ),
+                        crate::telegram::cb(
+                            "📎 As document".to_string(),
+                            format!("downloads:send:document:{}", download_id),
+                        ),
+                    ]);
+                    // Row 2: transform actions
+                    options.push(vec![
+                        crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
+                        crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
+                        crate::telegram::cb("🎞 GIF".to_string(), format!("downloads:gif:{}", download_id)),
+                        crate::telegram::cb(
+                            "🔔 Ringtone".to_string(),
+                            format!("ringtone:select:download:{}", download_id),
+                        ),
+                    ]);
+                    // Row 3: speed + burn subs (YouTube mp4 only)
+                    if is_youtube_url(&download.url) {
                         options.push(vec![
                             crate::telegram::cb("⚙️ Speed".to_string(), format!("downloads:speed:{}", download_id)),
-                            crate::telegram::cb("📝 Lyrics".to_string(), format!("downloads:lyrics:{}", download_id)),
-                            crate::telegram::cb("🖼 Cover".to_string(), format!("downloads:cover:{}", download_id)),
+                            crate::telegram::cb(
+                                "🔤 Burn subs".to_string(),
+                                format!("downloads:burn_subs:{}", download_id),
+                            ),
                         ]);
                     } else {
-                        // Row 1: send formats
-                        options.push(vec![
-                            crate::telegram::cb(
-                                "🎬 As video".to_string(),
-                                format!("downloads:send:video:{}", download_id),
-                            ),
-                            crate::telegram::cb(
-                                "📎 As document".to_string(),
-                                format!("downloads:send:document:{}", download_id),
-                            ),
-                        ]);
-                        // Row 2: transform actions
-                        options.push(vec![
-                            crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
-                            crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
-                            crate::telegram::cb("🎞 GIF".to_string(), format!("downloads:gif:{}", download_id)),
-                            crate::telegram::cb(
-                                "🔔 Ringtone".to_string(),
-                                format!("ringtone:select:download:{}", download_id),
-                            ),
-                        ]);
-                        // Row 3: speed + burn subs (YouTube mp4 only)
-                        if is_youtube_url(&download.url) {
-                            options.push(vec![
-                                crate::telegram::cb("⚙️ Speed".to_string(), format!("downloads:speed:{}", download_id)),
-                                crate::telegram::cb(
-                                    "🔤 Burn subs".to_string(),
-                                    format!("downloads:burn_subs:{}", download_id),
-                                ),
-                            ]);
-                        } else {
-                            options.push(vec![crate::telegram::cb(
-                                "⚙️ Speed".to_string(),
-                                format!("downloads:speed:{}", download_id),
-                            )]);
-                        }
+                        options.push(vec![crate::telegram::cb(
+                            "⚙️ Speed".to_string(),
+                            format!("downloads:speed:{}", download_id),
+                        )]);
                     }
-
-                    // Category button
-                    let cat_label = match &download.category {
-                        Some(c) => format!("🏷 {}", c),
-                        None => "🏷 Add to Category".to_string(),
-                    };
-                    options.push(vec![crate::telegram::cb(
-                        cat_label,
-                        format!("downloads:setcat:{}", download_id),
-                    )]);
-
-                    options.push(vec![crate::telegram::cb(
-                        "❌ Cancel".to_string(),
-                        "downloads:cancel".to_string(),
-                    )]);
-
-                    let keyboard = InlineKeyboardMarkup::new(options);
-                    let msg_text = format!(
-                        "How to send *{}*?\n[🔗 Source]({})",
-                        escape_markdown(&download.title),
-                        escape_markdown_url(&download.url),
-                    );
-
-                    crate::telegram::styled::send_message_styled_or_fallback_opts(
-                        &ctx.bot,
-                        ctx.chat_id,
-                        &msg_text,
-                        &keyboard,
-                        Some(ParseMode::MarkdownV2),
-                        true,
-                    )
-                    .await?;
                 }
+
+                // Category button
+                let cat_label = match &download.category {
+                    Some(c) => format!("🏷 {}", c),
+                    None => "🏷 Add to Category".to_string(),
+                };
+                options.push(vec![crate::telegram::cb(
+                    cat_label,
+                    format!("downloads:setcat:{}", download_id),
+                )]);
+
+                options.push(vec![crate::telegram::cb(
+                    "❌ Cancel".to_string(),
+                    "downloads:cancel".to_string(),
+                )]);
+
+                let keyboard = InlineKeyboardMarkup::new(options);
+                let msg_text = format!(
+                    "How to send *{}*?\n[🔗 Source]({})",
+                    escape_markdown(&download.title),
+                    escape_markdown_url(&download.url),
+                );
+
+                crate::telegram::styled::send_message_styled_or_fallback_opts(
+                    &ctx.bot,
+                    ctx.chat_id,
+                    &msg_text,
+                    &keyboard,
+                    Some(ParseMode::MarkdownV2),
+                    true,
+                )
+                .await?;
             }
         }
         "resend_cut" => {
@@ -303,113 +302,104 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 .get_download_history_entry(ctx.chat_id.0, download_id)
                 .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+                && let Some(fid) = download.file_id
             {
-                if let Some(fid) = download.file_id {
-                    let status_text = match send_type {
-                        "audio" => "⏳ Preparing to send as audio…",
-                        "video" => "⏳ Preparing to send as video…",
-                        "document" => "⏳ Preparing to send as document…",
-                        "voice" => "⏳ Converting to voice message…",
-                        _ => "⏳ Preparing to send…",
-                    };
-                    let status_msg = ctx.bot.send_message(ctx.chat_id, status_text).await?;
+                let status_text = match send_type {
+                    "audio" => "⏳ Preparing to send as audio…",
+                    "video" => "⏳ Preparing to send as video…",
+                    "document" => "⏳ Preparing to send as document…",
+                    "voice" => "⏳ Converting to voice message…",
+                    _ => "⏳ Preparing to send…",
+                };
+                let status_msg = ctx.bot.send_message(ctx.chat_id, status_text).await?;
 
-                    let telegram_file_id = fid;
-                    let upload_file_name = if download.format == "mp3" {
-                        "doradura.mp3"
-                    } else {
-                        "doradura.mp4"
-                    };
-                    let caption = if let Some(ref author) = download.author {
-                        format!("{} - {}", author, download.title)
-                    } else {
-                        download.title.clone()
-                    };
+                let telegram_file_id = fid;
+                let upload_file_name = if download.format == "mp3" {
+                    "doradura.mp3"
+                } else {
+                    "doradura.mp4"
+                };
+                let caption = if let Some(ref author) = download.author {
+                    format!("{} - {}", author, download.title)
+                } else {
+                    download.title.clone()
+                };
 
-                    let send_result = match send_type {
-                        "audio" => {
-                            ctx.bot
-                                .send_audio(
-                                    ctx.chat_id,
-                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(
-                                        telegram_file_id.clone(),
-                                    )),
-                                )
-                                .caption(caption.clone())
-                                .await
-                        }
-                        "video" => {
-                            ctx.bot
-                                .send_video(
-                                    ctx.chat_id,
-                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(
-                                        telegram_file_id.clone(),
-                                    )),
-                                )
-                                .caption(caption.clone())
-                                .await
-                        }
-                        "document" => {
-                            send_document_forced(
-                                &ctx.bot,
+                let send_result = match send_type {
+                    "audio" => {
+                        ctx.bot
+                            .send_audio(
                                 ctx.chat_id,
+                                teloxide::types::InputFile::file_id(teloxide::types::FileId(telegram_file_id.clone())),
+                            )
+                            .caption(caption.clone())
+                            .await
+                    }
+                    "video" => {
+                        ctx.bot
+                            .send_video(
+                                ctx.chat_id,
+                                teloxide::types::InputFile::file_id(teloxide::types::FileId(telegram_file_id.clone())),
+                            )
+                            .caption(caption.clone())
+                            .await
+                    }
+                    "document" => {
+                        send_document_forced(
+                            &ctx.bot,
+                            ctx.chat_id,
+                            &telegram_file_id,
+                            upload_file_name,
+                            caption.clone(),
+                        )
+                        .await
+                    }
+                    _ => {
+                        ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
+                        return Ok(());
+                    }
+                };
+
+                match send_result {
+                    Ok(sent_message) => {
+                        ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
+                        if send_type == "audio" && download.format == "mp3" {
+                            let duration = sent_message
+                                .audio()
+                                .map(|a| a.duration.seconds())
+                                .or_else(|| download.duration.map(|d| d.max(0) as u32))
+                                .unwrap_or(0);
+                            if let Err(e) = add_audio_tools_buttons_from_history(
+                                &ctx.bot,
+                                Arc::clone(&ctx.db_pool),
+                                ctx.shared_storage.clone(),
+                                ctx.chat_id,
+                                sent_message.id,
                                 &telegram_file_id,
-                                upload_file_name,
                                 caption.clone(),
+                                duration,
                             )
                             .await
-                        }
-                        _ => {
-                            ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
-                            return Ok(());
-                        }
-                    };
-
-                    match send_result {
-                        Ok(sent_message) => {
-                            ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
-                            if send_type == "audio" && download.format == "mp3" {
-                                let duration = sent_message
-                                    .audio()
-                                    .map(|a| a.duration.seconds())
-                                    .or_else(|| download.duration.map(|d| d.max(0) as u32))
-                                    .unwrap_or(0);
-                                if let Err(e) = add_audio_tools_buttons_from_history(
-                                    &ctx.bot,
-                                    Arc::clone(&ctx.db_pool),
-                                    ctx.shared_storage.clone(),
-                                    ctx.chat_id,
-                                    sent_message.id,
-                                    &telegram_file_id,
-                                    caption.clone(),
-                                    duration,
-                                )
-                                .await
-                                {
-                                    log::warn!("Failed to add audio tools buttons: {}", e);
-                                }
+                            {
+                                log::warn!("Failed to add audio tools buttons: {}", e);
                             }
-                            if (send_type == "video" || send_type == "document") && download.format == "mp4" {
-                                if let Err(e) = add_video_cut_button_from_history(
-                                    &ctx.bot,
-                                    ctx.chat_id,
-                                    sent_message.id,
-                                    download_id,
-                                )
-                                .await
-                                {
-                                    log::warn!("Failed to add video cut button: {}", e);
-                                }
-                            }
-                            ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
                         }
-                        Err(e) => {
-                            ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
-                            ctx.bot
-                                .send_message(ctx.chat_id, format!("❌ Failed to send file: {e}"))
-                                .await
-                                .ok();
+                        if (send_type == "video" || send_type == "document")
+                            && download.format == "mp4"
+                            && let Err(e) =
+                                add_video_cut_button_from_history(&ctx.bot, ctx.chat_id, sent_message.id, download_id)
+                                    .await
+                        {
+                            log::warn!("Failed to add video cut button: {}", e);
                         }
+                        ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
+                    }
+                    Err(e) => {
+                        ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
+                        ctx.bot
+                            .send_message(ctx.chat_id, format!("❌ Failed to send file: {e}"))
+                            .await
+                            .ok();
                     }
                 }
             }
@@ -426,60 +416,57 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 .get_cut_entry(ctx.chat_id.0, cut_id)
                 .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+                && let Some(fid) = cut.file_id
             {
-                if let Some(fid) = cut.file_id {
-                    let status_text = match send_type {
-                        "video" => "⏳ Preparing to send as video…",
-                        "document" => "⏳ Preparing to send as document…",
-                        _ => "⏳ Preparing to send…",
-                    };
-                    let status_msg = ctx.bot.send_message(ctx.chat_id, status_text).await?;
+                let status_text = match send_type {
+                    "video" => "⏳ Preparing to send as video…",
+                    "document" => "⏳ Preparing to send as document…",
+                    _ => "⏳ Preparing to send…",
+                };
+                let status_msg = ctx.bot.send_message(ctx.chat_id, status_text).await?;
 
-                    let telegram_file_id = fid;
-                    let upload_file_name = "doradura_edit.mp4";
-                    let caption = cut.title;
+                let telegram_file_id = fid;
+                let upload_file_name = "doradura_edit.mp4";
+                let caption = cut.title;
 
-                    let send_result = match send_type {
-                        "video" => {
-                            ctx.bot
-                                .send_video(
-                                    ctx.chat_id,
-                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(
-                                        telegram_file_id.clone(),
-                                    )),
-                                )
-                                .caption(caption.clone())
-                                .await
-                        }
-                        "document" => {
-                            send_document_forced(
-                                &ctx.bot,
+                let send_result = match send_type {
+                    "video" => {
+                        ctx.bot
+                            .send_video(
                                 ctx.chat_id,
-                                &telegram_file_id,
-                                upload_file_name,
-                                caption.clone(),
+                                teloxide::types::InputFile::file_id(teloxide::types::FileId(telegram_file_id.clone())),
                             )
+                            .caption(caption.clone())
                             .await
-                        }
-                        _ => {
-                            ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
-                            ctx.bot.send_message(ctx.chat_id, "❌ Unknown send mode.").await.ok();
-                            return Ok(());
-                        }
-                    };
+                    }
+                    "document" => {
+                        send_document_forced(
+                            &ctx.bot,
+                            ctx.chat_id,
+                            &telegram_file_id,
+                            upload_file_name,
+                            caption.clone(),
+                        )
+                        .await
+                    }
+                    _ => {
+                        ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
+                        ctx.bot.send_message(ctx.chat_id, "❌ Unknown send mode.").await.ok();
+                        return Ok(());
+                    }
+                };
 
-                    match send_result {
-                        Ok(_) => {
-                            ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
-                            ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
-                        }
-                        Err(e) => {
-                            ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
-                            ctx.bot
-                                .send_message(ctx.chat_id, format!("❌ Failed to send file: {e}"))
-                                .await
-                                .ok();
-                        }
+                match send_result {
+                    Ok(_) => {
+                        ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
+                        ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
+                    }
+                    Err(e) => {
+                        ctx.bot.delete_message(ctx.chat_id, status_msg.id).await.ok();
+                        ctx.bot
+                            .send_message(ctx.chat_id, format!("❌ Failed to send file: {e}"))
+                            .await
+                            .ok();
                     }
                 }
             }

@@ -1,7 +1,7 @@
 //! Audio/video clip (cut) history operations.
 
-use super::sessions::{OutputKind, SourceKind};
 use super::DbConnection;
+use super::sessions::{OutputKind, SourceKind};
 use rusqlite::Result;
 
 #[derive(Debug, Clone)]

@@ -3,8 +3,8 @@ use sqlx::Row;
 
 use crate::storage::db::{self, EnqueueResult, TaskQueueEntry};
 
-use super::types::QueueTaskInput;
 use super::SharedStorage;
+use super::types::QueueTaskInput;
 
 /// Task status transitions used by `run_task_status_update`.
 enum TaskStatusUpdate {

@@ -364,7 +364,13 @@
       "Bash(cp /tmp/metrics_full.rs crates/doracore/src/core/metrics.rs)",
       "Bash(cp /tmp/commands_mod_full.rs crates/dorabot/src/telegram/commands/mod.rs)",
       "Bash(cp /tmp/sessions_full.rs crates/doracore/src/storage/db/sessions.rs)",
-      "Bash(cp /tmp/changelog_full.md CHANGELOG.md)"
+      "Bash(cp /tmp/changelog_full.md CHANGELOG.md)",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -I {} sh -c 'grep -c \"\\\\.clone\\(\\)\" \"{}\" 2>/dev/null && echo \"{}\"')",
+      "Bash(awk '$1 > 50 {print $2, \":\" , $1}')",
+      "Bash(awk '{print $1}')",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(awk *)"
     ],
     "deny": [],
     "ask": []

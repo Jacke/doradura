@@ -57,10 +57,9 @@ pub fn get_active_new_category_session(conn: &DbConnection, user_id: i64) -> Res
         "SELECT download_id FROM new_category_sessions WHERE user_id = ? AND created_at > datetime('now', '-10 minutes')",
     )?;
     let mut rows = stmt.query_map(rusqlite::params![user_id], |row| row.get(0))?;
-    if let Some(row) = rows.next() {
-        Ok(Some(row?))
-    } else {
-        Ok(None)
+    match rows.next() {
+        Some(row) => Ok(Some(row?)),
+        _ => Ok(None),
     }
 }
 

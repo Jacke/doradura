@@ -131,14 +131,13 @@ impl CookieManagerClient {
         let url = format!("{}/health", self.base_url);
 
         match timeout(Duration::from_secs(5), self.client.get(&url).send()).await {
-            Ok(Ok(resp)) => {
-                if let Ok(health) = resp.json::<CookieHealthResponse>().await {
-                    Some(health)
-                } else {
+            Ok(Ok(resp)) => match resp.json::<CookieHealthResponse>().await {
+                Ok(health) => Some(health),
+                _ => {
                     log::warn!("Failed to parse cookie manager health response");
                     None
                 }
-            }
+            },
             Ok(Err(e)) => {
                 log::debug!("Cookie manager health check failed: {}", e);
                 None
@@ -314,7 +313,11 @@ pub async fn report_and_wait_for_refresh(error_type: &str, url: &str) -> bool {
                 response.emergency_mode.unwrap_or(false),
                 response.recent_errors.unwrap_or(0),
                 response.refresh_result.as_ref().map(|r| r.success).unwrap_or(false),
-                response.refresh_result.as_ref().and_then(|r| r.method.as_deref()).unwrap_or("none"),
+                response
+                    .refresh_result
+                    .as_ref()
+                    .and_then(|r| r.method.as_deref())
+                    .unwrap_or("none"),
             );
 
             if response.action == "refresh_triggered" {

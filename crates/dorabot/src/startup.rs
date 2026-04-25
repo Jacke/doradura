@@ -15,14 +15,14 @@ use tokio::time::sleep;
 
 use crate::background_tasks;
 use crate::core::{config, log_cookies_configuration, rate_limiter::RateLimiter};
-use crate::download::ytdlp;
 use crate::download::DownloadQueue;
+use crate::download::ytdlp;
 use crate::downsub::DownsubGateway;
 use crate::queue_processor;
-use crate::storage::create_pool;
 use crate::storage::SharedStorage;
+use crate::storage::create_pool;
 use crate::telegram::handlers::HandlerError;
-use crate::telegram::{create_bot, schema, setup_all_language_commands, HandlerDeps};
+use crate::telegram::{HandlerDeps, create_bot, schema, setup_all_language_commands};
 
 /// Run the Telegram bot with all services.
 pub async fn run_bot(use_webhook: bool) -> Result<()> {
@@ -279,7 +279,7 @@ async fn connect_to_bot_api(bot: &crate::telegram::Bot) -> Result<teloxide::type
 
 /// Background task: listen for plan change events and notify users via Telegram.
 fn spawn_plan_change_dispatcher(bot: crate::telegram::Bot, mut rx: crate::core::PlanChangeReceiver) {
-    use crate::core::{escape_markdown, PlanChangeReason};
+    use crate::core::{PlanChangeReason, escape_markdown};
     use crate::telegram::BotExt;
 
     tokio::spawn(async move {
@@ -317,16 +317,19 @@ fn spawn_plan_change_dispatcher(bot: crate::telegram::Bot, mut rx: crate::core::
             );
 
             let chat_id = teloxide::types::ChatId(event.user_id);
-            if let Err(e) = bot.send_md(chat_id, &text).await {
-                log::warn!("Failed to notify user {} about plan change: {}", event.user_id, e);
-            } else {
-                log::info!(
-                    "Notified user {} about plan change: {} → {} ({})",
-                    event.user_id,
-                    event.old_plan,
-                    event.new_plan,
-                    event.reason
-                );
+            match bot.send_md(chat_id, &text).await {
+                Err(e) => {
+                    log::warn!("Failed to notify user {} about plan change: {}", event.user_id, e);
+                }
+                _ => {
+                    log::info!(
+                        "Notified user {} about plan change: {} → {} ({})",
+                        event.user_id,
+                        event.old_plan,
+                        event.new_plan,
+                        event.reason
+                    );
+                }
             }
         }
         log::warn!("Plan change notification dispatcher stopped (channel closed)");
@@ -354,24 +357,24 @@ async fn run_polling_mode(
     log::info!("================================================");
 
     // Print startup timing summary if env vars are available
-    if let Ok(container_start) = std::env::var("CONTAINER_START_MS") {
-        if let Ok(start_ms) = container_start.parse::<u64>() {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            let total_elapsed = now_ms.saturating_sub(start_ms);
-            log::info!(
-                "⏱️  Total startup time from container start: {:.2}s",
-                total_elapsed as f64 / 1000.0
-            );
-        }
+    if let Ok(container_start) = std::env::var("CONTAINER_START_MS")
+        && let Ok(start_ms) = container_start.parse::<u64>()
+    {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let total_elapsed = now_ms.saturating_sub(start_ms);
+        log::info!(
+            "⏱️  Total startup time from container start: {:.2}s",
+            total_elapsed as f64 / 1000.0
+        );
     }
 
     // Register SIGTERM handler once, before the retry loop.
     #[cfg(unix)]
     let mut sigterm = {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler")
     };
 

@@ -282,7 +282,7 @@ use doradura::core::rate_limiter::RateLimiter;
 use doradura::download::DownloadQueue;
 use doradura::downsub::DownsubGateway;
 use doradura::storage::create_pool;
-use doradura::telegram::{schema, HandlerDeps};
+use doradura::telegram::{HandlerDeps, schema};
 
 /// Creates test dependencies with an in-memory SQLite database
 async fn create_test_deps() -> HandlerDeps {

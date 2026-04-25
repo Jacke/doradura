@@ -1,9 +1,9 @@
 use crate::core::rate_limiter::RateLimiter;
 use crate::download::queue::{DownloadFormat, DownloadQueue, DownloadTask};
 use crate::i18n;
+use crate::storage::SharedStorage;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
-use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -104,12 +104,11 @@ pub(crate) async fn start_download_from_preview(
     if let Err(e) = bot.delete_message(chat_id, message_id).await {
         log::warn!("Failed to delete preview message: {:?}", e);
     }
-    if let Some(prev_msg_id) = preview_msg_id {
-        if prev_msg_id != message_id {
-            if let Err(e) = bot.delete_message(chat_id, prev_msg_id).await {
-                log::warn!("Failed to delete preview message: {:?}", e);
-            }
-        }
+    if let Some(prev_msg_id) = preview_msg_id
+        && prev_msg_id != message_id
+        && let Err(e) = bot.delete_message(chat_id, prev_msg_id).await
+    {
+        log::warn!("Failed to delete preview message: {:?}", e);
     }
 
     enqueue_download_tasks(

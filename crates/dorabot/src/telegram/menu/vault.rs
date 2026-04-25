@@ -2,8 +2,8 @@
 //!
 //! Callback prefix: `vault:`
 
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::{Bot, BotExt};
 use anyhow::Context;
 use std::sync::Arc;

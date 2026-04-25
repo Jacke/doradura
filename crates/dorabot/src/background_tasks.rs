@@ -3,15 +3,15 @@
 //! Each function spawns a `tokio::spawn` task that runs periodically.
 //! Extracted from `run_bot()` in main.rs for clarity and testability.
 
-use sqlx::{pool::PoolConnection, Postgres};
+use sqlx::{Postgres, pool::PoolConnection};
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::prelude::*;
 use tokio::time::interval;
 
 use crate::core::{alerts, config, metrics, stats_reporter};
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::Bot;
 
 const LOCK_ALERT_MONITOR: i64 = 1101;
@@ -120,7 +120,7 @@ pub async fn spawn_cookies_checker(bot: Bot, shared_storage: Arc<SharedStorage>)
 
     tokio::spawn(async move {
         use crate::download::cookies;
-        use crate::telegram::{notify_admin_age_gate_state, notify_admin_cookies_refresh, AgeGateTransition};
+        use crate::telegram::{AgeGateTransition, notify_admin_age_gate_state, notify_admin_cookies_refresh};
 
         /// Per-probe state tracked across ticks for edge-triggered notifications.
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -162,17 +162,18 @@ pub async fn spawn_cookies_checker(bot: Bot, shared_storage: Arc<SharedStorage>)
                     let mut notified_admins = std::collections::HashSet::new();
 
                     for admin_id in admin_ids.iter() {
-                        if notified_admins.insert(*admin_id) {
-                            if let Err(e) = notify_admin_cookies_refresh(&bot, *admin_id, &reason).await {
-                                log::error!("Failed to notify admin {} about cookies: {}", admin_id, e);
-                            }
+                        if notified_admins.insert(*admin_id)
+                            && let Err(e) = notify_admin_cookies_refresh(&bot, *admin_id, &reason).await
+                        {
+                            log::error!("Failed to notify admin {} about cookies: {}", admin_id, e);
                         }
                     }
 
-                    if primary_admin != 0 && notified_admins.insert(primary_admin) {
-                        if let Err(e) = notify_admin_cookies_refresh(&bot, primary_admin, &reason).await {
-                            log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
-                        }
+                    if primary_admin != 0
+                        && notified_admins.insert(primary_admin)
+                        && let Err(e) = notify_admin_cookies_refresh(&bot, primary_admin, &reason).await
+                    {
+                        log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
                     }
                 }
                 (ProbeState::Fail, ProbeState::Ok) => {
@@ -202,17 +203,18 @@ pub async fn spawn_cookies_checker(bot: Bot, shared_storage: Arc<SharedStorage>)
                     let mut notified_admins = std::collections::HashSet::new();
 
                     for admin_id in admin_ids.iter() {
-                        if notified_admins.insert(*admin_id) {
-                            if let Err(e) = notify_admin_age_gate_state(&bot, *admin_id, t).await {
-                                log::error!("Failed to notify admin {} about age-gate: {}", admin_id, e);
-                            }
+                        if notified_admins.insert(*admin_id)
+                            && let Err(e) = notify_admin_age_gate_state(&bot, *admin_id, t).await
+                        {
+                            log::error!("Failed to notify admin {} about age-gate: {}", admin_id, e);
                         }
                     }
 
-                    if primary_admin != 0 && notified_admins.insert(primary_admin) {
-                        if let Err(e) = notify_admin_age_gate_state(&bot, primary_admin, t).await {
-                            log::error!("Failed to notify primary admin {} about age-gate: {}", primary_admin, e);
-                        }
+                    if primary_admin != 0
+                        && notified_admins.insert(primary_admin)
+                        && let Err(e) = notify_admin_age_gate_state(&bot, primary_admin, t).await
+                    {
+                        log::error!("Failed to notify primary admin {} about age-gate: {}", primary_admin, e);
                     }
                 }
 
@@ -329,7 +331,7 @@ async fn cleanup_downloads_folder(folder: &str, cutoff: std::time::SystemTime) -
 }
 
 pub async fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>, shared_storage: Arc<SharedStorage>) {
-    use crate::watcher::{scheduler, WatcherRegistry};
+    use crate::watcher::{WatcherRegistry, scheduler};
 
     let lock_conn = match shared_storage.as_ref() {
         SharedStorage::Sqlite { .. } => None,
@@ -527,7 +529,7 @@ pub async fn spawn_db_cleanup(_db_pool: Arc<DbPool>, shared_storage: Arc<SharedS
 
 /// Start the health check scheduler.
 pub fn spawn_health_checks(bot: Bot) {
-    use crate::smoke_tests::{start_health_check_scheduler, HealthCheckScheduler};
+    use crate::smoke_tests::{HealthCheckScheduler, start_health_check_scheduler};
 
     let bot_arc = Arc::new(bot);
     let _health_scheduler = start_health_check_scheduler(bot_arc);

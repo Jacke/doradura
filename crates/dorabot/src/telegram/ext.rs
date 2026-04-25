@@ -24,10 +24,10 @@
 //! case, not every variation.
 
 use crate::telegram::Bot;
-use teloxide::prelude::*;
-use teloxide::types::{ChatId, InlineKeyboardMarkup, InputFile, MessageId, ParseMode};
 use teloxide::ApiError;
 use teloxide::RequestError;
+use teloxide::prelude::*;
+use teloxide::types::{ChatId, InlineKeyboardMarkup, InputFile, MessageId, ParseMode};
 
 /// Sealed extension trait so only this crate can implement it.
 /// All methods take `&self` and delegate to the normal teloxide builder —

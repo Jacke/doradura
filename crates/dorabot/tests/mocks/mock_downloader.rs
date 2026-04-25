@@ -5,8 +5,8 @@
 
 #![allow(dead_code)] // Many methods and fields are kept for future use/extensibility
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;

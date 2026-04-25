@@ -30,27 +30,27 @@ pub fn success_reaction_for_format(file_format: Option<&str>) -> &'static str {
 /// Try to set a reaction, skipping invalid/unavailable reactions for the chat.
 pub async fn try_set_reaction(bot: &Bot, chat_id: ChatId, message_id: MessageId, emoji: &str) {
     let mut chosen = emoji.to_string();
-    if let Ok(chat) = bot.get_chat(chat_id).await {
-        if let Some(available) = chat.available_reactions() {
-            let allowed = available
-                .iter()
-                .any(|reaction| matches!(reaction, ReactionType::Emoji { emoji: allowed } if allowed == emoji));
-            if !allowed {
-                if let Some(first) = available.iter().find_map(|reaction| match reaction {
-                    ReactionType::Emoji { emoji } => Some(emoji.clone()),
-                    _ => None,
-                }) {
-                    log::debug!(
-                        "Reaction '{}' not allowed in chat {}, falling back to '{}'",
-                        emoji,
-                        chat_id.0,
-                        first
-                    );
-                    chosen = first;
-                } else {
-                    log::debug!("No emoji reactions available in chat {}, skipping", chat_id.0);
-                    return;
-                }
+    if let Ok(chat) = bot.get_chat(chat_id).await
+        && let Some(available) = chat.available_reactions()
+    {
+        let allowed = available
+            .iter()
+            .any(|reaction| matches!(reaction, ReactionType::Emoji { emoji: allowed } if allowed == emoji));
+        if !allowed {
+            if let Some(first) = available.iter().find_map(|reaction| match reaction {
+                ReactionType::Emoji { emoji } => Some(emoji.clone()),
+                _ => None,
+            }) {
+                log::debug!(
+                    "Reaction '{}' not allowed in chat {}, falling back to '{}'",
+                    emoji,
+                    chat_id.0,
+                    first
+                );
+                chosen = first;
+            } else {
+                log::debug!("No emoji reactions available in chat {}, skipping", chat_id.0);
+                return;
             }
         }
     }

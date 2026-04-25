@@ -6,7 +6,7 @@
 //! Based on: https://github.com/pyrogram/pyrogram/blob/master/pyrogram/file_id.py
 
 use super::error::MtProtoError;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
 /// File type enumeration matching Telegram's internal types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

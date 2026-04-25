@@ -15,7 +15,7 @@ use crate::core::config;
 /// Uses `tracing-subscriber` with log bridge so that both `tracing::info!`
 /// spans and legacy `log::info!` calls are captured.
 pub fn init_logger(log_file_path: &str) -> Result<()> {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt};
 
     let log_file = File::create(log_file_path).map_err(|e| anyhow::anyhow!("Failed to create log file: {}", e))?;
 

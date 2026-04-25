@@ -1,11 +1,11 @@
 use crate::core::escape_markdown;
-use crate::storage::db::{self};
 use crate::storage::SharedStorage;
+use crate::storage::db::{self};
 use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
+use teloxide::RequestError;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
-use teloxide::RequestError;
 use uuid::Uuid;
 
 use super::helpers::edit_caption_or_text;

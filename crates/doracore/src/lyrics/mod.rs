@@ -8,7 +8,7 @@
 
 pub mod highlights;
 
-use lazy_regex::{lazy_regex, Lazy, Regex};
+use lazy_regex::{Lazy, Regex, lazy_regex};
 use serde::{Deserialize, Serialize};
 
 /// Matches common song section headers like [Verse 1], [Chorus], [Bridge], etc.
@@ -117,14 +117,14 @@ pub fn parse_sections(text: &str) -> (Vec<LyricsSection>, bool) {
         let trimmed = line.trim();
         if let Some(caps) = SECTION_RE.captures(trimmed) {
             // Flush previous section
-            if let Some(name) = current_name.take() {
-                if !current_lines.is_empty() {
-                    sections.push(LyricsSection {
-                        name,
-                        lines: current_lines.clone(),
-                    });
-                    current_lines.clear();
-                }
+            if let Some(name) = current_name.take()
+                && !current_lines.is_empty()
+            {
+                sections.push(LyricsSection {
+                    name,
+                    lines: current_lines.clone(),
+                });
+                current_lines.clear();
             }
             let raw = caps.get(1).map(|m| m.as_str()).unwrap_or(trimmed);
             // Normalize to title case regardless of input case (CHORUS → Chorus)
@@ -137,13 +137,13 @@ pub fn parse_sections(text: &str) -> (Vec<LyricsSection>, bool) {
         }
     }
     // Flush last section
-    if let Some(name) = current_name {
-        if !current_lines.is_empty() {
-            sections.push(LyricsSection {
-                name,
-                lines: current_lines,
-            });
-        }
+    if let Some(name) = current_name
+        && !current_lines.is_empty()
+    {
+        sections.push(LyricsSection {
+            name,
+            lines: current_lines,
+        });
     }
 
     if sections.is_empty() {
@@ -278,15 +278,15 @@ async fn fetch_from_genius(artist: &str, title: &str, token: &str) -> Option<Ful
         .ok()?;
 
     // Reject if Content-Length already signals an oversized body.
-    if let Some(content_length) = resp.content_length() {
-        if content_length as usize > MAX_GENIUS_HTML_BYTES {
-            log::warn!(
-                "Lyrics: Genius page too large ({} bytes), skipping {}",
-                content_length,
-                song_url
-            );
-            return None;
-        }
+    if let Some(content_length) = resp.content_length()
+        && content_length as usize > MAX_GENIUS_HTML_BYTES
+    {
+        log::warn!(
+            "Lyrics: Genius page too large ({} bytes), skipping {}",
+            content_length,
+            song_url
+        );
+        return None;
     }
 
     let bytes = resp.bytes().await.ok()?;

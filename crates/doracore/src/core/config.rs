@@ -656,28 +656,28 @@ pub mod validation {
 
     /// Cached maximum audio file size (computed once at first access)
     static MAX_AUDIO_SIZE_CACHED: LazyLock<u64> = LazyLock::new(|| {
-        if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
-            if !bot_api_url.contains("api.telegram.org") {
-                log::info!(
-                    "Local Bot API server detected (BOT_API_URL={}), using 5 GB limit for audio",
-                    bot_api_url
-                );
-                return 5 * 1024 * 1024 * 1024; // 5 GB for local server
-            }
+        if let Ok(bot_api_url) = std::env::var("BOT_API_URL")
+            && !bot_api_url.contains("api.telegram.org")
+        {
+            log::info!(
+                "Local Bot API server detected (BOT_API_URL={}), using 5 GB limit for audio",
+                bot_api_url
+            );
+            return 5 * 1024 * 1024 * 1024; // 5 GB for local server
         }
         50 * 1024 * 1024 // 50 MB for standard API
     });
 
     /// Cached maximum video file size (computed once at first access)
     static MAX_VIDEO_SIZE_CACHED: LazyLock<u64> = LazyLock::new(|| {
-        if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
-            if !bot_api_url.contains("api.telegram.org") {
-                log::info!(
-                    "Local Bot API server detected (BOT_API_URL={}), using 5 GB limit for video",
-                    bot_api_url
-                );
-                return 5 * 1024 * 1024 * 1024; // 5 GB for local server
-            }
+        if let Ok(bot_api_url) = std::env::var("BOT_API_URL")
+            && !bot_api_url.contains("api.telegram.org")
+        {
+            log::info!(
+                "Local Bot API server detected (BOT_API_URL={}), using 5 GB limit for video",
+                bot_api_url
+            );
+            return 5 * 1024 * 1024 * 1024; // 5 GB for local server
         }
         50 * 1024 * 1024 // 50 MB for standard API
     });
@@ -947,13 +947,14 @@ pub fn validate() -> ConfigValidation {
     match *DATABASE_DRIVER {
         DatabaseDriver::Sqlite => {
             let db_path = std::path::Path::new(DATABASE_PATH.as_str());
-            if let Some(parent) = db_path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    errors.push(format!(
-                        "DATABASE_PATH parent directory does not exist: {}",
-                        parent.display()
-                    ));
-                }
+            if let Some(parent) = db_path.parent()
+                && !parent.as_os_str().is_empty()
+                && !parent.exists()
+            {
+                errors.push(format!(
+                    "DATABASE_PATH parent directory does not exist: {}",
+                    parent.display()
+                ));
             }
         }
         DatabaseDriver::Postgres => {
@@ -992,13 +993,14 @@ pub fn validate() -> ConfigValidation {
     }
 
     // Cookies file exists (if configured)
-    if let Some(ref path) = *YTDL_COOKIES_FILE {
-        if !path.is_empty() && !std::path::Path::new(path).exists() {
-            warnings.push(format!(
-                "YTDL_COOKIES_FILE is set to '{}' but the file does not exist.",
-                path
-            ));
-        }
+    if let Some(ref path) = *YTDL_COOKIES_FILE
+        && !path.is_empty()
+        && !std::path::Path::new(path).exists()
+    {
+        warnings.push(format!(
+            "YTDL_COOKIES_FILE is set to '{}' but the file does not exist.",
+            path
+        ));
     }
 
     // DOWNLOAD_FOLDER

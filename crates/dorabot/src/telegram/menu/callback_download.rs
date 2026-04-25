@@ -16,9 +16,9 @@ use url::Url;
 
 use crate::core::rate_limiter::RateLimiter;
 use crate::download::queue::{DownloadFormat, DownloadQueue, DownloadTask};
+use crate::storage::SharedStorage;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
-use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 
 use super::helpers::send_queue_position_message;

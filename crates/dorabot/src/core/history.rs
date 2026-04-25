@@ -1,6 +1,6 @@
 use crate::core::escape_markdown;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::Bot;
 use chrono::NaiveDateTime;
 use std::sync::Arc;
@@ -245,55 +245,54 @@ pub async fn handle_history_callback(
 
             // First try to resend by file_id if available
             let mut file_sent = false;
-            if let Ok(entry_id) = entry_id_str.parse::<i64>() {
-                if let Ok(Some(entry)) = shared_storage.get_download_history_entry(chat_id.0, entry_id).await {
-                    if let Some(file_id) = entry.file_id {
-                        log::info!("Found file_id for history entry {}: {}", entry_id, file_id);
+            if let Ok(entry_id) = entry_id_str.parse::<i64>()
+                && let Ok(Some(entry)) = shared_storage.get_download_history_entry(chat_id.0, entry_id).await
+                && let Some(file_id) = entry.file_id
+            {
+                log::info!("Found file_id for history entry {}: {}", entry_id, file_id);
 
-                        let result = match entry.format.as_str() {
-                            "mp3" => {
-                                bot.send_audio(
-                                    chat_id,
-                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
-                                )
-                                .await
-                            }
-                            "mp4" => {
-                                bot.send_video(
-                                    chat_id,
-                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
-                                )
-                                .await
-                            }
-                            _ => {
-                                bot.send_document(
-                                    chat_id,
-                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id)),
-                                )
-                                .await
-                            }
-                        };
+                let result = match entry.format.as_str() {
+                    "mp3" => {
+                        bot.send_audio(
+                            chat_id,
+                            teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
+                        )
+                        .await
+                    }
+                    "mp4" => {
+                        bot.send_video(
+                            chat_id,
+                            teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
+                        )
+                        .await
+                    }
+                    _ => {
+                        bot.send_document(
+                            chat_id,
+                            teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id)),
+                        )
+                        .await
+                    }
+                };
 
-                        match result {
-                            Ok(_) => {
-                                log::info!("Successfully resent file using file_id for entry {}", entry_id);
-                                bot.answer_callback_query(callback_id.clone())
-                                    .text(crate::i18n::t(&lang, "history.file_sent"))
-                                    .await?;
-                                file_sent = true;
+                match result {
+                    Ok(_) => {
+                        log::info!("Successfully resent file using file_id for entry {}", entry_id);
+                        bot.answer_callback_query(callback_id.clone())
+                            .text(crate::i18n::t(&lang, "history.file_sent"))
+                            .await?;
+                        file_sent = true;
 
-                                // Delete the history message
-                                if let Err(e) = bot.delete_message(chat_id, message_id).await {
-                                    log::warn!("Failed to delete history message: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "Failed to resend file using file_id: {}. Falling back to re-download.",
-                                    e
-                                );
-                            }
+                        // Delete the history message
+                        if let Err(e) = bot.delete_message(chat_id, message_id).await {
+                            log::warn!("Failed to delete history message: {:?}", e);
                         }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to resend file using file_id: {}. Falling back to re-download.",
+                            e
+                        );
                     }
                 }
             }

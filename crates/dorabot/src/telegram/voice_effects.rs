@@ -9,9 +9,9 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{ChatId, InlineKeyboardMarkup, InputFile, Message, MessageId};
 
+use crate::storage::SharedStorage;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
-use crate::storage::SharedStorage;
 use crate::telegram::cb;
 use crate::telegram::download_file_from_telegram;
 use crate::telegram::{Bot, BotExt};

@@ -13,25 +13,25 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
     };
 
     // Check for deep link: /start pl_{token}
-    if let Some(text) = msg.text() {
-        if let Some(token) = text.strip_prefix("/start pl_") {
-            let token = token.trim();
-            if token.is_empty()
-                || token.len() > 32
-                || !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
-                return Ok(());
-            }
-            crate::telegram::menu::playlist::handle_clone_playlist(
-                bot,
-                msg.chat.id,
-                token,
-                &deps.db_pool,
-                &deps.shared_storage,
-            )
-            .await;
+    if let Some(text) = msg.text()
+        && let Some(token) = text.strip_prefix("/start pl_")
+    {
+        let token = token.trim();
+        if token.is_empty()
+            || token.len() > 32
+            || !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
             return Ok(());
         }
+        crate::telegram::menu::playlist::handle_clone_playlist(
+            bot,
+            msg.chat.id,
+            token,
+            &deps.db_pool,
+            &deps.shared_storage,
+        )
+        .await;
+        return Ok(());
     }
 
     // Check if user exists
@@ -73,30 +73,33 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
             );
 
             let username = msg.from.as_ref().and_then(|u| u.username.clone());
-            if let Err(e) = deps
+            match deps
                 .shared_storage
                 .create_user_with_language(msg.chat.id.0, username.clone(), Some(lang_code))
                 .await
             {
-                log::warn!("Failed to create user with auto-detected language: {}", e);
-            } else {
-                // Notify admins about new user
-                use crate::telegram::notifications::notify_admin_new_user;
-                let bot_notify = bot.clone();
-                let user_id = msg.chat.id.0;
-                let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
-                let lang = lang_code.to_string();
-                tokio::spawn(async move {
-                    notify_admin_new_user(
-                        &bot_notify,
-                        user_id,
-                        username.as_deref(),
-                        first_name.as_deref(),
-                        Some(&lang),
-                        Some("/start"),
-                    )
-                    .await;
-                });
+                Err(e) => {
+                    log::warn!("Failed to create user with auto-detected language: {}", e);
+                }
+                _ => {
+                    // Notify admins about new user
+                    use crate::telegram::notifications::notify_admin_new_user;
+                    let bot_notify = bot.clone();
+                    let user_id = msg.chat.id.0;
+                    let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                    let lang = lang_code.to_string();
+                    tokio::spawn(async move {
+                        notify_admin_new_user(
+                            &bot_notify,
+                            user_id,
+                            username.as_deref(),
+                            first_name.as_deref(),
+                            Some(&lang),
+                            Some("/start"),
+                        )
+                        .await;
+                    });
+                }
             }
 
             // Show enhanced main menu in detected language

@@ -156,18 +156,18 @@ pub fn create_video_format_keyboard(
     };
 
     // Large button for default format (MP4 only; for MP4+MP3 show all as small buttons)
-    if default_format != "mp4+mp3" {
-        if let Some(format_info) = default_format_info {
-            let size_str = format_info
-                .size_bytes
-                .map(doracore::core::utils::format_bytes)
-                .unwrap_or_else(|| "?".to_string());
+    if default_format != "mp4+mp3"
+        && let Some(format_info) = default_format_info
+    {
+        let size_str = format_info
+            .size_bytes
+            .map(doracore::core::utils::format_bytes)
+            .unwrap_or_else(|| "?".to_string());
 
-            buttons.push(vec![crate::telegram::cb(
-                format!("📥 {} ({})", format_info.quality, size_str),
-                format!("dl:{}:{}:{}", default_format, format_info.quality, url_id),
-            )]);
-        }
+        buttons.push(vec![crate::telegram::cb(
+            format!("📥 {} ({})", format_info.quality, size_str),
+            format!("dl:{}:{}:{}", default_format, format_info.quality, url_id),
+        )]);
     }
 
     // Small buttons for formats (2 per row)

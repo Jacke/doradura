@@ -5,7 +5,7 @@ use crate::download::metadata::{
     add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, default_pot_token,
     get_proxy_chain, is_proxy_related_error,
 };
-use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
+use crate::download::ytdlp_errors::{YtDlpErrorType, analyze_ytdlp_error, get_error_message};
 use crate::storage::cache;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
@@ -361,86 +361,80 @@ async fn get_preview_metadata_inner(
             .host_str()
             .is_some_and(|h| h.contains("youtube.com") || h.contains("youtu.be"));
 
-        if is_youtube {
-            if let Some(yt_meta) = doracore::download::fast_metadata::scrape_youtube_metadata(url.as_str()).await {
-                // Check duration limit
-                if !has_time_range {
-                    if let Some(dur) = yt_meta.duration_secs {
-                        const MAX_DURATION_SECONDS: u32 = 14400;
-                        if dur > MAX_DURATION_SECONDS {
-                            let hours = dur / 3600;
-                            let minutes = (dur % 3600) / 60;
-                            return Err(AppError::Download(DownloadError::Other(format!(
-                                "Video is too long ({}h {}min). Maximum duration: 4 hours.",
-                                hours, minutes
-                            ))));
-                        }
+        if is_youtube
+            && let Some(yt_meta) = doracore::download::fast_metadata::scrape_youtube_metadata(url.as_str()).await
+        {
+            // Check duration limit
+            if !has_time_range && let Some(dur) = yt_meta.duration_secs {
+                const MAX_DURATION_SECONDS: u32 = 14400;
+                if dur > MAX_DURATION_SECONDS {
+                    let hours = dur / 3600;
+                    let minutes = (dur % 3600) / 60;
+                    return Err(AppError::Download(DownloadError::Other(format!(
+                        "Video is too long ({}h {}min). Maximum duration: 4 hours.",
+                        hours, minutes
+                    ))));
+                }
+            }
+
+            // Deduplicate video formats by quality label (keep largest per quality)
+            let video_formats = if !yt_meta.video_formats.is_empty() {
+                let mut by_quality: std::collections::HashMap<String, VideoFormatInfo> =
+                    std::collections::HashMap::new();
+                for f in &yt_meta.video_formats {
+                    let label = f.quality_label.clone();
+                    // content_length is absent for high-quality adaptive streams (720p+);
+                    // fall back to bitrate × duration estimate (same as yt-dlp's filesize_approx)
+                    let size_bytes = f.content_length.or_else(|| {
+                        f.bitrate
+                            .zip(yt_meta.duration_secs.map(|d| d as u64))
+                            .map(|(bps, dur)| bps * dur / 8)
+                    });
+                    let info = VideoFormatInfo {
+                        quality: label.clone(),
+                        size_bytes,
+                        resolution: f.width.and_then(|w| f.height.map(|h| format!("{}x{}", w, h))),
+                    };
+                    let replace = match (by_quality.get(&label).and_then(|e| e.size_bytes), info.size_bytes) {
+                        (None, Some(_)) => true,
+                        (Some(cur), Some(new)) => new > cur,
+                        _ => !by_quality.contains_key(&label),
+                    };
+                    if replace {
+                        by_quality.insert(label, info);
                     }
                 }
+                let fmts: Vec<VideoFormatInfo> = by_quality.into_values().collect();
+                if fmts.is_empty() { None } else { Some(fmts) }
+            } else {
+                None
+            };
 
-                // Deduplicate video formats by quality label (keep largest per quality)
-                let video_formats = if !yt_meta.video_formats.is_empty() {
-                    let mut by_quality: std::collections::HashMap<String, VideoFormatInfo> =
-                        std::collections::HashMap::new();
-                    for f in &yt_meta.video_formats {
-                        let label = f.quality_label.clone();
-                        // content_length is absent for high-quality adaptive streams (720p+);
-                        // fall back to bitrate × duration estimate (same as yt-dlp's filesize_approx)
-                        let size_bytes = f.content_length.or_else(|| {
-                            f.bitrate
-                                .zip(yt_meta.duration_secs.map(|d| d as u64))
-                                .map(|(bps, dur)| bps * dur / 8)
-                        });
-                        let info = VideoFormatInfo {
-                            quality: label.clone(),
-                            size_bytes,
-                            resolution: f.width.and_then(|w| f.height.map(|h| format!("{}x{}", w, h))),
-                        };
-                        let replace = match (by_quality.get(&label).and_then(|e| e.size_bytes), info.size_bytes) {
-                            (None, Some(_)) => true,
-                            (Some(cur), Some(new)) => new > cur,
-                            _ => !by_quality.contains_key(&label),
-                        };
-                        if replace {
-                            by_quality.insert(label, info);
-                        }
-                    }
-                    let fmts: Vec<VideoFormatInfo> = by_quality.into_values().collect();
-                    if fmts.is_empty() {
-                        None
-                    } else {
-                        Some(fmts)
-                    }
-                } else {
-                    None
-                };
+            // Estimate MP3 filesize from duration
+            let filesize = if format == Some("mp3") {
+                yt_meta.duration_secs.map(|d| (d as u64) * 320_000 / 8)
+            } else {
+                None
+            };
 
-                // Estimate MP3 filesize from duration
-                let filesize = if format == Some("mp3") {
-                    yt_meta.duration_secs.map(|d| (d as u64) * 320_000 / 8)
-                } else {
-                    None
-                };
+            let metadata = PreviewMetadata {
+                title: yt_meta.title.clone(),
+                artist: yt_meta.author.unwrap_or_default(),
+                thumbnail_url: yt_meta.thumbnail_url,
+                duration: yt_meta.duration_secs,
+                filesize,
+                description: None,
+                video_formats,
+                timestamps: vec![],
+                is_photo: false,
+                carousel_count: 0,
+                audio_tracks: None,
+            };
 
-                let metadata = PreviewMetadata {
-                    title: yt_meta.title.clone(),
-                    artist: yt_meta.author.unwrap_or_default(),
-                    thumbnail_url: yt_meta.thumbnail_url,
-                    duration: yt_meta.duration_secs,
-                    filesize,
-                    description: None,
-                    video_formats,
-                    timestamps: vec![],
-                    is_photo: false,
-                    carousel_count: 0,
-                    audio_tracks: None,
-                };
-
-                PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
-                return Ok(metadata);
-            }
-            // Fast scrape failed — fall through to yt-dlp
+            PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
+            return Ok(metadata);
         }
+        // Fast scrape failed — fall through to yt-dlp
     }
 
     // Check the cache for basic metadata (legacy cache, if needed)
@@ -544,17 +538,15 @@ async fn get_preview_metadata_inner(
 
     // Check video duration: maximum 4 hours (14400 seconds)
     // Skip this check when time_range is set — partial downloads handle long videos fine.
-    if !has_time_range {
-        if let Some(dur) = duration {
-            const MAX_DURATION_SECONDS: u32 = 14400; // 4 hours
-            if dur > MAX_DURATION_SECONDS {
-                let hours = dur / 3600;
-                let minutes = (dur % 3600) / 60;
-                return Err(AppError::Download(DownloadError::Other(format!(
-                    "Video is too long ({}h {}min). Maximum duration: 4 hours.",
-                    hours, minutes
-                ))));
-            }
+    if !has_time_range && let Some(dur) = duration {
+        const MAX_DURATION_SECONDS: u32 = 14400; // 4 hours
+        if dur > MAX_DURATION_SECONDS {
+            let hours = dur / 3600;
+            let minutes = (dur % 3600) / 60;
+            return Err(AppError::Download(DownloadError::Other(format!(
+                "Video is too long ({}h {}min). Maximum duration: 4 hours.",
+                hours, minutes
+            ))));
         }
     }
 
@@ -635,28 +627,24 @@ async fn get_preview_metadata_inner(
 
     // Instagram fallback: if yt-dlp got metadata but no video formats, and it's a reel/video,
     // add a synthetic "best" format so the UI shows MP4 button
-    if video_formats.as_ref().is_none_or(|formats| formats.is_empty()) {
-        if let Some(host) = url.host_str() {
-            let host_lower = host.to_lowercase();
-            if (host_lower == "instagram.com" || host_lower == "www.instagram.com") && url.path().contains("/reel") {
-                log::info!("Instagram reel detected with no video formats, adding synthetic MP4 format");
-                video_formats = Some(vec![VideoFormatInfo {
-                    quality: "best".to_string(),
-                    size_bytes: None,
-                    resolution: None,
-                }]);
-            }
+    if video_formats.as_ref().is_none_or(|formats| formats.is_empty())
+        && let Some(host) = url.host_str()
+    {
+        let host_lower = host.to_lowercase();
+        if (host_lower == "instagram.com" || host_lower == "www.instagram.com") && url.path().contains("/reel") {
+            log::info!("Instagram reel detected with no video formats, adding synthetic MP4 format");
+            video_formats = Some(vec![VideoFormatInfo {
+                quality: "best".to_string(),
+                size_bytes: None,
+                resolution: None,
+            }]);
         }
     }
 
     // Extract audio tracks from JSON metadata (for multi-language video selection)
     let audio_tracks = {
         let tracks = extract_audio_tracks_from_json(&json_metadata);
-        if tracks.len() >= 2 {
-            Some(tracks)
-        } else {
-            None
-        }
+        if tracks.len() >= 2 { Some(tracks) } else { None }
     };
 
     // Fetch the approximate file size
@@ -680,29 +668,30 @@ async fn get_preview_metadata_inner(
     };
 
     // MP3 fallback: estimate size from duration × bitrate when JSON has no filesize
-    if filesize.is_none() && format == Some("mp3") {
-        if let Some(duration_str) = get_json_value(&json_metadata, "duration") {
-            if let Ok(duration_secs) = duration_str.parse::<f64>() {
-                // Default MP3 bitrate 320kbps; actual bitrate chosen by user isn't available here,
-                // so use 320k as a conservative upper bound.  Result is approximate.
-                let estimated = (duration_secs * 320_000.0 / 8.0) as u64;
-                log::info!(
-                    "📊 MP3 size estimated from duration ({:.0}s × 320kbps): {:.1} MB",
-                    duration_secs,
-                    estimated as f64 / (1024.0 * 1024.0)
-                );
-                filesize = Some(estimated);
-            }
-        }
+    if filesize.is_none()
+        && format == Some("mp3")
+        && let Some(duration_str) = get_json_value(&json_metadata, "duration")
+        && let Ok(duration_secs) = duration_str.parse::<f64>()
+    {
+        // Default MP3 bitrate 320kbps; actual bitrate chosen by user isn't available here,
+        // so use 320k as a conservative upper bound.  Result is approximate.
+        let estimated = (duration_secs * 320_000.0 / 8.0) as u64;
+        log::info!(
+            "📊 MP3 size estimated from duration ({:.0}s × 320kbps): {:.1} MB",
+            duration_secs,
+            estimated as f64 / (1024.0 * 1024.0)
+        );
+        filesize = Some(estimated);
     }
 
     // If filesize was not obtained from JSON for video with a specific quality, use the size from video_formats
-    if filesize.is_none() && format == Some("mp4") {
-        if let Some(quality) = video_quality {
-            filesize = video_formats
-                .as_ref()
-                .and_then(|formats| formats.iter().find(|f| f.quality == quality).and_then(|f| f.size_bytes));
-        }
+    if filesize.is_none()
+        && format == Some("mp4")
+        && let Some(quality) = video_quality
+    {
+        filesize = video_formats
+            .as_ref()
+            .and_then(|formats| formats.iter().find(|f| f.quality == quality).and_then(|f| f.size_bytes));
     }
 
     // Extract description from JSON

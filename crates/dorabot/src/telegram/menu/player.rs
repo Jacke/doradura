@@ -16,8 +16,8 @@ use crate::download::progress::ProgressMessage;
 use crate::download::search::format_duration;
 use crate::download::send::send_audio_with_retry;
 use crate::download::source::bot_global;
-use crate::storage::db::{DbPool, PlaylistItem};
 use crate::storage::SharedStorage;
+use crate::storage::db::{DbPool, PlaylistItem};
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::{Bot, BotExt};
 use rand::seq::SliceRandom;
@@ -72,27 +72,27 @@ pub async fn handle_player_command(
     shared_storage: &Arc<SharedStorage>,
 ) {
     // Check for existing session — show player menu
-    if let Ok(Some(session)) = shared_storage.get_player_session(chat_id.0).await {
-        if let Ok(Some(pl)) = shared_storage.get_playlist(session.playlist_id).await {
-            let items = shared_storage
-                .get_playlist_items(session.playlist_id)
-                .await
-                .unwrap_or_default();
-            let msg = send_player_menu(
-                bot,
-                chat_id,
-                &pl.name,
-                &items,
-                session.is_shuffle,
-                session.repeat_mode,
-                None,
-            )
-            .await;
-            if let Some(msg_id) = msg {
-                track_message(shared_storage, chat_id.0, msg_id.0).await;
-            }
-            return;
+    if let Ok(Some(session)) = shared_storage.get_player_session(chat_id.0).await
+        && let Ok(Some(pl)) = shared_storage.get_playlist(session.playlist_id).await
+    {
+        let items = shared_storage
+            .get_playlist_items(session.playlist_id)
+            .await
+            .unwrap_or_default();
+        let msg = send_player_menu(
+            bot,
+            chat_id,
+            &pl.name,
+            &items,
+            session.is_shuffle,
+            session.repeat_mode,
+            None,
+        )
+        .await;
+        if let Some(msg_id) = msg {
+            track_message(shared_storage, chat_id.0, msg_id.0).await;
         }
+        return;
     }
 
     let playlists = shared_storage.get_user_playlists(chat_id.0).await.unwrap_or_default();
@@ -484,16 +484,17 @@ async fn play_tracks_from(
                 }
 
                 // Await the pre-buffered download for this track
-                let result = if let Some(handle) = prefetch_handle.take() {
-                    handle.await.unwrap_or(Err("join error".into()))
-                } else {
-                    // Fallback: download inline (should not happen after first iteration)
-                    timeout(
-                        TRACK_DOWNLOAD_TIMEOUT,
-                        download_player_track(&bot_clone, chat_id, item, &db_pool_clone, &shared_storage_clone),
-                    )
-                    .await
-                    .unwrap_or(Err("timeout".into()))
+                let result = match prefetch_handle.take() {
+                    Some(handle) => handle.await.unwrap_or(Err("join error".into())),
+                    _ => {
+                        // Fallback: download inline (should not happen after first iteration)
+                        timeout(
+                            TRACK_DOWNLOAD_TIMEOUT,
+                            download_player_track(&bot_clone, chat_id, item, &db_pool_clone, &shared_storage_clone),
+                        )
+                        .await
+                        .unwrap_or(Err("timeout".into()))
+                    }
                 };
 
                 // If there is a next track, start its download immediately while we
@@ -643,13 +644,16 @@ async fn download_player_track(
         || url_str.contains("/@")
     {
         // Auto-remove invalid track from playlist
-        if let Err(e) = shared_storage.remove_playlist_item(item.id).await {
-            log::warn!("Failed to auto-remove invalid track {}: {}", item.id, e);
-        } else {
-            log::info!(
-                "Auto-removed invalid track '{}' (non-video URL) from playlist",
-                item.title
-            );
+        match shared_storage.remove_playlist_item(item.id).await {
+            Err(e) => {
+                log::warn!("Failed to auto-remove invalid track {}: {}", item.id, e);
+            }
+            _ => {
+                log::info!(
+                    "Auto-removed invalid track '{}' (non-video URL) from playlist",
+                    item.title
+                );
+            }
         }
         return Err(format!("Skipped non-video URL: {:.80}", url_str).into());
     }
@@ -926,11 +930,7 @@ pub async fn handle_player_callback(
                 let cached = if item.file_id.is_some() { " ✓" } else { "" };
                 // Mark the last-played track
                 let resume_marker = if let Some(last) = session.last_track_index {
-                    if item.position == last {
-                        " ◀"
-                    } else {
-                        ""
-                    }
+                    if item.position == last { " ◀" } else { "" }
                 } else {
                     ""
                 };

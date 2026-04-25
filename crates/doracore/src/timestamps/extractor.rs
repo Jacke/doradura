@@ -4,8 +4,8 @@
 //! and merges them into a deduplicated, sorted list.
 
 use super::{
-    chapter_parser::parse_chapters, description_parser::parse_description_timestamps, url_parser::parse_url_timestamp,
-    TimestampSource, VideoTimestamp,
+    TimestampSource, VideoTimestamp, chapter_parser::parse_chapters, description_parser::parse_description_timestamps,
+    url_parser::parse_url_timestamp,
 };
 use serde_json::Value;
 use url::Url;

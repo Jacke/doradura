@@ -5,8 +5,8 @@ use sqlx::Row;
 
 use crate::storage::db::{self, DbConnection};
 
-use super::types::{ContentSourceGroup, ContentSubscriptionRecord};
 use super::SharedStorage;
+use super::types::{ContentSourceGroup, ContentSubscriptionRecord};
 
 impl SharedStorage {
     pub async fn get_user_content_subscriptions(&self, user_id: i64) -> Result<Vec<ContentSubscriptionRecord>> {

@@ -150,14 +150,17 @@ pub async fn notify_admin_task_failed(
             op, user_display, escaped_url, escaped_error, cookie_hint
         );
 
-        if let Err(e) = bot
+        match bot
             .send_message(chat_id, &message)
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
             .await
         {
-            log::error!("Failed to send admin notification: {}", e);
-        } else {
-            log::info!("Admin notification sent for task {}", task_id);
+            Err(e) => {
+                log::error!("Failed to send admin notification: {}", e);
+            }
+            _ => {
+                log::info!("Admin notification sent for task {}", task_id);
+            }
         }
 
         if let Some(details) = details {
@@ -185,11 +188,7 @@ pub async fn notify_admin_startup(bot: &Bot, bot_username: Option<&str>) {
         .or_else(|_| std::env::var("RAILWAY_GIT_COMMIT_SHA"))
         .map(|sha| {
             // Shorten to 7 characters like git does
-            if sha.len() > 7 {
-                sha[..7].to_string()
-            } else {
-                sha
-            }
+            if sha.len() > 7 { sha[..7].to_string() } else { sha }
         })
         .unwrap_or_else(|_| "unknown".to_string());
 

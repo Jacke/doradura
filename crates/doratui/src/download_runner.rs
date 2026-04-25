@@ -247,7 +247,7 @@ async fn run_download(
         let mut path_str = path.unwrap_or_else(|| out_dir.to_string_lossy().to_string());
 
         // Burn subtitles if requested and format is MP4
-        if let (Some(ref sub_opts), DownloadFormat::Mp4) = (&subtitle_opts, format) {
+        if let (Some(sub_opts), DownloadFormat::Mp4) = (&subtitle_opts, format) {
             match burn_subtitles(slot_id, &url, &path_str, sub_opts, &settings, &tx).await {
                 Ok(burned_path) => {
                     path_str = burned_path;

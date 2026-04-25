@@ -161,35 +161,35 @@ pub async fn extract_playlist(url: &Url) -> anyhow::Result<PlaylistInfo> {
         }
 
         // Try to parse as playlist metadata first
-        if idx == 0 {
-            if let Ok(playlist_json) = serde_json::from_str::<YtdlpPlaylistJson>(line) {
-                if playlist_json.title.is_some() && !playlist_json.entries.is_empty() {
-                    // This is the playlist metadata with all entries
-                    playlist_title = playlist_json.title;
-                    playlist_uploader = playlist_json.uploader;
+        if idx == 0
+            && let Ok(playlist_json) = serde_json::from_str::<YtdlpPlaylistJson>(line)
+            && playlist_json.title.is_some()
+            && !playlist_json.entries.is_empty()
+        {
+            // This is the playlist metadata with all entries
+            playlist_title = playlist_json.title;
+            playlist_uploader = playlist_json.uploader;
 
-                    for (pos, entry) in playlist_json.entries.into_iter().enumerate() {
-                        if entries.len() >= MAX_PLAYLIST_ITEMS {
-                            break;
-                        }
-
-                        let video_url = entry
-                            .url
-                            .or_else(|| entry.id.map(|id| format!("https://www.youtube.com/watch?v={}", id)));
-
-                        if let Some(video_url) = video_url {
-                            entries.push(PlaylistEntry {
-                                url: video_url,
-                                title: entry.title.unwrap_or_else(|| format!("Video {}", pos + 1)),
-                                duration: entry.duration.map(|d| d as u64),
-                                position: pos + 1,
-                            });
-                        }
-                    }
-
+            for (pos, entry) in playlist_json.entries.into_iter().enumerate() {
+                if entries.len() >= MAX_PLAYLIST_ITEMS {
                     break;
                 }
+
+                let video_url = entry
+                    .url
+                    .or_else(|| entry.id.map(|id| format!("https://www.youtube.com/watch?v={}", id)));
+
+                if let Some(video_url) = video_url {
+                    entries.push(PlaylistEntry {
+                        url: video_url,
+                        title: entry.title.unwrap_or_else(|| format!("Video {}", pos + 1)),
+                        duration: entry.duration.map(|d| d as u64),
+                        position: pos + 1,
+                    });
+                }
             }
+
+            break;
         }
 
         // Parse as individual entry

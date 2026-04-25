@@ -269,10 +269,18 @@ fn build_audio_filter(settings: &AudioEffectSettings) -> String {
 fn append_morph_filter(base: String, profile: MorphProfile) -> String {
     let preset = match profile {
         MorphProfile::None => return base,
-        MorphProfile::Soft => "acompressor=threshold=-16dB:ratio=2:attack=5:release=50, aecho=0.4:0.6:20:0.15, loudnorm=I=-16:TP=-2:LRA=11",
-        MorphProfile::Aggressive => "acompressor=threshold=-18dB:ratio=4:attack=3:release=80, acrusher=bits=12:mix=0.08, aecho=0.7:0.8:40:0.25, loudnorm=I=-14:TP=-1.5:LRA=9, aresample=44100",
-        MorphProfile::Lofi => "aresample=22050, acrusher=bits=10:mix=0.2, aecho=0.6:0.6:45:0.2, loudnorm=I=-18:TP=-2:LRA=8",
-        MorphProfile::Wide => "aecho=0.8:0.9:60:0.3, acompressor=threshold=-14dB:ratio=2.5:attack=8:release=60, extrastereo=m=2.5, aresample=48000",
+        MorphProfile::Soft => {
+            "acompressor=threshold=-16dB:ratio=2:attack=5:release=50, aecho=0.4:0.6:20:0.15, loudnorm=I=-16:TP=-2:LRA=11"
+        }
+        MorphProfile::Aggressive => {
+            "acompressor=threshold=-18dB:ratio=4:attack=3:release=80, acrusher=bits=12:mix=0.08, aecho=0.7:0.8:40:0.25, loudnorm=I=-14:TP=-1.5:LRA=9, aresample=44100"
+        }
+        MorphProfile::Lofi => {
+            "aresample=22050, acrusher=bits=10:mix=0.2, aecho=0.6:0.6:45:0.2, loudnorm=I=-18:TP=-2:LRA=8"
+        }
+        MorphProfile::Wide => {
+            "aecho=0.8:0.9:60:0.3, acompressor=threshold=-14dB:ratio=2.5:attack=8:release=60, extrastereo=m=2.5, aresample=48000"
+        }
     };
 
     if base == "acopy" {
@@ -418,19 +426,18 @@ pub async fn cleanup_expired_sessions(shared_storage: Arc<SharedStorage>) -> Res
     // Delete files for expired sessions
     for session in expired_sessions {
         // Delete original file
-        if let Err(e) = fs_err::tokio::remove_file(&session.original_file_path).await {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!("Failed to delete original file {}: {}", session.original_file_path, e);
-            }
+        if let Err(e) = fs_err::tokio::remove_file(&session.original_file_path).await
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("Failed to delete original file {}: {}", session.original_file_path, e);
         }
 
         // Delete current file if different
-        if session.current_file_path != session.original_file_path {
-            if let Err(e) = fs_err::tokio::remove_file(&session.current_file_path).await {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!("Failed to delete current file {}: {}", session.current_file_path, e);
-                }
-            }
+        if session.current_file_path != session.original_file_path
+            && let Err(e) = fs_err::tokio::remove_file(&session.current_file_path).await
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("Failed to delete current file {}: {}", session.current_file_path, e);
         }
     }
 

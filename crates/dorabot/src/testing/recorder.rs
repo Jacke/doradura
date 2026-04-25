@@ -236,24 +236,30 @@ mod tests {
         // Save original env var
         let original = std::env::var("TELEGRAM_RECORD_MODE").ok();
 
-        std::env::set_var("TELEGRAM_RECORD_MODE", "true");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("TELEGRAM_RECORD_MODE", "true") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Enabled);
 
-        std::env::set_var("TELEGRAM_RECORD_MODE", "1");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("TELEGRAM_RECORD_MODE", "1") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Enabled);
 
-        std::env::set_var("TELEGRAM_RECORD_MODE", "enabled");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("TELEGRAM_RECORD_MODE", "enabled") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Enabled);
 
-        std::env::set_var("TELEGRAM_RECORD_MODE", "verbose");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("TELEGRAM_RECORD_MODE", "verbose") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Verbose);
 
-        std::env::remove_var("TELEGRAM_RECORD_MODE");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("TELEGRAM_RECORD_MODE") };
         assert_eq!(RecordingMode::from_env(), RecordingMode::Disabled);
 
         // Restore original env var
         if let Some(val) = original {
-            std::env::set_var("TELEGRAM_RECORD_MODE", val);
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            unsafe { std::env::set_var("TELEGRAM_RECORD_MODE", val) };
         }
     }
 

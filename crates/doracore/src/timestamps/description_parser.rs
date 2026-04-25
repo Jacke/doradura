@@ -10,7 +10,7 @@
 //! - `(1:30) Main part`
 
 use super::{TimestampSource, VideoTimestamp};
-use lazy_regex::{lazy_regex, Lazy, Regex};
+use lazy_regex::{Lazy, Regex, lazy_regex};
 
 /// Regex for parsing timestamp lines in descriptions
 /// Matches: "0:00 Text", "1:23 Text", "12:34:56 Text"

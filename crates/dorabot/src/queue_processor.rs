@@ -14,9 +14,9 @@ use crate::core::{alerts, config, metrics, rate_limiter, subscription};
 use crate::download::context::DownloadContext;
 use crate::download::queue::{self as queue};
 use crate::download::ytdlp_errors::sanitize_user_error_message;
-use crate::download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
-use crate::storage::db::{self as db};
+use crate::download::{DownloadQueue, download_and_send_audio, download_and_send_subtitles, download_and_send_video};
 use crate::storage::SharedStorage;
+use crate::storage::db::{self as db};
 use crate::telegram::notifications::notify_admin_task_failed;
 use crate::telegram::{Bot, BotExt};
 
@@ -299,32 +299,35 @@ async fn process_single_task(
     // limit changes or plan upgrades between queue and execution are respected.
     {
         let user_id = task.chat_id.0;
-        let limit_exceeded = if let Ok(conn) = db::get_connection(&shared_storage.sqlite_pool()) {
-            let plan = db::get_user(&conn, user_id)
-                .ok()
-                .flatten()
-                .map(|u| u.plan)
-                .unwrap_or_default();
-            let limits = subscription::PlanLimits::for_plan(plan);
-            if let Some(daily_limit) = limits.daily_download_limit {
-                let today_count = db::count_user_downloads_today(&conn, user_id).unwrap_or(0);
-                if today_count >= daily_limit {
-                    log::warn!(
-                        "User {} hit daily download limit ({}/{}), rejecting task {}",
-                        user_id,
-                        today_count,
-                        daily_limit,
-                        task.id
-                    );
-                    true
+        let limit_exceeded = match db::get_connection(&shared_storage.sqlite_pool()) {
+            Ok(conn) => {
+                let plan = db::get_user(&conn, user_id)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.plan)
+                    .unwrap_or_default();
+                let limits = subscription::PlanLimits::for_plan(plan);
+                if let Some(daily_limit) = limits.daily_download_limit {
+                    let today_count = db::count_user_downloads_today(&conn, user_id).unwrap_or(0);
+                    if today_count >= daily_limit {
+                        log::warn!(
+                            "User {} hit daily download limit ({}/{}), rejecting task {}",
+                            user_id,
+                            today_count,
+                            daily_limit,
+                            task.id
+                        );
+                        true
+                    } else {
+                        false
+                    }
                 } else {
-                    false
+                    false // unlimited plan
                 }
-            } else {
-                false // unlimited plan
             }
-        } else {
-            false // fail open: if DB is unavailable, let the download proceed
+            _ => {
+                false // fail open: if DB is unavailable, let the download proceed
+            }
         };
 
         if limit_exceeded {

@@ -413,12 +413,11 @@ impl MtProtoDownloader {
         }
 
         for msg in message_list {
-            if let tl::enums::Message::Message(message) = msg {
-                if let Some(media) = message.media {
-                    if let Some(info) = self.extract_media_info(&media, message.id, message.date) {
-                        media_list.push(info);
-                    }
-                }
+            if let tl::enums::Message::Message(message) = msg
+                && let Some(media) = message.media
+                && let Some(info) = self.extract_media_info(&media, message.id, message.date)
+            {
+                media_list.push(info);
             }
         }
 

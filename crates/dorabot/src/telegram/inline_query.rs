@@ -30,11 +30,11 @@ pub async fn handle_inline_query(bot: crate::telegram::Bot, query: InlineQuery) 
         let mut rates = INLINE_RATE.write().await;
         // Evict entries older than 60 seconds to prevent unbounded map growth
         rates.retain(|_, ts| ts.elapsed().as_millis() < 60_000);
-        if let Some(last) = rates.get(&query.from.id.0) {
-            if last.elapsed().as_millis() < INLINE_COOLDOWN_MS {
-                let _ = bot.answer_inline_query(query.id.clone(), vec![]).await;
-                return Ok(());
-            }
+        if let Some(last) = rates.get(&query.from.id.0)
+            && last.elapsed().as_millis() < INLINE_COOLDOWN_MS
+        {
+            let _ = bot.answer_inline_query(query.id.clone(), vec![]).await;
+            return Ok(());
         }
         rates.insert(query.from.id.0, Instant::now());
     }

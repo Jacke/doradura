@@ -1,20 +1,20 @@
 use crate::conversion::video::{
-    calculate_video_note_split, is_too_long_for_split, to_gif, to_video_notes_split, GifOptions, GIF_MAX_DURATION_SECS,
-    VIDEO_NOTE_MAX_DURATION, VIDEO_NOTE_MAX_PARTS,
+    GIF_MAX_DURATION_SECS, GifOptions, VIDEO_NOTE_MAX_DURATION, VIDEO_NOTE_MAX_PARTS, calculate_video_note_split,
+    is_too_long_for_split, to_gif, to_video_notes_split,
 };
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::escape_markdown;
 use crate::i18n;
-use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
+use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::telegram::Bot;
 use itertools::Itertools;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 
-use super::subtitles::{download_circle_subtitles, BurnSubsResult};
+use super::subtitles::{BurnSubsResult, download_circle_subtitles};
 use super::x264_params::video_note_dark_scene;
 
 /// Segment of video to cut
@@ -39,42 +39,42 @@ pub fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<
     }
 
     // first<N> - first N seconds (first30, first15, etc.)
-    if let Some(num_str) = segment_part.strip_prefix("first") {
-        if let Ok(secs) = num_str.parse::<i64>() {
-            if secs > 0 && secs <= 60 {
-                return Some((0, secs, format!("00:00-{}", format_timestamp(secs))));
-            }
-        }
+    if let Some(num_str) = segment_part.strip_prefix("first")
+        && let Ok(secs) = num_str.parse::<i64>()
+        && secs > 0
+        && secs <= 60
+    {
+        return Some((0, secs, format!("00:00-{}", format_timestamp(secs))));
     }
 
     // last<N> - last N seconds (last30, last15, etc.)
-    if let Some(num_str) = segment_part.strip_prefix("last") {
-        if let Ok(secs) = num_str.parse::<i64>() {
-            let duration = video_duration?;
-            if secs > 0 && secs <= 60 && secs <= duration {
-                let start = (duration - secs).max(0);
-                return Some((
-                    start,
-                    duration,
-                    format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
-                ));
-            }
+    if let Some(num_str) = segment_part.strip_prefix("last")
+        && let Ok(secs) = num_str.parse::<i64>()
+    {
+        let duration = video_duration?;
+        if secs > 0 && secs <= 60 && secs <= duration {
+            let start = (duration - secs).max(0);
+            return Some((
+                start,
+                duration,
+                format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
+            ));
         }
     }
 
     // middle<N> - N seconds from the middle (middle30, middle15, etc.)
-    if let Some(num_str) = segment_part.strip_prefix("middle") {
-        if let Ok(secs) = num_str.parse::<i64>() {
-            let duration = video_duration?;
-            if secs > 0 && secs <= 60 && secs <= duration {
-                let start = ((duration - secs) / 2).max(0);
-                let end = start + secs;
-                return Some((
-                    start,
-                    end,
-                    format!("{}-{}", format_timestamp(start), format_timestamp(end)),
-                ));
-            }
+    if let Some(num_str) = segment_part.strip_prefix("middle")
+        && let Ok(secs) = num_str.parse::<i64>()
+    {
+        let duration = video_duration?;
+        if secs > 0 && secs <= 60 && secs <= duration {
+            let start = ((duration - secs) / 2).max(0);
+            let end = start + secs;
+            return Some((
+                start,
+                end,
+                format!("{}-{}", format_timestamp(start), format_timestamp(end)),
+            ));
         }
     }
 
@@ -263,28 +263,28 @@ pub fn parse_speed_modifier(text: &str) -> Option<f32> {
     // Look for patterns like: "2x", "1.5x", "speed2", "speed1.5", "x2", "x1.5"
     for word in lower.split_whitespace() {
         // "2x", "1.5x"
-        if let Some(num_str) = word.strip_suffix('x') {
-            if let Ok(speed) = num_str.parse::<f32>() {
-                if speed > 0.0 && speed <= 2.0 {
-                    return Some(speed);
-                }
-            }
+        if let Some(num_str) = word.strip_suffix('x')
+            && let Ok(speed) = num_str.parse::<f32>()
+            && speed > 0.0
+            && speed <= 2.0
+        {
+            return Some(speed);
         }
         // "x2", "x1.5"
-        if let Some(num_str) = word.strip_prefix('x') {
-            if let Ok(speed) = num_str.parse::<f32>() {
-                if speed > 0.0 && speed <= 2.0 {
-                    return Some(speed);
-                }
-            }
+        if let Some(num_str) = word.strip_prefix('x')
+            && let Ok(speed) = num_str.parse::<f32>()
+            && speed > 0.0
+            && speed <= 2.0
+        {
+            return Some(speed);
         }
         // "speed2", "speed1.5"
-        if let Some(num_str) = word.strip_prefix("speed") {
-            if let Ok(speed) = num_str.parse::<f32>() {
-                if speed > 0.0 && speed <= 2.0 {
-                    return Some(speed);
-                }
-            }
+        if let Some(num_str) = word.strip_prefix("speed")
+            && let Ok(speed) = num_str.parse::<f32>()
+            && speed > 0.0
+            && speed <= 2.0
+        {
+            return Some(speed);
         }
     }
 
@@ -300,40 +300,39 @@ fn parse_audio_command_segment(text: &str, audio_duration: Option<i64>) -> Optio
         return Some((0, duration, format!("00:00-{}", format_timestamp(duration))));
     }
 
-    if let Some(num_str) = segment_part.strip_prefix("first") {
-        if let Ok(secs) = num_str.parse::<i64>() {
-            if secs > 0 {
-                let end = secs.min(duration);
-                return Some((0, end, format!("00:00-{}", format_timestamp(end))));
-            }
-        }
+    if let Some(num_str) = segment_part.strip_prefix("first")
+        && let Ok(secs) = num_str.parse::<i64>()
+        && secs > 0
+    {
+        let end = secs.min(duration);
+        return Some((0, end, format!("00:00-{}", format_timestamp(end))));
     }
 
-    if let Some(num_str) = segment_part.strip_prefix("last") {
-        if let Ok(secs) = num_str.parse::<i64>() {
-            if secs > 0 && secs <= duration {
-                let start = (duration - secs).max(0);
-                return Some((
-                    start,
-                    duration,
-                    format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
-                ));
-            }
-        }
+    if let Some(num_str) = segment_part.strip_prefix("last")
+        && let Ok(secs) = num_str.parse::<i64>()
+        && secs > 0
+        && secs <= duration
+    {
+        let start = (duration - secs).max(0);
+        return Some((
+            start,
+            duration,
+            format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
+        ));
     }
 
-    if let Some(num_str) = segment_part.strip_prefix("middle") {
-        if let Ok(secs) = num_str.parse::<i64>() {
-            if secs > 0 && secs <= duration {
-                let start = ((duration - secs) / 2).max(0);
-                let end = start + secs;
-                return Some((
-                    start,
-                    end,
-                    format!("{}-{}", format_timestamp(start), format_timestamp(end)),
-                ));
-            }
-        }
+    if let Some(num_str) = segment_part.strip_prefix("middle")
+        && let Ok(secs) = num_str.parse::<i64>()
+        && secs > 0
+        && secs <= duration
+    {
+        let start = ((duration - secs) / 2).max(0);
+        let end = start + secs;
+        return Some((
+            start,
+            end,
+            format!("{}-{}", format_timestamp(start), format_timestamp(end)),
+        ));
     }
 
     None
@@ -929,13 +928,11 @@ pub async fn process_video_clip(
     };
 
     // Notify user about multi-circle split
-    if video_note_needs_split {
-        if let Some(split_info) = calculate_video_note_split(effective_total_len as u64) {
-            let args = doracore::fluent_args!("count" => split_info.num_parts as i64);
-            bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_will_split", &args))
-                .await
-                .ok();
-        }
+    if video_note_needs_split && let Some(split_info) = calculate_video_note_split(effective_total_len as u64) {
+        let args = doracore::fluent_args!("count" => split_info.num_parts as i64);
+        bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_will_split", &args))
+            .await
+            .ok();
     }
 
     // Notify user if segments were truncated (ringtones and GIF)

@@ -478,19 +478,17 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
                     };
 
                     // Track soonest expiring auth cookie
-                    if is_auth {
-                        if let Some(days) = detail.days_until_expiry {
-                            match diagnostic.soonest_expiry_days {
-                                None => {
-                                    diagnostic.soonest_expiry_days = Some(days);
-                                    diagnostic.soonest_expiry_name = Some(name.clone());
-                                }
-                                Some(current) if days < current => {
-                                    diagnostic.soonest_expiry_days = Some(days);
-                                    diagnostic.soonest_expiry_name = Some(name.clone());
-                                }
-                                _ => {}
+                    if is_auth && let Some(days) = detail.days_until_expiry {
+                        match diagnostic.soonest_expiry_days {
+                            None => {
+                                diagnostic.soonest_expiry_days = Some(days);
+                                diagnostic.soonest_expiry_name = Some(name.clone());
                             }
+                            Some(current) if days < current => {
+                                diagnostic.soonest_expiry_days = Some(days);
+                                diagnostic.soonest_expiry_name = Some(name.clone());
+                            }
+                            _ => {}
                         }
                     }
 

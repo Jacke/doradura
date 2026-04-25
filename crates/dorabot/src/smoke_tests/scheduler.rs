@@ -4,9 +4,9 @@
 //! alerts to admins when tests fail.
 
 use super::results::SmokeTestReport;
-use super::runner::{run_all_smoke_tests, SmokeTestConfig};
-use crate::telegram::notifications::notify_admin_text;
+use super::runner::{SmokeTestConfig, run_all_smoke_tests};
 use crate::telegram::Bot;
+use crate::telegram::notifications::notify_admin_text;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
@@ -219,13 +219,15 @@ mod tests {
     #[test]
     fn test_is_enabled_default() {
         // Clear env var for test
-        std::env::remove_var("HEALTH_CHECK_ENABLED");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("HEALTH_CHECK_ENABLED") };
         assert!(HealthCheckScheduler::is_enabled());
     }
 
     #[test]
     fn test_get_interval_default() {
-        std::env::remove_var("HEALTH_CHECK_INTERVAL_SECS");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("HEALTH_CHECK_INTERVAL_SECS") };
         assert_eq!(
             HealthCheckScheduler::get_interval_secs(),
             DEFAULT_HEALTH_CHECK_INTERVAL_SECS

@@ -4,9 +4,9 @@ use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use anyhow::Context;
 use std::sync::Arc;
+use teloxide::RequestError;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, Seconds};
-use teloxide::RequestError;
 use url::Url;
 
 /// Subscription plan limits structure
@@ -741,24 +741,24 @@ pub async fn handle_successful_payment(
             // shared/forwarded, so an attacker could craft an invoice for themselves,
             // get someone else to pay it, and have the payer's Stars credit the attacker.
             // We reject any such divergence and notify admin.
-            if let Some(from_id) = msg.from.as_ref().map(|u| u.id.0 as i64) {
-                if from_id != telegram_id {
-                    log::error!(
-                        "❌ Payment payload user_id mismatch: msg.from.id={} payload_user_id={} charge={}",
-                        from_id,
-                        telegram_id,
-                        payment.telegram_payment_charge_id.0
-                    );
-                    crate::telegram::notifications::notify_admin_text(
-                        bot,
-                        &format!(
-                            "⚠️ PAYLOAD HIJACK ATTEMPT\nSender: {}\nPayload user_id: {}\nCharge: {}",
-                            from_id, telegram_id, payment.telegram_payment_charge_id.0
-                        ),
-                    )
-                    .await;
-                    return Ok(());
-                }
+            if let Some(from_id) = msg.from.as_ref().map(|u| u.id.0 as i64)
+                && from_id != telegram_id
+            {
+                log::error!(
+                    "❌ Payment payload user_id mismatch: msg.from.id={} payload_user_id={} charge={}",
+                    from_id,
+                    telegram_id,
+                    payment.telegram_payment_charge_id.0
+                );
+                crate::telegram::notifications::notify_admin_text(
+                    bot,
+                    &format!(
+                        "⚠️ PAYLOAD HIJACK ATTEMPT\nSender: {}\nPayload user_id: {}\nCharge: {}",
+                        from_id, telegram_id, payment.telegram_payment_charge_id.0
+                    ),
+                )
+                .await;
+                return Ok(());
             }
 
             // HIGH-14: Validate payment amount matches expected price for plan

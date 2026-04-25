@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo test --test core_modules_test
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 // ============================================================================
@@ -12,7 +12,7 @@ use std::time::Duration;
 
 mod retry_tests {
     use super::*;
-    use doradura::core::retry::{retry, RetryConfig, Retryable};
+    use doradura::core::retry::{RetryConfig, Retryable, retry};
 
     #[derive(Debug, Clone)]
     struct TestError {

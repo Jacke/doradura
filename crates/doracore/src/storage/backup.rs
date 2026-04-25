@@ -64,10 +64,10 @@ fn cleanup_old_backups(backup_dir: &Path) -> Result<()> {
                 // Try to extract timestamp from the filename
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
                     // Format: YYYYMMDD_HHMMSS_database.sqlite
-                    if let Some(timestamp_part) = file_name.split('_').take(2).join("_").get(0..15) {
-                        if let Ok(dt) = DateTime::parse_from_str(timestamp_part, "%Y%m%d_%H%M%S") {
-                            backups.push((path, dt.with_timezone(&Utc)));
-                        }
+                    if let Some(timestamp_part) = file_name.split('_').take(2).join("_").get(0..15)
+                        && let Ok(dt) = DateTime::parse_from_str(timestamp_part, "%Y%m%d_%H%M%S")
+                    {
+                        backups.push((path, dt.with_timezone(&Utc)));
                     }
                 }
             }
@@ -100,14 +100,13 @@ pub fn list_backups() -> Result<Vec<(PathBuf, DateTime<Utc>)>> {
         for entry in fs::read_dir(&backup_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("sqlite") {
-                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if let Some(timestamp_part) = file_name.split('_').take(2).join("_").get(0..15) {
-                        if let Ok(dt) = DateTime::parse_from_str(timestamp_part, "%Y%m%d_%H%M%S") {
-                            backups.push((path, dt.with_timezone(&Utc)));
-                        }
-                    }
-                }
+            if path.is_file()
+                && path.extension().and_then(|s| s.to_str()) == Some("sqlite")
+                && let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+                && let Some(timestamp_part) = file_name.split('_').take(2).join("_").get(0..15)
+                && let Ok(dt) = DateTime::parse_from_str(timestamp_part, "%Y%m%d_%H%M%S")
+            {
+                backups.push((path, dt.with_timezone(&Utc)));
             }
         }
     }

@@ -10,9 +10,9 @@ use crate::telegram::Bot;
 use crate::telegram::BotExt;
 use std::collections::HashMap;
 use std::sync::Arc;
+use teloxide::RequestError;
 use teloxide::prelude::*;
 use teloxide::types::InlineKeyboardMarkup;
-use teloxide::RequestError;
 use uuid::Uuid;
 
 const MAX_MSG_LEN: usize = 4000;

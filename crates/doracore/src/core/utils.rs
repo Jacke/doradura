@@ -1,4 +1,4 @@
-use lazy_regex::{lazy_regex, Lazy, Regex};
+use lazy_regex::{Lazy, Regex, lazy_regex};
 
 // =============================================================================
 // Lazy-compiled Regex patterns — patterns are validated at compile time by
@@ -38,17 +38,17 @@ pub static BOT_API_RESPONSE_REGEX: Lazy<Regex> =
 /// Returns the number of seconds to wait, or None if not found.
 pub fn extract_retry_after(error_str: &str) -> Option<u64> {
     // Try the first pattern: "retry after N s"
-    if let Some(caps) = RETRY_AFTER_REGEX.captures(error_str) {
-        if let Some(secs) = caps.get(1) {
-            return secs.as_str().parse().ok();
-        }
+    if let Some(caps) = RETRY_AFTER_REGEX.captures(error_str)
+        && let Some(secs) = caps.get(1)
+    {
+        return secs.as_str().parse().ok();
     }
 
     // Try the alternative pattern: "retry_after: N" or "retry_after N"
-    if let Some(caps) = RETRY_AFTER_ALT_REGEX.captures(error_str) {
-        if let Some(secs) = caps.get(1) {
-            return secs.as_str().parse().ok();
-        }
+    if let Some(caps) = RETRY_AFTER_ALT_REGEX.captures(error_str)
+        && let Some(secs) = caps.get(1)
+    {
+        return secs.as_str().parse().ok();
     }
 
     None
@@ -675,13 +675,13 @@ impl TempFileGuard {
 
 impl Drop for TempFileGuard {
     fn drop(&mut self) {
-        if let Some(ref path) = self.path {
-            if path.exists() {
-                if let Err(e) = fs_err::remove_file(path) {
-                    log::debug!("TempFileGuard: failed to remove {}: {}", path.display(), e);
-                } else {
-                    log::debug!("TempFileGuard: cleaned up {}", path.display());
-                }
+        if let Some(ref path) = self.path
+            && path.exists()
+        {
+            if let Err(e) = fs_err::remove_file(path) {
+                log::debug!("TempFileGuard: failed to remove {}: {}", path.display(), e);
+            } else {
+                log::debug!("TempFileGuard: cleaned up {}", path.display());
             }
         }
     }
@@ -777,10 +777,10 @@ impl Drop for TempDirGuard {
     fn drop(&mut self) {
         // Clean up tracked external files first
         for path in &self.extra_files {
-            if let Err(e) = fs_err::remove_file(path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    log::debug!("TempDirGuard: failed to remove extra file {}: {}", path.display(), e);
-                }
+            if let Err(e) = fs_err::remove_file(path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                log::debug!("TempDirGuard: failed to remove extra file {}: {}", path.display(), e);
             }
         }
         // Remove the entire directory
@@ -963,12 +963,16 @@ mod tests {
         assert!(format_media_caption("Дорадура", "NA").starts_with("*NA* — _Дорадура_"));
 
         // With special characters requiring escaping
-        assert!(format_media_caption("Song (live).mp3", "Artist-Name")
-            .starts_with("*Artist\\-Name* — _Song \\(live\\)\\.mp3_"));
+        assert!(
+            format_media_caption("Song (live).mp3", "Artist-Name")
+                .starts_with("*Artist\\-Name* — _Song \\(live\\)\\.mp3_")
+        );
 
         // Complex example
-        assert!(format_media_caption("Дорадура (акустическая версия).mp3", "NA - дора")
-            .starts_with("*NA \\- дора* — _Дорадура \\(акустическая версия\\)\\.mp3_"));
+        assert!(
+            format_media_caption("Дорадура (акустическая версия).mp3", "NA - дора")
+                .starts_with("*NA \\- дора* — _Дорадура \\(акустическая версия\\)\\.mp3_")
+        );
 
         // Check copyright is appended
         let caption = format_media_caption("Test", "Artist");

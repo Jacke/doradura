@@ -38,11 +38,7 @@ pub async fn ask(model: &str, max_tokens: u32, prompt: &str) -> Option<String> {
     let json: serde_json::Value = response.json().await.ok()?;
     let text = json.get("content")?.get(0)?.get("text")?.as_str()?.trim().to_string();
 
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// Claude Haiku model ID — cheapest, fastest.

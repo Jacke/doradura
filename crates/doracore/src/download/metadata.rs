@@ -5,7 +5,7 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::download::error::DownloadError;
-use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, should_notify_admin, YtDlpErrorType};
+use crate::download::ytdlp_errors::{YtDlpErrorType, analyze_ytdlp_error, get_error_message, should_notify_admin};
 use crate::storage::cache;
 use fs_err as fs;
 use std::path::Path;
@@ -115,12 +115,12 @@ fn get_cached_warp_proxy() -> Option<&'static str> {
 ///
 /// Transforms `"http://user:secret@host:port"` to `"http://user:***@host:port"`.
 pub fn mask_proxy_password(proxy_url: &str) -> String {
-    if let Some(at_pos) = proxy_url.rfind('@') {
-        if let Some(colon_pos) = proxy_url[..at_pos].rfind(':') {
-            let prefix = &proxy_url[..colon_pos + 1];
-            let suffix = &proxy_url[at_pos..];
-            return format!("{}***{}", prefix, suffix);
-        }
+    if let Some(at_pos) = proxy_url.rfind('@')
+        && let Some(colon_pos) = proxy_url[..at_pos].rfind(':')
+    {
+        let prefix = &proxy_url[..colon_pos + 1];
+        let suffix = &proxy_url[at_pos..];
+        return format!("{}***{}", prefix, suffix);
     }
     proxy_url.to_string()
 }
@@ -307,26 +307,26 @@ pub fn add_cookies_args_with_proxy<'a>(
     }
 
     // Fallback: check if file exists but wasn't cached (created after startup)
-    if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
-        if !cookies_file.is_empty() {
-            let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
-                cookies_file.clone()
-            } else {
-                shellexpand::tilde(cookies_file).to_string()
-            };
+    if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE
+        && !cookies_file.is_empty()
+    {
+        let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
+            cookies_file.clone()
+        } else {
+            shellexpand::tilde(cookies_file).to_string()
+        };
 
-            let cookies_path_buf = std::path::Path::new(&cookies_path);
-            if !cookies_path_buf.exists() {
-                log::error!("Cookies file not found: {} (checked: {})", cookies_file, cookies_path);
-                log::error!("YouTube downloads will FAIL without valid cookies!");
-                return;
-            }
-            log::warn!(
-                "Cookies file found but not cached (created after startup?): {}",
-                cookies_path
-            );
-            log::warn!("Restart the bot to use the new cookies file");
+        let cookies_path_buf = std::path::Path::new(&cookies_path);
+        if !cookies_path_buf.exists() {
+            log::error!("Cookies file not found: {} (checked: {})", cookies_file, cookies_path);
+            log::error!("YouTube downloads will FAIL without valid cookies!");
+            return;
         }
+        log::warn!(
+            "Cookies file found but not cached (created after startup?): {}",
+            cookies_path
+        );
+        log::warn!("Restart the bot to use the new cookies file");
     }
 
     // Priority 2: Browser
@@ -429,22 +429,22 @@ pub fn add_instagram_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option
         return true;
     }
 
-    if let Some(ref cookies_file) = *config::INSTAGRAM_COOKIES_FILE {
-        if !cookies_file.is_empty() {
-            let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
-                cookies_file.clone()
-            } else {
-                shellexpand::tilde(cookies_file).to_string()
-            };
-            if std::path::Path::new(&cookies_path).exists() {
-                log::warn!(
-                    "[IG_COOKIES] Instagram cookies found but not cached (created after startup?): {}",
-                    cookies_path
-                );
-                log::warn!("Restart the bot to use the new Instagram cookies file");
-            } else {
-                log::debug!("[IG_COOKIES] Instagram cookies file not found: {}", cookies_path);
-            }
+    if let Some(ref cookies_file) = *config::INSTAGRAM_COOKIES_FILE
+        && !cookies_file.is_empty()
+    {
+        let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
+            cookies_file.clone()
+        } else {
+            shellexpand::tilde(cookies_file).to_string()
+        };
+        if std::path::Path::new(&cookies_path).exists() {
+            log::warn!(
+                "[IG_COOKIES] Instagram cookies found but not cached (created after startup?): {}",
+                cookies_path
+            );
+            log::warn!("Restart the bot to use the new Instagram cookies file");
+        } else {
+            log::debug!("[IG_COOKIES] Instagram cookies file not found: {}", cookies_path);
         }
     }
 
@@ -493,7 +493,7 @@ pub fn add_po_token_only_args(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>)
 ///
 /// Duration in seconds if successful, `None` otherwise.
 pub async fn probe_duration_seconds(path: &str) -> Option<u32> {
-    use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
+    use crate::core::process::{FFPROBE_TIMEOUT, run_with_timeout};
 
     let mut cmd = TokioCommand::new("ffprobe");
     cmd.args([
@@ -519,7 +519,7 @@ pub async fn probe_duration_seconds(path: &str) -> Option<u32> {
 ///
 /// Uses `tokio::process::Command` with a 30-second timeout per probe.
 pub async fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
-    use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
+    use crate::core::process::{FFPROBE_TIMEOUT, run_with_timeout};
 
     let mut video_cmd = TokioCommand::new("ffprobe");
     video_cmd.args([
@@ -574,7 +574,7 @@ pub async fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
 /// `tags.rotate` and modern `side_data_list[].rotation`) and swapping
 /// width/height for 90°/270° rotations.
 pub async fn probe_video_metadata(path: &str) -> Option<(u32, Option<u32>, Option<u32>)> {
-    use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
+    use crate::core::process::{FFPROBE_TIMEOUT, run_with_timeout};
 
     let duration = probe_duration_seconds(path).await?;
 

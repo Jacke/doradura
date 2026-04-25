@@ -4,9 +4,9 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 use crate::telegram::BotExt;
 
 use crate::storage::db::{self, OutputKind, SourceKind};
-use crate::telegram::commands::{process_video_clip, CutSegment};
+use crate::telegram::commands::{CutSegment, process_video_clip};
 
-use super::{build_duration_buttons, build_timestamp_ui, format_timestamp, CallbackCtx};
+use super::{CallbackCtx, build_duration_buttons, build_timestamp_ui, format_timestamp};
 
 /// Convert an anyhow error into a `teloxide::RequestError` for use with `?`.
 fn to_req_err(e: impl std::fmt::Display) -> teloxide::RequestError {

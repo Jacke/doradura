@@ -10,4 +10,4 @@ mod types;
 mod uploads;
 
 pub use schema::{init_boot_timestamp, schema};
-pub use types::{ensure_user_exists, HandlerDeps, HandlerError, UserCreationResult, UserInfo};
+pub use types::{HandlerDeps, HandlerError, UserCreationResult, UserInfo, ensure_user_exists};

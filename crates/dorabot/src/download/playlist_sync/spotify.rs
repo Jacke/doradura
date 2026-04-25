@@ -166,10 +166,10 @@ async fn get_token(client_id: &str, client_secret: &str) -> anyhow::Result<Strin
     // Check cache — reuse if created within ~55 min (tokens expire in 1h)
     {
         let cache = TOKEN_CACHE.read().await;
-        if let Some((ref token, ref created_at)) = *cache {
-            if created_at.elapsed().as_secs() < 3300 {
-                return Ok(token.clone());
-            }
+        if let Some((ref token, ref created_at)) = *cache
+            && created_at.elapsed().as_secs() < 3300
+        {
+            return Ok(token.clone());
         }
     }
 
@@ -226,7 +226,10 @@ async fn fetch_playlist_tracks(
     token: &str,
     playlist_id: &str,
 ) -> anyhow::Result<(String, Option<String>, Vec<RawSpotifyTrack>)> {
-    let url = format!("https://api.spotify.com/v1/playlists/{}?fields=name,description,tracks(items(track(id,name,artists,duration_ms)),next,total)", playlist_id);
+    let url = format!(
+        "https://api.spotify.com/v1/playlists/{}?fields=name,description,tracks(items(track(id,name,artists,duration_ms)),next,total)",
+        playlist_id
+    );
 
     let resp = spotify_get(client, token, &url).await?;
     let playlist: SpotifyPlaylistResponse = resp.json().await.with_context(|| "Failed to parse Spotify playlist")?;

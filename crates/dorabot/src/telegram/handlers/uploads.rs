@@ -212,18 +212,18 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                 }
 
                 // Check for duplicates
-                if let Some(ref unique_id) = file_unique_id {
-                    if let Ok(Some(existing)) = deps.shared_storage.find_duplicate_upload(chat_id.0, unique_id).await {
-                        bot.send_md(
-                            chat_id,
-                            format!(
-                                "ℹ️ This file has already been uploaded: *{}*\n\nUse /videos to find it.",
-                                crate::core::escape_markdown(&existing.title)
-                            ),
-                        )
-                        .await?;
-                        return Ok(());
-                    }
+                if let Some(ref unique_id) = file_unique_id
+                    && let Ok(Some(existing)) = deps.shared_storage.find_duplicate_upload(chat_id.0, unique_id).await
+                {
+                    bot.send_md(
+                        chat_id,
+                        format!(
+                            "ℹ️ This file has already been uploaded: *{}*\n\nUse /videos to find it.",
+                            crate::core::escape_markdown(&existing.title)
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
                 }
 
                 // Extract file format from mime type or filename
@@ -322,10 +322,10 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                         if let Some(dur) = duration_str {
                             info_parts.push(dur);
                         }
-                        if let Some(w) = width {
-                            if let Some(h) = height {
-                                info_parts.push(format!("{}x{}", w, h));
-                            }
+                        if let Some(w) = width
+                            && let Some(h) = height
+                        {
+                            info_parts.push(format!("{}x{}", w, h));
                         }
 
                         let escaped_title = crate::core::escape_markdown(&title);

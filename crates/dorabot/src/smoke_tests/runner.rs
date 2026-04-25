@@ -88,13 +88,13 @@ pub fn get_smoke_test_proxy_chain() -> Vec<Option<ProxyConfig>> {
     let mut chain = Vec::new();
 
     // Primary: WARP proxy (free Cloudflare)
-    if let Some(ref warp_proxy) = *config::proxy::WARP_PROXY {
-        if !warp_proxy.trim().is_empty() {
-            chain.push(Some(ProxyConfig::new(
-                warp_proxy.trim().to_string(),
-                "WARP (Cloudflare)",
-            )));
-        }
+    if let Some(ref warp_proxy) = *config::proxy::WARP_PROXY
+        && !warp_proxy.trim().is_empty()
+    {
+        chain.push(Some(ProxyConfig::new(
+            warp_proxy.trim().to_string(),
+            "WARP (Cloudflare)",
+        )));
     }
 
     // Last resort: No proxy (direct connection)

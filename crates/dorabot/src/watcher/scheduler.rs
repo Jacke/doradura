@@ -4,14 +4,14 @@
 //! The Telegram layer receives these and sends formatted messages to users.
 
 use crate::core::config;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
-use crate::watcher::traits::WatchNotification;
+use crate::storage::db::DbPool;
 use crate::watcher::WatcherRegistry;
+use crate::watcher::traits::WatchNotification;
 use anyhow::Context;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
 /// Start the watcher scheduler background task.
 ///

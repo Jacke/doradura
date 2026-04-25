@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::header;
 use axum::http::StatusCode;
+use axum::http::header;
 use axum::response::{Html, IntoResponse, Response};
 use indoc::formatdoc;
 
 use crate::storage::db::DbPool;
 use crate::storage::get_connection;
 
-use super::auth::{generate_csrf_token, RequireAdmin};
+use super::auth::{RequireAdmin, generate_csrf_token};
 use super::helpers::{fmt_num, html_escape};
 use super::types::WebState;
 

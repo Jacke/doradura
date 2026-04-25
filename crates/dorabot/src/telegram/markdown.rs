@@ -1,7 +1,7 @@
 use crate::core::utils::escape_markdown_v2;
+use teloxide::RequestError;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, ParseMode};
-use teloxide::RequestError;
 
 fn is_markdown_parse_error(err: &RequestError) -> bool {
     err.to_string().to_lowercase().contains("can't parse entities")

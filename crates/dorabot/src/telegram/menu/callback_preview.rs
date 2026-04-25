@@ -10,9 +10,9 @@ use teloxide::prelude::*;
 use teloxide::types::MaybeInaccessibleMessage;
 use url::Url;
 
+use crate::storage::SharedStorage;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
-use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 
 use super::main_menu::{edit_main_menu, send_main_menu_as_new};

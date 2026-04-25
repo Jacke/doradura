@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
-use sqlx::postgres::PgPoolOptions;
+use anyhow::{Context, Result, anyhow};
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 use crate::core::config::{self, DatabaseDriver};
 use crate::storage::db::DbPool;

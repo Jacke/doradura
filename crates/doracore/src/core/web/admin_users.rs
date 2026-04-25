@@ -228,19 +228,19 @@ pub(super) async fn admin_api_user_plan(
                 expires_at
             );
             // Send plan change notification to user via Telegram
-            if old_plan != new_plan {
-                if let Some(ref tx) = plan_notifier {
-                    use std::str::FromStr;
-                    let old = crate::core::Plan::from_str(&old_plan).unwrap_or_default();
-                    let new = crate::core::Plan::from_str(&new_plan).unwrap_or_default();
-                    let _ = tx.send(crate::core::PlanChangeEvent {
-                        user_id,
-                        old_plan: old,
-                        new_plan: new,
-                        reason: crate::core::PlanChangeReason::Admin,
-                        expires_at: expires_at.clone(),
-                    });
-                }
+            if old_plan != new_plan
+                && let Some(ref tx) = plan_notifier
+            {
+                use std::str::FromStr;
+                let old = crate::core::Plan::from_str(&old_plan).unwrap_or_default();
+                let new = crate::core::Plan::from_str(&new_plan).unwrap_or_default();
+                let _ = tx.send(crate::core::PlanChangeEvent {
+                    user_id,
+                    old_plan: old,
+                    new_plan: new,
+                    reason: crate::core::PlanChangeReason::Admin,
+                    expires_at: expires_at.clone(),
+                });
             }
             Json(PlanChangeOk::new(new_plan, expires_at)).into_response()
         }
@@ -688,19 +688,19 @@ pub(super) async fn admin_api_user_settings(
         Ok(Ok((updated, plan_change))) => {
             log::info!("Admin {} updated user {} settings: {:?}", admin_id, user_id, updated);
             // Emit plan change event for notification
-            if let Some((old_plan_str, new_plan_str, expires_at)) = plan_change {
-                if let Some(ref tx) = plan_notifier {
-                    use std::str::FromStr;
-                    let old_plan = crate::core::Plan::from_str(&old_plan_str).unwrap_or_default();
-                    let new_plan = crate::core::Plan::from_str(&new_plan_str).unwrap_or_default();
-                    let _ = tx.send(crate::core::PlanChangeEvent {
-                        user_id,
-                        old_plan,
-                        new_plan,
-                        reason: crate::core::PlanChangeReason::Admin,
-                        expires_at,
-                    });
-                }
+            if let Some((old_plan_str, new_plan_str, expires_at)) = plan_change
+                && let Some(ref tx) = plan_notifier
+            {
+                use std::str::FromStr;
+                let old_plan = crate::core::Plan::from_str(&old_plan_str).unwrap_or_default();
+                let new_plan = crate::core::Plan::from_str(&new_plan_str).unwrap_or_default();
+                let _ = tx.send(crate::core::PlanChangeEvent {
+                    user_id,
+                    old_plan,
+                    new_plan,
+                    reason: crate::core::PlanChangeReason::Admin,
+                    expires_at,
+                });
             }
             Json(SettingsUpdatedOk::new(updated)).into_response()
         }

@@ -7,7 +7,7 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 
 use crate::core::config;
-use crate::download::search::{append_proxy_args, YtdlpFlatEntry};
+use crate::download::search::{YtdlpFlatEntry, append_proxy_args};
 
 use super::resolver::{ImportTrack, Platform, PlaylistResolver, ProgressFn, ResolvedPlaylist, TrackStatus};
 

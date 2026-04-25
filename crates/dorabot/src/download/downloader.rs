@@ -7,7 +7,7 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
-use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
+use crate::core::process::{FFMPEG_TIMEOUT, run_with_timeout};
 use crate::core::utils::escape_filename;
 use crate::download::context::DownloadContext;
 use crate::download::error::DownloadError;
@@ -103,12 +103,11 @@ pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: 
             if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
                 progress_msg.style = ProgressBarStyle::parse(&style_str);
             }
-        } else if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
-                    progress_msg.style = ProgressBarStyle::parse(&style_str);
-                }
-            }
+        } else if let Some(ref pool) = db_pool_clone
+            && let Ok(conn) = db::get_connection(pool)
+            && let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0)
+        {
+            progress_msg.style = ProgressBarStyle::parse(&style_str);
         }
         let start_time = std::time::Instant::now();
 
@@ -122,14 +121,13 @@ pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: 
                 .map(|u| u.plan)
                 .unwrap_or_default()
         } else if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                db::get_user(&conn, chat_id.0)
+            match db::get_connection(pool) {
+                Ok(conn) => db::get_user(&conn, chat_id.0)
                     .ok()
                     .flatten()
                     .map(|u| u.plan)
-                    .unwrap_or_default()
-            } else {
-                crate::core::types::Plan::default()
+                    .unwrap_or_default(),
+                _ => crate::core::types::Plan::default(),
             }
         } else {
             crate::core::types::Plan::default()
@@ -328,15 +326,15 @@ pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: 
 
             // Clean up file after 10 minutes
             tokio::time::sleep(config::download::cleanup_delay()).await;
-            if let Err(e) = fs::remove_file(&download_path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(AppError::Download(DownloadError::Other(format!(
-                        "Failed to delete file: {}",
-                        e
-                    ))))?;
-                }
-                // File doesn't exist - that's fine, it was probably deleted manually
+            if let Err(e) = fs::remove_file(&download_path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(AppError::Download(DownloadError::Other(format!(
+                    "Failed to delete file: {}",
+                    e
+                ))))?;
             }
+            // File doesn't exist - that's fine, it was probably deleted manually
 
             Ok(())
         }
@@ -572,10 +570,10 @@ pub async fn clean_srt_overlaps(path: &str) {
     // Step 1: Remove consecutive entries with identical text
     let mut deduped: Vec<(String, String, String)> = Vec::with_capacity(entries.len());
     for entry in entries {
-        if let Some(last) = deduped.last() {
-            if last.2.trim() == entry.2.trim() {
-                continue; // skip duplicate text
-            }
+        if let Some(last) = deduped.last()
+            && last.2.trim() == entry.2.trim()
+        {
+            continue; // skip duplicate text
         }
         deduped.push(entry);
     }
@@ -732,7 +730,7 @@ mod download_tests {
     use super::*;
     use crate::core::{extract_retry_after, is_timeout_or_network_error, truncate_tail_utf8};
     use crate::download::metadata::{build_telegram_safe_format, probe_duration_seconds, validate_cookies_file_format};
-    use crate::download::send::{read_log_tail, UploadProgress};
+    use crate::download::send::{UploadProgress, read_log_tail};
     use std::path::PathBuf;
 
     fn tool_exists(bin: &str) -> bool {
@@ -1053,7 +1051,7 @@ mod download_tests {
 
         // Should only contain the tail
         assert!(result.len() <= 60); // Allow some margin for line boundaries
-                                     // Should not contain the first lines
+        // Should not contain the first lines
         assert!(!result.contains("Line number 0"));
     }
 }

@@ -23,9 +23,9 @@
 //! - `WARP_PROXY` - WARP proxy URL (optional)
 
 use doradura::smoke_tests::{
-    is_ffmpeg_available, is_ffprobe_available, is_ytdlp_available, run_all_smoke_tests, test_audio_download,
-    test_cookies_validation, test_ffmpeg_toolchain, test_metadata_extraction, test_odesli_fetch, test_video_download,
-    test_web_server_health, SmokeTestConfig, SmokeTestStatus, DEFAULT_TEST_URL, ODESLI_TEST_URL,
+    DEFAULT_TEST_URL, ODESLI_TEST_URL, SmokeTestConfig, SmokeTestStatus, is_ffmpeg_available, is_ffprobe_available,
+    is_ytdlp_available, run_all_smoke_tests, test_audio_download, test_cookies_validation, test_ffmpeg_toolchain,
+    test_metadata_extraction, test_odesli_fetch, test_video_download, test_web_server_health,
 };
 use std::time::Duration;
 

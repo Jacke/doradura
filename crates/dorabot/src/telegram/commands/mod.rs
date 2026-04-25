@@ -16,12 +16,12 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
 use crate::download::queue::DownloadQueue;
 use crate::i18n;
-use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
-use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
+use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::telegram::Bot;
 use crate::telegram::BotExt;
-use lazy_regex::{lazy_regex, Lazy, Regex};
+use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
+use lazy_regex::{Lazy, Regex, lazy_regex};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use url::Url;
@@ -261,32 +261,40 @@ async fn try_intercept_new_category_session(
     } else {
         // Truncate to 32 chars for callback data safety
         let name: String = name.chars().take(32).collect();
-        if let Err(e) = shared_storage.create_user_category(msg.chat.id.0, &name).await {
-            log::error!("Failed to create user category '{}': {}", name, e);
-            bot.send_message(msg.chat.id, "❌ Failed to create category. Please try again.")
-                .await
-                .ok();
-        } else if let Err(e) = shared_storage
-            .set_download_category(msg.chat.id.0, download_id, Some(&name))
-            .await
-        {
-            log::error!(
-                "Failed to assign category '{}' to download {}: {}",
-                name,
-                download_id,
-                e
-            );
-            bot.send_message(
-                msg.chat.id,
-                "❌ Category created but failed to assign. Please try again.",
-            )
-            .await
-            .ok();
-        } else {
-            let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
-            bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
-                .await
-                .ok();
+        match shared_storage.create_user_category(msg.chat.id.0, &name).await {
+            Err(e) => {
+                log::error!("Failed to create user category '{}': {}", name, e);
+                bot.send_message(msg.chat.id, "❌ Failed to create category. Please try again.")
+                    .await
+                    .ok();
+            }
+            _ => {
+                match shared_storage
+                    .set_download_category(msg.chat.id.0, download_id, Some(&name))
+                    .await
+                {
+                    Err(e) => {
+                        log::error!(
+                            "Failed to assign category '{}' to download {}: {}",
+                            name,
+                            download_id,
+                            e
+                        );
+                        bot.send_message(
+                            msg.chat.id,
+                            "❌ Category created but failed to assign. Please try again.",
+                        )
+                        .await
+                        .ok();
+                    }
+                    _ => {
+                        let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
+                        bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
+                            .await
+                            .ok();
+                    }
+                }
+            }
         }
     }
     Ok(true)
@@ -668,10 +676,10 @@ pub async fn handle_message(
     }
 
     // Ignore replies to bot's own messages (don't show "no links" for them)
-    if let Some(reply) = msg.reply_to_message() {
-        if reply.from.as_ref().is_some_and(|u| u.is_bot) {
-            return Ok(None);
-        }
+    if let Some(reply) = msg.reply_to_message()
+        && reply.from.as_ref().is_some_and(|u| u.is_bot)
+    {
+        return Ok(None);
     }
 
     // VideoClipSession audio-intake (VideoNote: capture custom audio; Loop: kick off processing).
@@ -1009,13 +1017,12 @@ pub async fn handle_message(
                         }
 
                         // Update status message every few URLs
-                        if (idx + 1) % 5 == 0 || idx == valid_urls.len() - 1 {
-                            if let Err(e) = bot_clone
+                        if ((idx + 1) % 5 == 0 || idx == valid_urls.len() - 1)
+                            && let Err(e) = bot_clone
                                 .edit_message_text(chat_id, status_message.id, &status_text)
                                 .await
-                            {
-                                log::warn!("Failed to update status message: {:?}", e);
-                            }
+                        {
+                            log::warn!("Failed to update status message: {:?}", e);
                         }
                     }
 
@@ -1207,27 +1214,27 @@ pub async fn handle_message(
                 match metadata_result {
                     Ok(metadata) => {
                         // Check file size during preview ONLY for audio
-                        if format != "mp4" {
-                            if let Some(filesize) = metadata.filesize {
-                                let max_size = config::validation::max_audio_size_bytes();
+                        if format != "mp4"
+                            && let Some(filesize) = metadata.filesize
+                        {
+                            let max_size = config::validation::max_audio_size_bytes();
 
-                                if filesize > max_size * 1000 {
-                                    let size_mb = filesize as f64 / (1024.0 * 1024.0);
-                                    let max_mb = max_size as f64 / (1024.0 * 2.0 * 1024.0);
-                                    log::warn!(
-                                        "Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)",
-                                        size_mb,
-                                        max_mb
-                                    );
+                            if filesize > max_size * 1000 {
+                                let size_mb = filesize as f64 / (1024.0 * 1024.0);
+                                let max_mb = max_size as f64 / (1024.0 * 2.0 * 1024.0);
+                                log::warn!(
+                                    "Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)",
+                                    size_mb,
+                                    max_mb
+                                );
 
-                                    let args = doracore::fluent_args!("size" => format!("{:.1}", size_mb), "max" => format!("{:.1}", max_mb));
-                                    let error_message = i18n::t_args(&lang, "commands.audio_too_large", &args);
+                                let args = doracore::fluent_args!("size" => format!("{:.1}", size_mb), "max" => format!("{:.1}", max_mb));
+                                let error_message = i18n::t_args(&lang, "commands.audio_too_large", &args);
 
-                                    bot.try_delete(msg.chat.id, processing_msg.id).await;
+                                bot.try_delete(msg.chat.id, processing_msg.id).await;
 
-                                    bot.send_message(msg.chat.id, error_message).await?;
-                                    return Ok(user_info);
-                                }
+                                bot.send_message(msg.chat.id, error_message).await?;
+                                return Ok(user_info);
                             }
                         }
 
@@ -1271,17 +1278,15 @@ pub async fn handle_message(
                             false
                         };
 
-                        if !is_duration_error {
-                            if let Some(ref alert_mgr) = alert_manager {
-                                let user_id = msg.chat.id.0;
-                                let error_str = format!("{:?}", e);
-                                let context = crate::core::alerts::DownloadContext::with_live_status().await;
-                                if let Err(alert_err) = alert_mgr
-                                    .alert_download_failure(user_id, url.as_str(), &error_str, 3, Some(&context))
-                                    .await
-                                {
-                                    log::error!("Failed to send alert: {}", alert_err);
-                                }
+                        if !is_duration_error && let Some(ref alert_mgr) = alert_manager {
+                            let user_id = msg.chat.id.0;
+                            let error_str = format!("{:?}", e);
+                            let context = crate::core::alerts::DownloadContext::with_live_status().await;
+                            if let Err(alert_err) = alert_mgr
+                                .alert_download_failure(user_id, url.as_str(), &error_str, 3, Some(&context))
+                                .await
+                            {
+                                log::error!("Failed to send alert: {}", alert_err);
                             }
                         }
 
@@ -1323,19 +1328,18 @@ pub async fn handle_message(
             // Standalone search context: if user typed text while a search session with empty query exists
             if let Some(session) =
                 crate::telegram::menu::search::get_search_session(&shared_storage, msg.chat.id.0).await
+                && session.query.is_empty()
             {
-                if session.query.is_empty() {
-                    crate::telegram::menu::search::handle_standalone_search(
-                        &bot,
-                        msg.chat.id,
-                        text,
-                        db_pool.clone(),
-                        shared_storage.clone(),
-                        session.context.clone(),
-                    )
-                    .await;
-                    return Ok(None);
-                }
+                crate::telegram::menu::search::handle_standalone_search(
+                    &bot,
+                    msg.chat.id,
+                    text,
+                    db_pool.clone(),
+                    shared_storage.clone(),
+                    session.context.clone(),
+                )
+                .await;
+                return Ok(None);
             }
 
             // Player mode: text → music search (only non-URL text)

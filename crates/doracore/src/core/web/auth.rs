@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use axum::{
     body::Body,
     extract::{FromRequestParts, Query, State},
-    http::{header, request::Parts, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header, request::Parts},
     response::{Html, IntoResponse, Response},
 };
 use hmac::{Hmac, Mac};
@@ -17,14 +17,14 @@ use crate::core::config;
 use crate::core::copyright::get_bot_username;
 
 use super::helpers::constant_time_eq;
-use super::types::{TelegramAuth, WebState, AUTH_MAX_ATTEMPTS, AUTH_RATE_LIMIT, AUTH_WINDOW_SECS};
+use super::types::{AUTH_MAX_ATTEMPTS, AUTH_RATE_LIMIT, AUTH_WINDOW_SECS, TelegramAuth, WebState};
 
 // --- CSRF ---
 
 static CSRF_SECRET: LazyLock<String> = LazyLock::new(|| {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let bytes: [u8; 32] = rng.gen();
+    let bytes: [u8; 32] = rng.r#gen();
     hex::encode(bytes)
 });
 
@@ -99,10 +99,11 @@ pub(super) async fn check_rate_limit(
 ) -> bool {
     {
         let rates = limiter.read().await;
-        if let Some((count, since)) = rates.get(ip) {
-            if since.elapsed().as_secs() < window_secs && *count >= max {
-                return false;
-            }
+        if let Some((count, since)) = rates.get(ip)
+            && since.elapsed().as_secs() < window_secs
+            && *count >= max
+        {
+            return false;
         }
     }
     {

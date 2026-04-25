@@ -83,10 +83,10 @@ impl Default for DoraSettings {
 impl DoraSettings {
     /// Load from `~/.config/dora/settings.json`; returns `Default` on any error.
     pub fn load() -> Self {
-        if let Ok(content) = fs_err::read_to_string(config_path()) {
-            if let Ok(s) = serde_json::from_str(&content) {
-                return s;
-            }
+        if let Ok(content) = fs_err::read_to_string(config_path())
+            && let Ok(s) = serde_json::from_str(&content)
+        {
+            return s;
         }
         Self::default()
     }

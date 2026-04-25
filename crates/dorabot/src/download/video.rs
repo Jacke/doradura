@@ -7,7 +7,7 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
-use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
+use crate::core::process::{FFPROBE_TIMEOUT, run_with_timeout};
 use crate::core::types::Plan;
 use crate::download::context::DownloadContext;
 use crate::download::downloader::{burn_subtitles_into_video, split_video_into_parts};
@@ -20,9 +20,9 @@ use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessag
 use crate::download::send::{send_error_with_sticker, send_video_with_retry};
 use crate::download::source::bot_global;
 use crate::storage::SharedStorage;
+use crate::telegram::Bot;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::ext::BotExt;
-use crate::telegram::Bot;
 use fs_err as fs;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -68,10 +68,10 @@ pub async fn download_and_send_video(
             crate::i18n::lang_from_code("ru")
         };
         let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
-        if let Some(ref storage) = shared_storage_clone {
-            if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
-                progress_msg.style = ProgressBarStyle::parse(&style_str);
-            }
+        if let Some(ref storage) = shared_storage_clone
+            && let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await
+        {
+            progress_msg.style = ProgressBarStyle::parse(&style_str);
         }
         let start_time = std::time::Instant::now();
 
@@ -336,27 +336,22 @@ pub async fn download_and_send_video(
                             }
 
                             // Save video timestamps (first part or single)
-                            if total_parts == 1 || first_part_db_id.is_none() {
-                                if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
-                                    if !metadata.timestamps.is_empty() {
-                                        // Filter timestamps to time range if download was clipped
-                                        let ts_to_save = if let Some((ref start, ref end)) = *format.time_range() {
-                                            use doracore::timestamps::{
-                                                filter_timestamps_for_range, parse_timestamp_to_secs,
-                                            };
-                                            match (parse_timestamp_to_secs(start), parse_timestamp_to_secs(end)) {
-                                                (Some(s), Some(e)) => {
-                                                    filter_timestamps_for_range(&metadata.timestamps, s, e)
-                                                }
-                                                _ => metadata.timestamps.clone(),
-                                            }
-                                        } else {
-                                            metadata.timestamps.clone()
-                                        };
-                                        if let Err(e) = storage.save_video_timestamps(id, &ts_to_save).await {
-                                            log::warn!("Failed to save timestamps for download {}: {}", id, e);
-                                        }
+                            if (total_parts == 1 || first_part_db_id.is_none())
+                                && let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await
+                                && !metadata.timestamps.is_empty()
+                            {
+                                // Filter timestamps to time range if download was clipped
+                                let ts_to_save = if let Some((ref start, ref end)) = *format.time_range() {
+                                    use doracore::timestamps::{filter_timestamps_for_range, parse_timestamp_to_secs};
+                                    match (parse_timestamp_to_secs(start), parse_timestamp_to_secs(end)) {
+                                        (Some(s), Some(e)) => filter_timestamps_for_range(&metadata.timestamps, s, e),
+                                        _ => metadata.timestamps.clone(),
                                     }
+                                } else {
+                                    metadata.timestamps.clone()
+                                };
+                                if let Err(e) = storage.save_video_timestamps(id, &ts_to_save).await {
+                                    log::warn!("Failed to save timestamps for download {}: {}", id, e);
                                 }
                             }
 
@@ -453,37 +448,37 @@ pub async fn download_and_send_video(
             }
 
             // Share page: create after successful video send (YouTube only, fire-and-forget)
-            if crate::core::share::is_youtube_url(url.as_str()) {
-                if let Some(ref storage) = shared_storage_clone {
-                    let storage_share = Arc::clone(storage);
-                    let url_str = url.to_string();
-                    let title_share = title.clone();
-                    let artist_share = artist.clone();
-                    let duration_share = download_output.duration_secs;
-                    let thumb_share = thumbnail_url.clone();
-                    let bot_share = bot_clone.clone();
-                    tokio::spawn(async move {
-                        let thumb = thumb_share.or_else(|| crate::core::share::youtube_thumbnail_url(&url_str));
-                        let artist_opt = if artist_share.trim().is_empty() {
-                            None
-                        } else {
-                            Some(artist_share.as_str())
-                        };
-                        if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
-                            &storage_share,
-                            &url_str,
-                            &title_share,
-                            artist_opt,
-                            thumb.as_deref(),
-                            duration_share.map(|d| d as u64),
-                        )
-                        .await
-                        {
-                            send_share_message(&bot_share, chat_id, &title_share, &share_url, streaming_links.as_ref())
-                                .await;
-                        }
-                    });
-                }
+            if crate::core::share::is_youtube_url(url.as_str())
+                && let Some(ref storage) = shared_storage_clone
+            {
+                let storage_share = Arc::clone(storage);
+                let url_str = url.to_string();
+                let title_share = title.clone();
+                let artist_share = artist.clone();
+                let duration_share = download_output.duration_secs;
+                let thumb_share = thumbnail_url.clone();
+                let bot_share = bot_clone.clone();
+                tokio::spawn(async move {
+                    let thumb = thumb_share.or_else(|| crate::core::share::youtube_thumbnail_url(&url_str));
+                    let artist_opt = if artist_share.trim().is_empty() {
+                        None
+                    } else {
+                        Some(artist_share.as_str())
+                    };
+                    if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
+                        &storage_share,
+                        &url_str,
+                        &title_share,
+                        artist_opt,
+                        thumb.as_deref(),
+                        duration_share.map(|d| d as u64),
+                    )
+                    .await
+                    {
+                        send_share_message(&bot_share, chat_id, &title_share, &share_url, streaming_links.as_ref())
+                            .await;
+                    }
+                });
             }
 
             // Schedule cleanup in background (outside timeout scope)
@@ -587,11 +582,7 @@ async fn get_thumbnail_url(url: &Url) -> Option<String> {
     let output = result.ok()?;
     if output.status.success() {
         let thumb_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if thumb_url.is_empty() {
-            None
-        } else {
-            Some(thumb_url)
-        }
+        if thumb_url.is_empty() { None } else { Some(thumb_url) }
     } else {
         None
     }
@@ -973,23 +964,23 @@ async fn send_share_message(
     let mut has_links = false;
 
     if let Some(links) = streaming_links {
-        if let Some(ref url) = links.spotify {
-            if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("💚 Spotify", u));
-                has_links = true;
-            }
+        if let Some(ref url) = links.spotify
+            && let Ok(u) = url.parse()
+        {
+            row1.push(InlineKeyboardButton::url("💚 Spotify", u));
+            has_links = true;
         }
-        if let Some(ref url) = links.apple_music {
-            if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("🍎 Apple", u));
-                has_links = true;
-            }
+        if let Some(ref url) = links.apple_music
+            && let Ok(u) = url.parse()
+        {
+            row1.push(InlineKeyboardButton::url("🍎 Apple", u));
+            has_links = true;
         }
-        if let Some(ref url) = links.youtube_music {
-            if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("🔴 YT Music", u));
-                has_links = true;
-            }
+        if let Some(ref url) = links.youtube_music
+            && let Ok(u) = url.parse()
+        {
+            row1.push(InlineKeyboardButton::url("🔴 YT Music", u));
+            has_links = true;
         }
     }
 

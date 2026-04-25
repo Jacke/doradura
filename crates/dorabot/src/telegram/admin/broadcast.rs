@@ -1,6 +1,6 @@
 use super::is_admin;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::Bot;
 use anyhow::Result;
 use std::sync::Arc;

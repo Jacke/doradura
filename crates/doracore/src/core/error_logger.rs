@@ -106,7 +106,7 @@ impl ErrorLogger {
             }
         };
         handle.spawn(async move {
-            if let Err(e) = shared_storage
+            match shared_storage
                 .log_error(
                     user_id,
                     username.as_deref(),
@@ -117,14 +117,17 @@ impl ErrorLogger {
                 )
                 .await
             {
-                log::error!("Failed to log error to database: {}", e);
-            } else {
-                log::debug!(
-                    "Logged error: type={}, user={:?}, message={}",
-                    error_type_str,
-                    user_id,
-                    error_message
-                );
+                Err(e) => {
+                    log::error!("Failed to log error to database: {}", e);
+                }
+                _ => {
+                    log::debug!(
+                        "Logged error: type={}, user={:?}, message={}",
+                        error_type_str,
+                        user_id,
+                        error_message
+                    );
+                }
             }
         });
     }

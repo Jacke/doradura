@@ -36,10 +36,10 @@ use simplelog::{Config as LogConfig, LevelFilter, WriteLogger};
 use crossterm::{
     event::KeyCode,
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::prelude::CrosstermBackend;
 use tokio::sync::mpsc;
 
 mod app;
@@ -54,10 +54,10 @@ use app::{
     App, DownloadFormat, HistoryEntry, LyricsResult, LyricsViewMode, PreviewState, SlotState, Tab, ToastKind,
     YtdlpStartup,
 };
-use download_runner::{spawn_download, SlotEvent, SubtitleOptions};
-use events::{next_event, InputEvent};
+use download_runner::{SlotEvent, SubtitleOptions, spawn_download};
+use events::{InputEvent, next_event};
 use settings::DoraSettings;
-use video_info::{fetch_thumbnail_art, fetch_video_info, PreviewResult};
+use video_info::{PreviewResult, fetch_thumbnail_art, fetch_video_info};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -293,12 +293,12 @@ fn drain_background_events(
 
     while let Ok(art) = thumb_rx.try_recv() {
         // Feature: Fix lag by pre-processing protocol in the background
-        if let Some(picker) = &app.image_picker {
-            if let Ok(img) = image::load_from_memory(&art.raw_bytes) {
-                let size = terminal.size().unwrap_or_default();
-                if let Ok(protocol) = picker.new_protocol(img, size.into(), ratatui_image::Resize::Fit(None)) {
-                    app.preview_image_protocol = Some(protocol);
-                }
+        if let Some(picker) = &app.image_picker
+            && let Ok(img) = image::load_from_memory(&art.raw_bytes)
+        {
+            let size = terminal.size().unwrap_or_default();
+            if let Ok(protocol) = picker.new_protocol(img, size.into(), ratatui_image::Resize::Fit(None)) {
+                app.preview_image_protocol = Some(protocol);
             }
         }
         app.preview_thumbnail = Some(art);
@@ -342,41 +342,41 @@ fn dispatch_pending_spawns(
     dl_tx: &mpsc::Sender<(usize, SlotEvent)>,
 ) {
     // ── Preview debounce: dispatch fetch after 300ms of stability ─────────
-    if let Some(ref pending_url) = app.preview_pending_url.clone() {
-        if app.preview_debounce.elapsed() >= Duration::from_millis(300) {
-            let url = pending_url.clone();
-            app.preview_pending_url = None;
+    if let Some(ref pending_url) = app.preview_pending_url.clone()
+        && app.preview_debounce.elapsed() >= Duration::from_millis(300)
+    {
+        let url = pending_url.clone();
+        app.preview_pending_url = None;
 
-            // Check cache first — avoid a redundant yt-dlp -J call.
-            if let Some(info) = app.preview_cache.get(&url).cloned() {
-                app.preview_state = PreviewState::Ready { info };
+        // Check cache first — avoid a redundant yt-dlp -J call.
+        if let Some(info) = app.preview_cache.get(&url).cloned() {
+            app.preview_state = PreviewState::Ready { info };
+        } else {
+            app.preview_state = PreviewState::Loading;
+            let ytdlp_bin = if app.settings.ytdlp_bin.trim().is_empty() {
+                "yt-dlp".to_string()
             } else {
-                app.preview_state = PreviewState::Loading;
-                let ytdlp_bin = if app.settings.ytdlp_bin.trim().is_empty() {
-                    "yt-dlp".to_string()
-                } else {
-                    app.settings.ytdlp_bin.clone()
-                };
-                let cookies = app.settings.cookies_opt();
-                let p_tx = preview_tx.clone();
-                let t_tx = thumb_tx.clone();
-                tokio::spawn(async move {
-                    match fetch_video_info(&url, &ytdlp_bin, cookies).await {
-                        Ok(info) => {
-                            let thumb_url = info.thumbnail_url.clone();
-                            let _ = p_tx.send(Ok((info, None))).await;
-                            if let Some(turl) = thumb_url {
-                                if let Some(art) = fetch_thumbnail_art(&turl).await {
-                                    let _ = t_tx.send(art).await;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let _ = p_tx.send(Err(e.to_string())).await;
+                app.settings.ytdlp_bin.clone()
+            };
+            let cookies = app.settings.cookies_opt();
+            let p_tx = preview_tx.clone();
+            let t_tx = thumb_tx.clone();
+            tokio::spawn(async move {
+                match fetch_video_info(&url, &ytdlp_bin, cookies).await {
+                    Ok(info) => {
+                        let thumb_url = info.thumbnail_url.clone();
+                        let _ = p_tx.send(Ok((info, None))).await;
+                        if let Some(turl) = thumb_url
+                            && let Some(art) = fetch_thumbnail_art(&turl).await
+                        {
+                            let _ = t_tx.send(art).await;
                         }
                     }
-                });
-            }
+                    Err(e) => {
+                        let _ = p_tx.send(Err(e.to_string())).await;
+                    }
+                }
+            });
         }
     }
 
@@ -397,10 +397,10 @@ fn dispatch_pending_spawns(
                 Ok(info) => {
                     let thumb_url = info.thumbnail_url.clone();
                     let _ = p_tx.send(Ok((info, None))).await;
-                    if let Some(turl) = thumb_url {
-                        if let Some(art) = fetch_thumbnail_art(&turl).await {
-                            let _ = t_tx.send(art).await;
-                        }
+                    if let Some(turl) = thumb_url
+                        && let Some(art) = fetch_thumbnail_art(&turl).await
+                    {
+                        let _ = t_tx.send(art).await;
                     }
                 }
                 Err(e) => {
@@ -703,11 +703,11 @@ fn handle_key_event(
                 }
             }
             KeyCode::Char('b') => {
-                if let Some(entry) = app.history.iter().rev().nth(idx) {
-                    if !entry.url.is_empty() {
-                        let url = entry.url.clone();
-                        open_in_browser(&url);
-                    }
+                if let Some(entry) = app.history.iter().rev().nth(idx)
+                    && !entry.url.is_empty()
+                {
+                    let url = entry.url.clone();
+                    open_in_browser(&url);
                 }
             }
             KeyCode::Char('d') => {
@@ -1280,23 +1280,23 @@ fn handle_preview_key(
     if app.preview_subs_menu {
         match key.code {
             KeyCode::Left => {
-                if let PreviewState::Ready { ref info } = app.preview_state {
-                    if !info.subtitle_langs.is_empty() {
-                        app.preview_subs_custom_lang = None;
-                        app.preview_subs_enabled = true;
-                        let total = info.subtitle_langs.len();
-                        app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + total - 1) % total;
-                    }
+                if let PreviewState::Ready { ref info } = app.preview_state
+                    && !info.subtitle_langs.is_empty()
+                {
+                    app.preview_subs_custom_lang = None;
+                    app.preview_subs_enabled = true;
+                    let total = info.subtitle_langs.len();
+                    app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + total - 1) % total;
                 }
             }
             KeyCode::Right => {
-                if let PreviewState::Ready { ref info } = app.preview_state {
-                    if !info.subtitle_langs.is_empty() {
-                        app.preview_subs_custom_lang = None;
-                        app.preview_subs_enabled = true;
-                        let total = info.subtitle_langs.len();
-                        app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + 1) % total;
-                    }
+                if let PreviewState::Ready { ref info } = app.preview_state
+                    && !info.subtitle_langs.is_empty()
+                {
+                    app.preview_subs_custom_lang = None;
+                    app.preview_subs_enabled = true;
+                    let total = info.subtitle_langs.len();
+                    app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + 1) % total;
                 }
             }
             KeyCode::Char(' ') => {
@@ -1317,22 +1317,22 @@ fn handle_preview_key(
     match key.code {
         // ← → ↑ ↓ — cycle quality for MP4
         KeyCode::Left | KeyCode::Up => {
-            if app.preview_format == DownloadFormat::Mp4 {
-                if let PreviewState::Ready { ref info } = app.preview_state {
-                    let total = info.available_heights.len() + 1; // +1 for "best"
-                    if total > 0 {
-                        app.preview_quality_cursor = (app.preview_quality_cursor + total - 1) % total;
-                    }
+            if app.preview_format == DownloadFormat::Mp4
+                && let PreviewState::Ready { ref info } = app.preview_state
+            {
+                let total = info.available_heights.len() + 1; // +1 for "best"
+                if total > 0 {
+                    app.preview_quality_cursor = (app.preview_quality_cursor + total - 1) % total;
                 }
             }
         }
         KeyCode::Right | KeyCode::Down => {
-            if app.preview_format == DownloadFormat::Mp4 {
-                if let PreviewState::Ready { ref info } = app.preview_state {
-                    let total = info.available_heights.len() + 1;
-                    if total > 0 {
-                        app.preview_quality_cursor = (app.preview_quality_cursor + 1) % total;
-                    }
+            if app.preview_format == DownloadFormat::Mp4
+                && let PreviewState::Ready { ref info } = app.preview_state
+            {
+                let total = info.available_heights.len() + 1;
+                if total > 0 {
+                    app.preview_quality_cursor = (app.preview_quality_cursor + 1) % total;
                 }
             }
         }
@@ -1366,7 +1366,7 @@ fn handle_preview_key(
 // ── Settings key handler ──────────────────────────────────────────────────────
 
 fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx: mpsc::Sender<String>) {
-    use ui::settings::{cycle_value, get_value, set_value, ItemKind, ITEMS};
+    use ui::settings::{ITEMS, ItemKind, cycle_value, get_value, set_value};
 
     // Global tab keys are handled above — ignore them here
     if matches!(key.code, KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3')) {
@@ -1445,13 +1445,14 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
             open_in_browser("https://genius.com/api-clients");
         }
         // [s] — explicit save (still works; also shows confirmation)
-        KeyCode::Char('s') => {
-            if let Err(e) = app.settings.save() {
+        KeyCode::Char('s') => match app.settings.save() {
+            Err(e) => {
                 app.add_toast(&format!("Save failed: {}", e), ToastKind::Error);
-            } else {
+            }
+            _ => {
                 app.add_toast("Settings saved", ToastKind::Success);
             }
-        }
+        },
         // [r] — reset to defaults (confirm not needed; user can [s] to persist or quit)
         KeyCode::Char('r') => {
             app.settings = DoraSettings::default();
@@ -1663,18 +1664,18 @@ fn handle_click_internal(
                     app.history_popup = Some(raw_idx);
 
                     // Feature: Real History Preview
-                    if let Some(entry) = app.history.iter().rev().nth(raw_idx) {
-                        if let Some(turl) = &entry.thumbnail_url {
-                            app.preview_thumbnail = None;
-                            app.preview_image_protocol = None;
-                            let turl = turl.clone();
-                            let t_tx = thumb_tx.clone();
-                            tokio::spawn(async move {
-                                if let Some(art) = fetch_thumbnail_art(&turl).await {
-                                    let _ = t_tx.send(art).await;
-                                }
-                            });
-                        }
+                    if let Some(entry) = app.history.iter().rev().nth(raw_idx)
+                        && let Some(turl) = &entry.thumbnail_url
+                    {
+                        app.preview_thumbnail = None;
+                        app.preview_image_protocol = None;
+                        let turl = turl.clone();
+                        let t_tx = thumb_tx.clone();
+                        tokio::spawn(async move {
+                            if let Some(art) = fetch_thumbnail_art(&turl).await {
+                                let _ = t_tx.send(art).await;
+                            }
+                        });
                     }
                 }
             } else {
@@ -1969,12 +1970,12 @@ async fn open_file_picker(tx: mpsc::Sender<String>) {
             .args(["-e", script])
             .output()
             .await;
-        if let Ok(out) = output {
-            if out.status.success() {
-                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !path.is_empty() {
-                    let _ = tx.send(path).await;
-                }
+        if let Ok(out) = output
+            && out.status.success()
+        {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                let _ = tx.send(path).await;
             }
         }
     }

@@ -1,7 +1,7 @@
 [package]
 name = "doratui"
 version = "0.6.6"
-edition = "2021"
+edition = "2024"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "dora — beautiful TUI for media downloading (yt-dlp + ffmpeg)"
 license = "MIT"

@@ -1,5 +1,5 @@
-use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
-use crate::storage::db::{get_connection, DbPool, DownloadHistoryEntry};
+use crate::core::process::{FFPROBE_TIMEOUT, run_with_timeout};
+use crate::storage::db::{DbPool, DownloadHistoryEntry, get_connection};
 use anyhow::{Context, Result};
 use indoc::indoc;
 use std::sync::Arc;
@@ -254,11 +254,11 @@ async fn extract_metadata(file_path: &str, format: &str) -> Result<Metadata> {
         // Find video stream and extract height
         if let Some(streams) = json["streams"].as_array() {
             for stream in streams {
-                if stream["codec_name"].as_str() == Some("h264") || stream["codec_name"].as_str() == Some("hevc") {
-                    if let Some(height) = stream["height"].as_u64() {
-                        video_quality = Some(format!("{}p", height));
-                        break;
-                    }
+                if (stream["codec_name"].as_str() == Some("h264") || stream["codec_name"].as_str() == Some("hevc"))
+                    && let Some(height) = stream["height"].as_u64()
+                {
+                    video_quality = Some(format!("{}p", height));
+                    break;
                 }
             }
         }
@@ -266,12 +266,12 @@ async fn extract_metadata(file_path: &str, format: &str) -> Result<Metadata> {
         // Find audio stream and extract bitrate
         if let Some(streams) = json["streams"].as_array() {
             for stream in streams {
-                if stream["codec_name"].as_str() == Some("mp3") {
-                    if let Some(bit_rate) = stream["bit_rate"].as_str().and_then(|br| br.parse::<u64>().ok()) {
-                        let kbps = bit_rate / 1000;
-                        audio_bitrate = Some(format!("{}k", kbps));
-                        break;
-                    }
+                if stream["codec_name"].as_str() == Some("mp3")
+                    && let Some(bit_rate) = stream["bit_rate"].as_str().and_then(|br| br.parse::<u64>().ok())
+                {
+                    let kbps = bit_rate / 1000;
+                    audio_bitrate = Some(format!("{}k", kbps));
+                    break;
                 }
             }
         }

@@ -1,14 +1,14 @@
 //! Video preview popup: thumbnail, metadata, quality selector.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::{App, ClickTarget, DownloadFormat, PreviewState};
 use crate::theme::ThemeColors;
-use crate::video_info::{fmt_count, fmt_duration, fmt_size, ThumbnailArt, VideoInfo, THUMB_H};
+use crate::video_info::{THUMB_H, ThumbnailArt, VideoInfo, fmt_count, fmt_duration, fmt_size};
 
 const SPINNER: &[&str] = &[
     "\u{28fe}", "\u{28fd}", "\u{28fb}", "\u{287f}", "\u{28bf}", "\u{289f}", "\u{28af}", "\u{28f7}",

@@ -42,11 +42,7 @@ pub(super) async fn get_ytdlp_version() -> Option<String> {
         return None;
     }
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if version.is_empty() {
-        None
-    } else {
-        Some(version)
-    }
+    if version.is_empty() { None } else { Some(version) }
 }
 
 /// Check WARP SOCKS5 proxy connectivity

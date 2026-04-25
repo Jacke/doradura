@@ -25,10 +25,10 @@ pub fn cleanup_partial_download(base_path: &str) {
     let patterns = [".part", ".ytdl", ".temp.mp4", ".temp.webm", ".info.json"];
     for pattern in patterns {
         let path = format!("{}{}", base_path, pattern);
-        if let Err(e) = fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::debug!("Failed to remove {}: {}", path, e);
-            }
+        if let Err(e) = fs::remove_file(&path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::debug!("Failed to remove {}: {}", path, e);
         }
     }
 
@@ -46,10 +46,10 @@ pub fn cleanup_partial_download(base_path: &str) {
                     && (name.contains(".f") || name.ends_with(".part") || name.ends_with(".ytdl"))
                 {
                     let path = entry.path();
-                    if let Err(e) = fs::remove_file(&path) {
-                        if e.kind() != std::io::ErrorKind::NotFound {
-                            log::debug!("Failed to remove fragment {}: {}", path.display(), e);
-                        }
+                    if let Err(e) = fs::remove_file(&path)
+                        && e.kind() != std::io::ErrorKind::NotFound
+                    {
+                        log::debug!("Failed to remove fragment {}: {}", path.display(), e);
                     }
                 }
             }
@@ -86,37 +86,34 @@ pub fn parse_progress(line: &str) -> Option<SourceProgress> {
     let mut parts = line.split_whitespace().peekable();
     while let Some(part) = parts.next() {
         // Parse percent: "45.2%"
-        if part.ends_with('%') {
-            if let Ok(p) = part.trim_end_matches('%').parse::<f32>() {
-                percent = Some(p.clamp(0.0, 100.0) as u8);
-            }
+        if part.ends_with('%')
+            && let Ok(p) = part.trim_end_matches('%').parse::<f32>()
+        {
+            percent = Some(p.clamp(0.0, 100.0) as u8);
         }
 
         // Parse total size: "of 10.00MiB"
-        if part == "of" {
-            if let Some(&next) = parts.peek() {
-                if let Some(bytes) = parse_size(next) {
-                    total_bytes = Some(bytes);
-                }
-            }
+        if part == "of"
+            && let Some(&next) = parts.peek()
+            && let Some(bytes) = parse_size(next)
+        {
+            total_bytes = Some(bytes);
         }
 
         // Parse speed: "at 500.00KiB/s"
-        if part == "at" {
-            if let Some(&next) = parts.peek() {
-                if let Some(bytes_per_sec) = parse_size(next) {
-                    speed_bytes_sec = Some(bytes_per_sec as f64);
-                }
-            }
+        if part == "at"
+            && let Some(&next) = parts.peek()
+            && let Some(bytes_per_sec) = parse_size(next)
+        {
+            speed_bytes_sec = Some(bytes_per_sec as f64);
         }
 
         // Parse ETA: "ETA 00:10"
-        if part == "ETA" {
-            if let Some(&next) = parts.peek() {
-                if let Some(eta) = parse_eta(next) {
-                    eta_seconds = Some(eta);
-                }
-            }
+        if part == "ETA"
+            && let Some(&next) = parts.peek()
+            && let Some(eta) = parse_eta(next)
+        {
+            eta_seconds = Some(eta);
         }
     }
 

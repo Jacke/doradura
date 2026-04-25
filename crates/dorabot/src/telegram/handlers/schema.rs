@@ -1,7 +1,7 @@
 //! Dispatcher schema and handler chain builders
 
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
 use teloxide::prelude::*;
@@ -11,8 +11,8 @@ use super::commands::{handle_cuts_command, handle_downloads_command, handle_star
 use super::types::{HandlerDeps, HandlerError};
 use super::uploads::media_upload_handler;
 use crate::i18n;
-use crate::telegram::bot::Command;
 use crate::telegram::Bot;
+use crate::telegram::bot::Command;
 
 /// Unix timestamp when the bot started. Messages older than this
 /// (minus a grace period) are skipped to avoid flooding users after a restart,
@@ -772,33 +772,37 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                                 Ok(None) => {
                                     let username = msg.from.as_ref().and_then(|u| u.username.clone());
                                     let lang_code = msg.from.as_ref().and_then(|u| u.language_code.as_deref());
-                                    if let Err(e) = deps
+                                    match deps
                                         .shared_storage
                                         .create_user_with_language(chat_id, username.clone(), lang_code)
                                         .await
                                     {
-                                        log::error!("Failed to create user: {}", e);
-                                    } else {
-                                        if let Err(e) = deps.shared_storage.log_request(chat_id, text).await {
-                                            log::warn!("Failed to log request for new user: {}", e);
+                                        Err(e) => {
+                                            log::error!("Failed to create user: {}", e);
                                         }
-                                        // Notify admins about new user
-                                        use crate::telegram::notifications::notify_admin_new_user;
-                                        let bot_notify = bot.clone();
-                                        let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
-                                        let lang_code_owned = msg.from.as_ref().and_then(|u| u.language_code.clone());
-                                        let first_message = text.to_string();
-                                        tokio::spawn(async move {
-                                            notify_admin_new_user(
-                                                &bot_notify,
-                                                chat_id,
-                                                username.as_deref(),
-                                                first_name.as_deref(),
-                                                lang_code_owned.as_deref(),
-                                                Some(&first_message),
-                                            )
-                                            .await;
-                                        });
+                                        _ => {
+                                            if let Err(e) = deps.shared_storage.log_request(chat_id, text).await {
+                                                log::warn!("Failed to log request for new user: {}", e);
+                                            }
+                                            // Notify admins about new user
+                                            use crate::telegram::notifications::notify_admin_new_user;
+                                            let bot_notify = bot.clone();
+                                            let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                                            let lang_code_owned =
+                                                msg.from.as_ref().and_then(|u| u.language_code.clone());
+                                            let first_message = text.to_string();
+                                            tokio::spawn(async move {
+                                                notify_admin_new_user(
+                                                    &bot_notify,
+                                                    chat_id,
+                                                    username.as_deref(),
+                                                    first_name.as_deref(),
+                                                    lang_code_owned.as_deref(),
+                                                    Some(&first_message),
+                                                )
+                                                .await;
+                                            });
+                                        }
                                     }
                                 }
                                 Err(e) => {

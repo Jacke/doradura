@@ -15,5 +15,5 @@ pub mod storage;
 pub mod timestamps;
 
 // Re-export common types
-pub use core::{config, BotError};
-pub use storage::{create_pool, get_connection, DbConnection, DbPool, QueueTaskInput, SharedStorage};
+pub use core::{BotError, config};
+pub use storage::{DbConnection, DbPool, QueueTaskInput, SharedStorage, create_pool, get_connection};

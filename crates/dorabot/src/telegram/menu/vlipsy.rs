@@ -8,8 +8,8 @@
 //! - `vl:search` — initiate search prompt
 
 use crate::i18n;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
+use crate::storage::db::DbPool;
 use crate::telegram::Bot;
 use crate::telegram::BotExt;
 use crate::vlipsy::VlipsyClient;
@@ -330,8 +330,8 @@ async fn send_clip(bot: &Bot, chat_id: ChatId, clip_id: &str, lang: &LanguageIde
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::db;
     use crate::storage::SharedStorage;
+    use crate::storage::db;
     use std::sync::Arc;
     async fn test_shared_storage() -> Arc<SharedStorage> {
         let tmp = tempfile::NamedTempFile::new().unwrap();

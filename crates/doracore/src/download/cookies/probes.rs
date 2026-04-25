@@ -291,15 +291,15 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
         };
     }
 
-    if let Ok(meta) = fs_err::metadata(&cookies_path) {
-        if meta.len() == 0 {
-            return CookieValidationResult {
-                is_valid: false,
-                reason: Some(CookieInvalidReason::FileEmpty),
-                proxy_used: None,
-                raw_error: None,
-            };
-        }
+    if let Ok(meta) = fs_err::metadata(&cookies_path)
+        && meta.len() == 0
+    {
+        return CookieValidationResult {
+            is_valid: false,
+            reason: Some(CookieInvalidReason::FileEmpty),
+            proxy_used: None,
+            raw_error: None,
+        };
     }
 
     let test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw";

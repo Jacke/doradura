@@ -12,7 +12,7 @@ use std::path::Path;
 use std::process::Command as ProcessCommand;
 use teloxide::prelude::*;
 use teloxide::types::InputFile;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 /// Primary voice file - has higher selection priority (50% chance)
 pub const PRIMARY_VOICE_FILE: &str = "assets/voices/fifth.wav";
