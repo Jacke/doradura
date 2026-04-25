@@ -45,8 +45,21 @@ static HIGHRES_DOWNLOAD_SEMAPHORE: LazyLock<Arc<Semaphore>> = LazyLock::new(|| A
 /// 3× covers the original file, the ffmpeg split intermediate, and headroom.
 const HIGHRES_DISK_MULTIPLIER: u64 = 3;
 
-/// Floor for the required free-space check regardless of estimated size.
-const HIGHRES_MIN_DISK_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// Floor (in GB) for the required free-space check regardless of estimated
+/// size. Override with `HIGHRES_MIN_DISK_GB` env var. Default 2 GB covers
+/// 8K source (~500 MB) × 3 multiplier = 1.5 GB peak disk usage during
+/// yt-dlp + ffmpeg split. Small Railway volumes (4-5 GB) need a low floor —
+/// the post-pre-flight `estimated_size × HIGHRES_DISK_MULTIPLIER` refines
+/// this once yt-dlp returns the actual filesize estimate.
+const HIGHRES_MIN_DISK_GB_DEFAULT: u64 = 2;
+
+fn highres_min_disk_bytes() -> u64 {
+    let gb: u64 = std::env::var("HIGHRES_MIN_DISK_GB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(HIGHRES_MIN_DISK_GB_DEFAULT);
+    gb * 1024 * 1024 * 1024
+}
 
 /// Acquire a permit from the high-res semaphore if the format is 4K/8K.
 /// Returns `Some(permit)` on success; the permit must be held for the full
@@ -351,16 +364,18 @@ pub async fn download_phase(
         return Err(PipelineError::PreCheck("Insufficient disk space".to_string()));
     }
 
-    // High-res (2K/4K/8K) needs far more free space than the default 500 MB
-    // check. Require HIGHRES_MIN_DISK_BYTES (8 GB) — the ytdlp estimate comes
-    // later (Step 4b) and refines this if available.
+    // High-res (2K/4K/8K) needs more free space than the default 500 MB
+    // check. Require highres_min_disk_bytes() (2 GB default, env-configurable
+    // via HIGHRES_MIN_DISK_GB) — the ytdlp estimate comes later (Step 4b)
+    // and refines this if available.
     if config::download::is_highres_quality(pipeline_video_quality(format)) {
+        let min_bytes = highres_min_disk_bytes();
         if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER) {
-            if info.available_bytes < HIGHRES_MIN_DISK_BYTES {
+            if info.available_bytes < min_bytes {
                 log::error!(
                     "High-res precheck: only {:.2} GB free, need {:.2} GB",
                     info.available_gb(),
-                    HIGHRES_MIN_DISK_BYTES as f64 / (1024.0 * 1024.0 * 1024.0),
+                    min_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
                 );
                 send_error_with_sticker_and_message(
                     bot,
@@ -472,7 +487,7 @@ pub async fn download_phase(
 
             // Refined disk-space check for high-res: require 3× estimated size.
             if config::download::is_highres_quality(pipeline_video_quality(format)) {
-                let required = (estimated_size * HIGHRES_DISK_MULTIPLIER).max(HIGHRES_MIN_DISK_BYTES);
+                let required = (estimated_size * HIGHRES_DISK_MULTIPLIER).max(highres_min_disk_bytes());
                 if let Ok(info) = disk::get_disk_space(&config::DOWNLOAD_FOLDER) {
                     if info.available_bytes < required {
                         let required_gb = required as f64 / (1024.0 * 1024.0 * 1024.0);
