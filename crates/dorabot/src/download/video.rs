@@ -242,17 +242,10 @@ pub async fn download_and_send_video(
             } else {
                 false
             };
-            let send_as_document = if config::download::is_highres_quality(video_quality.as_deref()) {
-                if !user_send_as_document {
-                    log::info!(
-                        "Forcing document mode for high-res quality {:?} (user pref was video)",
-                        video_quality
-                    );
-                }
-                true
-            } else {
-                user_send_as_document
-            };
+            // High-res videos are re-encoded to H.264 mp4 by yt-dlp, so they
+            // play inline in Telegram. Honor the user's send-mode preference
+            // (default = video) instead of forcing document mode.
+            let send_as_document = user_send_as_document;
 
             // Get user preference: suppress caption on sent video (inline, clean for forwarding)
             let suppress_caption = if let Some(ref storage) = shared_storage_clone {

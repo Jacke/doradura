@@ -174,16 +174,14 @@ pub enum PipelineFormat {
 impl PipelineFormat {
     /// Returns the file extension for this format.
     ///
-    /// Video quality 1440p/2160p/4320p (2K/4K/8K) uses `mkv` because YouTube
-    /// only serves H.264 up to 1080p — 4K/8K require AV1/VP9 which mux cleanly
-    /// into Matroska. Everything else uses `mp4`.
+    /// All videos (including 2K/4K/8K) use `mp4`. For high-res quality the
+    /// yt-dlp pipeline applies `--recode-video mp4` to re-encode the AV1/VP9
+    /// stream into H.264 so the result plays inline in Telegram instead of
+    /// requiring document download.
     pub fn extension(&self) -> &str {
         match self {
             PipelineFormat::Audio { .. } => "mp3",
-            PipelineFormat::Video { quality, .. } => match quality.as_deref() {
-                Some("1440p") | Some("2160p") | Some("4320p") => "mkv",
-                _ => "mp4",
-            },
+            PipelineFormat::Video { .. } => "mp4",
         }
     }
 

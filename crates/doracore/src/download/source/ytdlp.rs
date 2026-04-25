@@ -328,21 +328,31 @@ impl YtDlpSource {
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
 
-        // High-resolution (4K/8K) requires AV1/VP9 codecs — YouTube has no H.264
-        // above 1080p. Switch format-string builder + container accordingly.
-        let (format_arg, container): (String, &'static str) = match request.video_quality.as_deref() {
-            Some("4320p") => (build_highres_format(4320), "mkv"),
-            Some("2160p") => (build_highres_format(2160), "mkv"),
-            Some("1440p") => (build_highres_format(1440), "mkv"),
-            Some("1080p") => (build_telegram_safe_format(Some(1080)), "mp4"),
-            Some("720p") => (build_telegram_safe_format(Some(720)), "mp4"),
-            Some("480p") => (build_telegram_safe_format(Some(480)), "mp4"),
-            Some("360p") => (build_telegram_safe_format(Some(360)), "mp4"),
-            Some("240p") => (build_telegram_safe_format(Some(240)), "mp4"),
-            Some("144p") => (build_telegram_safe_format(Some(144)), "mp4"),
-            _ => (build_telegram_safe_format(None), "mp4"),
+        // High-resolution (1440p/2160p/4320p) requires AV1/VP9 codecs — YouTube
+        // has no H.264 above 1080p. We force mp4 container + `--recode-video mp4`
+        // to re-encode AV1/VP9 → H.264 + AAC so Telegram plays the result inline
+        // instead of requiring document download.
+        let video_quality_str = request.video_quality.as_deref();
+        let is_highres = matches!(video_quality_str, Some("4320p") | Some("2160p") | Some("1440p"));
+        let format_arg: String = match video_quality_str {
+            Some("4320p") => build_highres_format(4320),
+            Some("2160p") => build_highres_format(2160),
+            Some("1440p") => build_highres_format(1440),
+            Some("1080p") => build_telegram_safe_format(Some(1080)),
+            Some("720p") => build_telegram_safe_format(Some(720)),
+            Some("480p") => build_telegram_safe_format(Some(480)),
+            Some("360p") => build_telegram_safe_format(Some(360)),
+            Some("240p") => build_telegram_safe_format(Some(240)),
+            Some("144p") => build_telegram_safe_format(Some(144)),
+            _ => build_telegram_safe_format(None),
         };
-        log::debug!("yt-dlp video format string ({}): {}", container, format_arg);
+        let container: &'static str = "mp4";
+        log::debug!(
+            "yt-dlp video format string ({}, highres={}): {}",
+            container,
+            is_highres,
+            format_arg
+        );
 
         let subprocess_timeout = config::download::ytdlp_download_timeout_for_quality(request.video_quality.as_deref());
         let handle = tokio::task::spawn_blocking(move || {
@@ -355,6 +365,12 @@ impl YtDlpSource {
                 subprocess_timeout,
                 move |args, proxy_option| {
                     push_video_format_args(args, true, container);
+                    if is_highres {
+                        // Re-encode AV1/VP9 video stream to H.264 so the result
+                        // mp4 plays inline in Telegram. Audio is AAC already.
+                        args.push("--recode-video");
+                        args.push("mp4");
+                    }
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
@@ -371,6 +387,10 @@ impl YtDlpSource {
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
                         // Tier 2 (cookies + PO token)
                         push_video_format_args(args, true, container);
+                        if is_highres {
+                            args.push("--recode-video");
+                            args.push("mp4");
+                        }
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
@@ -386,6 +406,10 @@ impl YtDlpSource {
                     args.push("--fixup");
                     args.push("never");
                     push_video_format_args(args, false, container);
+                    if is_highres {
+                        args.push("--recode-video");
+                        args.push("mp4");
+                    }
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
                     args.push(default_youtube_extractor_args());
@@ -406,11 +430,8 @@ impl YtDlpSource {
 
         let duration = probe_duration_seconds(&actual_path).await;
 
-        let mime = if actual_path.ends_with(".mkv") {
-            "video/x-matroska"
-        } else {
-            "video/mp4"
-        };
+        // After --recode-video mp4 the result is always H.264 in mp4.
+        let mime = "video/mp4";
 
         Ok(DownloadOutput {
             file_path: actual_path,
