@@ -329,9 +329,20 @@ impl YtDlpSource {
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
 
         // High-resolution (1440p/2160p/4320p) requires AV1/VP9 codecs — YouTube
-        // has no H.264 above 1080p. We force mp4 container + `--recode-video mp4`
-        // to re-encode AV1/VP9 → H.264 + AAC so Telegram plays the result inline
-        // instead of requiring document download.
+        // has no H.264 above 1080p. To get a Telegram-inline-playable mp4 we:
+        //   1. Download AV1/VP9 + AAC into an `mkv` intermediate (yt-dlp merges
+        //      losslessly).
+        //   2. Run `--recode-video mp4` — yt-dlp's `FFmpegVideoConvertorPP`
+        //      detects the container mismatch (mkv → mp4) and runs ffmpeg to
+        //      re-encode the video stream to H.264 (audio re-encoded to AAC).
+        //   3. Output is .mp4 with H.264/AAC — plays inline in EVERY Telegram
+        //      client (web, mobile, desktop, old).
+        //
+        // Why `mkv` intermediate matters: if we merged directly into `mp4`,
+        // yt-dlp's `FFmpegVideoConvertorPP` would see source ext == target ext
+        // and SKIP re-encoding. Result: AV1-in-mp4, which old Telegram clients
+        // can't decode (they show audio-only). The mkv detour forces ffmpeg to
+        // run.
         let video_quality_str = request.video_quality.as_deref();
         let is_highres = matches!(video_quality_str, Some("4320p") | Some("2160p") | Some("1440p"));
         let format_arg: String = match video_quality_str {
@@ -346,7 +357,17 @@ impl YtDlpSource {
             Some("144p") => build_telegram_safe_format(Some(144)),
             _ => build_telegram_safe_format(None),
         };
-        let container: &'static str = "mp4";
+        // mkv as intermediate for high-res so --recode-video mp4 forces a real
+        // ffmpeg re-encode (see comment above). Standard <=1080p stays mp4.
+        let container: &'static str = if is_highres { "mkv" } else { "mp4" };
+        // Forces libx264 + AAC with sane Railway-friendly settings. Without
+        // this, yt-dlp's default convertor uses `-c:v libx264 -c:a aac` with
+        // implicit ffmpeg defaults (preset=medium, CRF=23 for 4K = 30+ min on
+        // 1-2 cores). preset=veryfast ≈ 4-5x faster, slight quality drop but
+        // still visually fine. `+faststart` puts moov atom up front for
+        // immediate Telegram streaming.
+        const HIGHRES_RECODE_OPTS: &str =
+            "VideoConvertor:-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 192k -movflags +faststart";
         log::debug!(
             "yt-dlp video format string ({}, highres={}): {}",
             container,
@@ -367,9 +388,11 @@ impl YtDlpSource {
                     push_video_format_args(args, true, container);
                     if is_highres {
                         // Re-encode AV1/VP9 video stream to H.264 so the result
-                        // mp4 plays inline in Telegram. Audio is AAC already.
+                        // mp4 plays inline in EVERY Telegram client.
                         args.push("--recode-video");
                         args.push("mp4");
+                        args.push("--postprocessor-args");
+                        args.push(HIGHRES_RECODE_OPTS);
                     }
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
@@ -390,6 +413,8 @@ impl YtDlpSource {
                         if is_highres {
                             args.push("--recode-video");
                             args.push("mp4");
+                            args.push("--postprocessor-args");
+                            args.push(HIGHRES_RECODE_OPTS);
                         }
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
@@ -409,6 +434,8 @@ impl YtDlpSource {
                     if is_highres {
                         args.push("--recode-video");
                         args.push("mp4");
+                        args.push("--postprocessor-args");
+                        args.push(HIGHRES_RECODE_OPTS);
                     }
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
