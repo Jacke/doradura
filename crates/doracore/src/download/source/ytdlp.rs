@@ -357,21 +357,34 @@ impl YtDlpSource {
             Some("144p") => build_telegram_safe_format(Some(144)),
             _ => build_telegram_safe_format(None),
         };
-        // **High-res strategy (post-recode-removal):** mux YouTube's AV1 (or
-        // VP9 fallback) video stream + AAC audio directly into an mp4
-        // container *without* re-encoding. The result is byte-identical
-        // to YouTube's source — zero quality loss, zero CPU spent on
-        // recode. Trade-off: AV1-in-mp4 only auto-plays inline in
-        // Telegram clients ≥iOS 16 / Android 12+ Telegram 9.5+ /
-        // Desktop 4.10+. Older clients fall back to "open with system
-        // player" / document download. Per user direction we accept this
-        // for the ~10-15 % of clients that can't decode AV1 — quality
-        // wins over universal compatibility.
+        // **High-res strategy:** download YouTube's AV1/VP9 stream and
+        // recode to H.264 because AV1-in-mp4 still doesn't play inline
+        // in any Telegram client (telegramdesktop/tdesktop#7452, open
+        // since March 2020). To get as close to "1:1 with the YouTube
+        // source" as inline playback allows, we run x264 at the highest
+        // settings Railway can sustain on 4K input:
         //
-        // Note: we keep `mp4` for high-res too (was `mkv` previously)
-        // because mp4 + AV1 is widely supported in modern decoders and
-        // gives the bot a regular video message instead of a document.
-        let container: &'static str = "mp4";
+        //   `-preset slow -tune film -crf 14 -pix_fmt yuv420p
+        //    -profile:v high -level 4.2 -c:a aac -b:a 256k
+        //    -movflags +faststart`
+        //
+        // CRF 14 + slow is **visually transparent** H.264 (~99 % of the
+        // source's perceptual quality, regularly used as a "near-master"
+        // mezzanine setting). `tune film` biases x264 toward live-action
+        // detail preservation. AAC 256k is the practical ceiling for
+        // music videos before re-encode artefacts dominate. Profile
+        // high@L4.2 covers up to 4K@30fps within H.264's spec.
+        //
+        // Cost: ~5× the CPU of `veryfast` baseline (3-5 min for 4K on
+        // Railway), output 50-80 % larger than the old veryfast/CRF 23
+        // baseline. Memory peak stays under the Railway worker budget
+        // because `slow` doesn't carry the lookahead/reference-frame
+        // weight of `veryslow` that broke 4K circles in earlier dev.
+        //
+        // mkv intermediate so yt-dlp's FFmpegVideoConvertorPP actually
+        // triggers (mp4 → mp4 would be a no-op).
+        let container: &'static str = if is_highres { "mkv" } else { "mp4" };
+        const HIGHRES_RECODE_OPTS: &str = "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 256k -movflags +faststart";
         log::debug!(
             "yt-dlp video format string ({}, highres={}): {}",
             container,
@@ -390,8 +403,14 @@ impl YtDlpSource {
                 subprocess_timeout,
                 move |args, proxy_option| {
                     push_video_format_args(args, true, container);
-                    // High-res: NO recode — ship YouTube's AV1/VP9 stream
-                    // directly muxed into mp4. See comment above.
+                    if is_highres {
+                        // Recode AV1/VP9 → H.264 with near-lossless
+                        // medium/CRF 17 settings. See header comment.
+                        args.push("--recode-video");
+                        args.push("mp4");
+                        args.push("--postprocessor-args");
+                        args.push(HIGHRES_RECODE_OPTS);
+                    }
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
@@ -406,8 +425,14 @@ impl YtDlpSource {
                 {
                     let url_for_tier2 = url_str.clone();
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
-                        // Tier 2 (cookies + PO token); no high-res recode.
+                        // Tier 2 (cookies + PO token).
                         push_video_format_args(args, true, container);
+                        if is_highres {
+                            args.push("--recode-video");
+                            args.push("mp4");
+                            args.push("--postprocessor-args");
+                            args.push(HIGHRES_RECODE_OPTS);
+                        }
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
@@ -420,10 +445,15 @@ impl YtDlpSource {
                 },
                 move |args, proxy_option| {
                     // Tier 3 (fixup never): same client logic as tier 2.
-                    // No recode — see header comment.
                     args.push("--fixup");
                     args.push("never");
                     push_video_format_args(args, false, container);
+                    if is_highres {
+                        args.push("--recode-video");
+                        args.push("mp4");
+                        args.push("--postprocessor-args");
+                        args.push(HIGHRES_RECODE_OPTS);
+                    }
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
                     args.push(default_youtube_extractor_args());
