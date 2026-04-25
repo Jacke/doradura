@@ -512,6 +512,7 @@ impl InstagramSource {
                     eta_seconds: None,
                     downloaded_bytes: Some(downloaded),
                     total_bytes: total_size,
+                    ..Default::default()
                 });
             }
         }

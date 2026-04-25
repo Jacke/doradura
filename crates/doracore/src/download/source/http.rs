@@ -496,6 +496,7 @@ impl DownloadSource for HttpSource {
                     eta_seconds: None,
                     downloaded_bytes: Some(downloaded),
                     total_bytes: total_size,
+                    ..Default::default()
                 });
             }
         }

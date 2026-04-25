@@ -27,6 +27,7 @@ use crate::storage::db::{self as db, DbPool};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use anyhow::Context;
+use doracore::download::ProgressPhase;
 use std::sync::{Arc, LazyLock};
 use teloxide::prelude::*;
 use teloxide::types::Message;
@@ -292,9 +293,13 @@ pub async fn download_phase(
     // ── Step 2: Get metadata ──
     // Fast-path: preview cache already has title/artist from the preview fetch —
     // skip the redundant yt-dlp --dump-json call (~6s saved).
+    // Cached duration (when available) is used as the divisor for merge-step
+    // percent reporting later in the loop.
+    let mut cached_duration_secs: Option<f32> = None;
     let MediaMetadata { title, artist } = {
         let from_cache = crate::telegram::cache::PREVIEW_CACHE.get(url.as_str()).await.map(|pm| {
             log::info!("Pipeline: title/artist from preview cache (skipping yt-dlp metadata)");
+            cached_duration_secs = pm.duration.map(|d| d as f32);
             MediaMetadata {
                 title: pm.title.clone(),
                 artist: pm.artist.clone(),
@@ -567,10 +572,40 @@ pub async fn download_phase(
     let artist_for_progress = Some(artist.clone());
     let mut last_progress = 0u8;
     let mut download_update_count = 0u32;
+    let mut last_merge_progress = 0u8;
+    let mut merge_update_count = 0u32;
 
     let download_output = loop {
         tokio::select! {
             Some(sp) = progress_rx.recv() => {
+                // ── Merge-step branch: ffmpeg is muxing the downloaded
+                // streams into the final container. Compute percent from
+                // ffmpeg's `time=…` position vs. the media duration we
+                // pulled from the preview cache. Falls through to a
+                // tasteful 50% default when we don't know the duration —
+                // better than the old "stuck at 96% downloading" UX.
+                if sp.phase == ProgressPhase::Merging {
+                    let merge_percent = match (sp.merge_position_secs, cached_duration_secs) {
+                        (Some(pos), Some(dur)) if dur > 0.0 => ((pos / dur) * 100.0).clamp(0.0, 99.0) as u8,
+                        (Some(_), _) => 50,  // unknown duration — animate at midpoint
+                        _ => 0,              // bare [Merger] line, just announce stage flip
+                    };
+                    if merge_percent >= last_merge_progress.saturating_add(5) || merge_percent == 0 {
+                        last_merge_progress = merge_percent;
+                        merge_update_count += 1;
+                        let _ = progress_msg.update(
+                            &bot_for_progress,
+                            DownloadStatus::Merging {
+                                title: title_for_progress.as_ref().to_string(),
+                                progress: merge_percent,
+                                file_format: Some(file_format_for_progress.clone()),
+                                update_count: merge_update_count,
+                                artist: artist_for_progress.clone(),
+                            },
+                        ).await;
+                    }
+                    continue;
+                }
                 let mut safe_progress = sp.percent.clamp(last_progress, 100);
                 if safe_progress == 100 && last_progress < 90 {
                     safe_progress = last_progress;

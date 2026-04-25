@@ -144,6 +144,23 @@ pub enum DownloadStatus {
         /// Artist name (optional)
         artist: Option<String>,
     },
+    /// Post-download muxing stage — yt-dlp/ffmpeg is merging the
+    /// separately-downloaded video and audio streams into the final
+    /// container. Distinct from `Downloading` because the percent here
+    /// is computed from ffmpeg's `time=…` position vs. media duration,
+    /// not from byte count.
+    Merging {
+        /// File/track title
+        title: String,
+        /// Merge progress in percent (0-100)
+        progress: u8,
+        /// File format for emoji selection: "mp3", "mp4", "srt", "txt" (optional)
+        file_format: Option<String>,
+        /// Update counter for emoji animation
+        update_count: u32,
+        /// Artist name (optional)
+        artist: Option<String>,
+    },
     /// Sending file to the Telegram server
     Uploading {
         /// File/track title
@@ -391,6 +408,31 @@ impl DownloadStatus {
                     s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."));
                 }
 
+                s
+            }
+            DownloadStatus::Merging {
+                title,
+                progress,
+                file_format,
+                update_count,
+                artist,
+            } => {
+                let escaped = escape_markdown(title);
+                let emoji = Self::get_animated_emoji(file_format.as_ref(), *update_count);
+                let bar = create_progress_bar(*progress, style);
+                let mut s = String::with_capacity(escaped.len() + bar.len() + 100);
+                s.push_str(emoji);
+                s.push_str(" *");
+                s.push_str(&escaped);
+                s.push('*');
+                if let Some(a) = artist.as_deref().filter(|a| !a.is_empty()) {
+                    s.push_str("\n👤 ");
+                    s.push_str(&escape_markdown(a));
+                }
+                s.push_str("\n\n🔀 Merging fragments");
+                s.push_str(&format!("\\.\\.\\. {}%", progress));
+                s.push('\n');
+                s.push_str(&bar);
                 s
             }
             DownloadStatus::Uploading {

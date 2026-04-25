@@ -11,7 +11,7 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::download::cookies::report_and_wait_for_refresh;
-use crate::download::downloader::{cleanup_partial_download, parse_progress};
+use crate::download::downloader::{cleanup_partial_download, parse_merge_progress, parse_progress};
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
     add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, build_highres_format,
@@ -1187,6 +1187,8 @@ fn run_ytdlp_with_progress(
                     }
                     if let Some(sp) = parse_progress(&line_str) {
                         let _ = tx_clone.send(sp);
+                    } else if let Some(sp) = parse_merge_progress(&line_str) {
+                        let _ = tx_clone.send(sp);
                     }
                 }
             }
@@ -1200,6 +1202,8 @@ fn run_ytdlp_with_progress(
             if let Ok(line_str) = line {
                 log::debug!("yt-dlp stdout: {}", line_str);
                 if let Some(sp) = parse_progress(&line_str) {
+                    let _ = progress_tx.send(sp);
+                } else if let Some(sp) = parse_merge_progress(&line_str) {
                     let _ = progress_tx.send(sp);
                 }
             }

@@ -25,6 +25,26 @@ pub struct MediaMetadata {
     pub artist: String,
 }
 
+/// Which stage of the download pipeline this progress event came from.
+///
+/// yt-dlp's lifecycle is roughly:
+///   1. **Download** — fragments are being fetched (`[download]` lines).
+///   2. **Merging** — fragments have been fetched and ffmpeg is muxing
+///      them into the final container (`[Merger]` line, then ffmpeg
+///      `frame=…time=…` lines).
+///   3. **Postprocessing** — extra ffmpeg passes for recode / metadata
+///      (only some downloads have this).
+///
+/// Without this distinction the UI looked stuck at "downloading 96 %" for
+/// the whole multi-minute merge step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ProgressPhase {
+    #[default]
+    Download,
+    Merging,
+    Postprocessing,
+}
+
 /// Progress information emitted during download.
 #[derive(Debug, Clone, Default)]
 pub struct SourceProgress {
@@ -38,6 +58,12 @@ pub struct SourceProgress {
     pub downloaded_bytes: Option<u64>,
     /// Total bytes expected
     pub total_bytes: Option<u64>,
+    /// Which pipeline stage this event represents.
+    pub phase: ProgressPhase,
+    /// During [`ProgressPhase::Merging`], how far ffmpeg has consumed of
+    /// the input (in seconds). Combined with the known media duration on
+    /// the consumer side this yields a merge-percent for the UI.
+    pub merge_position_secs: Option<f32>,
 }
 
 /// Request parameters for a download operation.

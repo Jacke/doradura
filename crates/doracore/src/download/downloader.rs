@@ -140,7 +140,54 @@ pub fn parse_progress(line: &str) -> Option<SourceProgress> {
         eta_seconds,
         downloaded_bytes,
         total_bytes,
+        ..Default::default()
     })
+}
+
+/// Parse a yt-dlp / ffmpeg merge-step progress line into a
+/// [`SourceProgress`] with [`ProgressPhase::Merging`].
+///
+/// During the post-download muxing phase yt-dlp shells out to ffmpeg and
+/// pipes its stderr through. ffmpeg emits progress as
+/// `frame= 1234 fps=180 q=29.0 size= 256kB time=00:00:42.34 bitrate=…`,
+/// where `time=` is the position into the input that has been consumed.
+/// We can't compute a percent here (the parser doesn't know the total
+/// duration), so we hand the consumer the raw seconds and let it divide
+/// by the known media duration.
+///
+/// Also matches the `[Merger]` notification line so the consumer can flip
+/// the UI to "merging" state immediately, even before the first ffmpeg
+/// progress tick lands.
+pub fn parse_merge_progress(line: &str) -> Option<SourceProgress> {
+    if line.contains("[Merger]") {
+        return Some(SourceProgress {
+            phase: crate::download::source::ProgressPhase::Merging,
+            merge_position_secs: Some(0.0),
+            ..Default::default()
+        });
+    }
+    if !line.contains("time=") || !line.contains("bitrate=") {
+        return None;
+    }
+    let time_token = line.split_whitespace().find_map(|tok| tok.strip_prefix("time="))?;
+    let secs = parse_ffmpeg_time(time_token)?;
+    Some(SourceProgress {
+        phase: crate::download::source::ProgressPhase::Merging,
+        merge_position_secs: Some(secs),
+        ..Default::default()
+    })
+}
+
+/// Parses an ffmpeg `time=HH:MM:SS.ms` token into seconds.
+fn parse_ffmpeg_time(token: &str) -> Option<f32> {
+    if token == "N/A" {
+        return None;
+    }
+    let mut parts = token.split(':');
+    let h: f32 = parts.next()?.parse().ok()?;
+    let m: f32 = parts.next()?.parse().ok()?;
+    let s: f32 = parts.next()?.parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + s)
 }
 
 /// Parses a human-readable size string like `"10.00MiB"` or `"500.00KiB/s"` into bytes.

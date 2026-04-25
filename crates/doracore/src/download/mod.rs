@@ -19,7 +19,9 @@ pub mod ytdlp;
 pub mod ytdlp_errors;
 
 // Re-export key types
-pub use downloader::{cleanup_partial_download, generate_file_name, generate_file_name_with_ext, parse_progress};
+pub use downloader::{
+    cleanup_partial_download, generate_file_name, generate_file_name_with_ext, parse_merge_progress, parse_progress,
+};
 pub use error::DownloadError;
 pub use proxy::{Proxy, ProxyList, ProxyListManager, ProxyProtocol, ProxySelectionStrategy};
-pub use source::{DownloadOutput, DownloadSource, MediaMetadata, SourceProgress, SourceRegistry};
+pub use source::{DownloadOutput, DownloadSource, MediaMetadata, ProgressPhase, SourceProgress, SourceRegistry};
