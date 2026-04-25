@@ -15,6 +15,7 @@ use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 
 use super::subtitles::{download_circle_subtitles, BurnSubsResult};
+use super::x264_params::video_note_dark_scene;
 
 /// Segment of video to cut
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -1199,14 +1200,12 @@ pub async fn process_video_clip(
         cmd.arg("-filter_complex").arg(&filter_v);
         cmd.arg("-map").arg(map_v_label);
         cmd.arg("-map").arg("1:a");
-        // See the standard-audio branch below for the rationale: Telegram
-        // server-side re-encodes every video-note, so heavy-handed presets
-        // and `-x264-params` are wasted CPU; `medium` + CRF 16 produces a
-        // clean enough intermediate for their transcoder.
+        // Video-note encoding for the custom-audio path mirrors the
+        // standard-audio branch below — see that comment for full rationale.
         cmd.arg("-c:v")
             .arg("libx264")
             .arg("-preset")
-            .arg("medium")
+            .arg("veryslow")
             .arg("-tune")
             .arg("film")
             .arg("-pix_fmt")
@@ -1216,7 +1215,9 @@ pub async fn process_video_clip(
             .arg("-maxrate")
             .arg("1500k")
             .arg("-bufsize")
-            .arg("3000k");
+            .arg("3000k")
+            .arg("-x264-params")
+            .arg(video_note_dark_scene().to_arg_string());
         cmd.arg("-c:a")
             .arg("aac")
             .arg("-b:a")
@@ -1232,28 +1233,28 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_a_label);
 
         if has_video {
-            // **Video-note encoding strategy after empirical analysis:**
+            // **Video-note encoding rationale (v0.43.3 rollback):**
             //
-            // We confirmed via metadata diff (uploaded vs. download-via-bot)
-            // that Telegram's server re-encodes every video-note to its own
-            // ~1400k VBR target with what looks like a `fast`-class preset
-            // and 2-second keyframes. **Any setting we apply that doesn't
-            // affect raw pixel quality of the *intermediate* file is wasted**
-            // — `-tune`, `-x264-params`, `-profile`, `-level`, `-g`, and
-            // `-keyint_min` all get renormalized by their transcoder.
+            // Telegram *does* re-encode every video-note server-side
+            // (proven by metadata diff: encoder tag flips Lavc62 → Lavc60),
+            // BUT we observed in production that dropping our `veryslow`
+            // preset → `medium` produced visibly worse final output, even
+            // though the server-side re-encode is identical. The takeaway:
+            // the cleaner the intermediate pixels we hand them, the cleaner
+            // their `fast`-class transcoder can re-encode it. Their fast
+            // preset is *not* great at de-noising or recovering detail from
+            // a noisy input — it just compounds artifacts.
             //
-            // What survives is: pixels (within Telegram's resolution cap),
-            // approximate temporal noise level, and approximate bitrate
-            // class. So we go `medium` preset (10× faster than `veryslow`,
-            // visually identical at 640² after the downstream re-encode),
-            // CRF 16 for a clean intermediate, `-tune film` to bias x264's
-            // psycho-visual analysis on live action (this *does* affect raw
-            // pixel quality), and a 1500k bitrate cap to stay under
-            // Telegram's 12 MB / 60 s upload limit.
+            // So we keep `veryslow` + `-tune film` + the dark-scene
+            // `-x264-params` (`aq-mode=3 + psy-rd=1.0,0.20 + deblock=-2,-1`
+            // + friends, see `commands/x264_params.rs`). This burns 5-15
+            // min CPU on Railway for 4K input but materially improves the
+            // user-visible output. We dropped `-profile:v`, `-level`, `-g`,
+            // and `-keyint_min` because Telegram normalises those.
             //
-            // Non-video-notes (regular cuts) keep `ultrafast` since they're
+            // Non-video-notes (regular cuts) stay on `ultrafast` —
             // delivered as full-size mp4s where size > preset matters more.
-            let preset = if is_video_note { "medium" } else { "ultrafast" };
+            let preset = if is_video_note { "veryslow" } else { "ultrafast" };
             cmd.arg("-c:v").arg("libx264").arg("-preset").arg(preset);
             if is_video_note {
                 cmd.arg("-tune").arg("film");
@@ -1265,7 +1266,9 @@ pub async fn process_video_clip(
                     .arg("-maxrate")
                     .arg("1500k")
                     .arg("-bufsize")
-                    .arg("3000k");
+                    .arg("3000k")
+                    .arg("-x264-params")
+                    .arg(video_note_dark_scene().to_arg_string());
             } else {
                 cmd.arg("-crf").arg(crf);
             }
@@ -1281,9 +1284,13 @@ pub async fn process_video_clip(
 
     // Video notes use `veryslow` preset which can take 5-15 min on a 4K/8K
     // source. Regular cuts run on `ultrafast` and finish in under a minute.
-    // `medium` preset on 4K source completes in ~1-2 min on Railway.
-    // 10 min is comfortable headroom for both video-note and regular-cut paths.
-    let ffmpeg_timeout = std::time::Duration::from_secs(10 * 60);
+    // Video notes use `veryslow` preset which can take 5-15 min on a 4K/8K
+    // source. Regular cuts run on `ultrafast` and finish in under a minute.
+    let ffmpeg_timeout = if is_video_note {
+        std::time::Duration::from_secs(20 * 60)
+    } else {
+        std::time::Duration::from_secs(10 * 60)
+    };
     cmd.arg("-y").arg(&output_path);
     let output = match doracore::core::process::run_with_timeout_raw(&mut cmd, ffmpeg_timeout).await {
         Ok(result) => result.map_err(AppError::from)?,

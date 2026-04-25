@@ -85,6 +85,11 @@ pub enum Command {
         description = "send 3 test video-notes for empirical Telegram-transcode comparison (admin only)"
     )]
     TestCircle,
+    #[command(
+        rename = "test_circle_save",
+        description = "reply to an mp4 doc with `/test_circle_save <small|medium|max>` to stage it (admin only)"
+    )]
+    TestCircleSave,
     #[command(description = "my content subscriptions")]
     Subscriptions,
     #[command(description = "music player")]

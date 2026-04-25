@@ -12,8 +12,11 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use teloxide::net::Download;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, MessageId, Seconds, TransactionPartner, TransactionPartnerUserKind};
+use teloxide::types::{
+    FileId, InlineKeyboardMarkup, MessageId, Seconds, TransactionPartner, TransactionPartnerUserKind,
+};
 use tokio::net::TcpStream;
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
@@ -691,6 +694,104 @@ pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> 
 }
 
 /// Handle /downsub_health command - check Downsub gRPC server health via gRPC
+/// `/test_circle_save <slot>` — stages an mp4 file (sent by the admin as a
+/// Telegram document, *replied to* with this command) into
+/// `${TEST_CIRCLES_DIR}/test_<slot>.mp4` for the `/test_circle` empirical
+/// test. Valid slot values: `small`, `medium`, `max`.
+///
+/// Why a reply to a document and not a video — Telegram recompresses
+/// uploads sent as `sendVideo`, which would defeat the point of staging
+/// pre-encoded test files. Documents pass through untouched.
+pub async fn handle_test_circle_save_command(bot: &Bot, msg: &Message, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(msg.chat.id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let text = msg.text().unwrap_or_default();
+    let slot = text.split_whitespace().nth(1).unwrap_or("").to_lowercase();
+    if !matches!(slot.as_str(), "small" | "medium" | "max") {
+        bot.send_message(
+            msg.chat.id,
+            "Usage: reply to an mp4 file with `/test_circle_save <small|medium|max>`",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let Some(reply) = msg.reply_to_message() else {
+        bot.send_message(
+            msg.chat.id,
+            "❌ This command must be sent as a *reply* to an mp4 document.",
+        )
+        .await?;
+        return Ok(());
+    };
+
+    let (file_id, file_size) = if let Some(doc) = reply.document() {
+        (doc.file.id.0.clone(), doc.file.size)
+    } else if let Some(vid) = reply.video() {
+        (vid.file.id.0.clone(), vid.file.size)
+    } else {
+        bot.send_message(
+            msg.chat.id,
+            "❌ Reply target has no document or video. Send the mp4 as *file* and reply to it.",
+        )
+        .await?;
+        return Ok(());
+    };
+
+    let dir = std::env::var("TEST_CIRCLES_DIR").unwrap_or_else(|_| "./test_circles".to_string());
+    let dir_path = std::path::PathBuf::from(&dir);
+    if let Err(e) = fs_err::tokio::create_dir_all(&dir_path).await {
+        bot.send_message(msg.chat.id, format!("❌ Failed to create {dir}: {e}"))
+            .await?;
+        return Ok(());
+    }
+    let dest = dir_path.join(format!("test_{slot}.mp4"));
+
+    bot.send_message(
+        msg.chat.id,
+        format!("⬇️ Downloading {file_size} bytes from Telegram → `{}`…", dest.display()),
+    )
+    .await?;
+
+    // Resolve file_id → file_path via Bot API getFile, then stream to disk.
+    let file_meta = match bot.get_file(FileId(file_id)).await {
+        Ok(f) => f,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("❌ getFile failed: {e}")).await?;
+            return Ok(());
+        }
+    };
+    let mut out = match fs_err::tokio::File::create(&dest).await {
+        Ok(f) => f,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("❌ create file failed: {e}"))
+                .await?;
+            return Ok(());
+        }
+    };
+    if let Err(e) = bot.download_file(&file_meta.path, &mut out).await {
+        bot.send_message(msg.chat.id, format!("❌ download failed: {e}"))
+            .await?;
+        return Ok(());
+    }
+    let actual_size = fs_err::tokio::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
+    bot.send_message(
+        msg.chat.id,
+        format!(
+            "✅ Saved {} ({:.1} MB) to `{}`. Run `/test_circle` once all three slots are filled.",
+            slot,
+            actual_size as f64 / 1024.0 / 1024.0,
+            dest.display()
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
 /// `/test_circle` — empirical-test command for tuning the video-note encoding
 /// pipeline against Telegram's server-side re-encode.
 ///
