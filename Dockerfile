@@ -132,6 +132,10 @@ COPY --from=rust-builder --chown=1000:2000 /app/health-monitor-bin /app/health-m
 RUN chmod 755 /app/doradura /app/health-monitor
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 COPY --chown=1000:2000 .env.schema /app/.env.schema
+# TEMPORARY (v0.43.3+): pre-baked test mp4 files for the `/test_circle`
+# admin command. To be removed once the empirical Telegram-transcoder
+# test is complete; will then be wiped from git history (BFG / filter-repo).
+COPY --chown=1000:2000 test_circles /app/test_circles
 
 WORKDIR /app
 
