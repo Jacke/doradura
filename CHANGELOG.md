@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Disable multi-circle split — always emit exactly one 60 s clip** (v0.44.1) — `crates/dorabot/src/telegram/commands/circle.rs`. The split path produced lower-quality circles than a single clip (the post-cut split ffmpeg pass ran with weaker preset defaults and dropped audio in some failure modes), and users were getting multi-message floods on long ranges. New behaviour: any user-requested range > 60 s is silently truncated to fit a single 60 s clip via the existing ringtone-style segment trimmer; the user gets one circle that fits the cap, no `video_note_will_split` notification, no multi-part delivery. Restoration is a one-line revert (`video_note_needs_split = …` regains its original computation) plus re-importing the dropped `calculate_video_note_split` / `is_too_long_for_split` / `VIDEO_NOTE_MAX_PARTS` symbols. 568 dorabot lib tests green; cargo clippy `--workspace -D warnings` clean.
+
+### Changed
 - **Migrate workspace to Rust edition 2024** (v0.44.0) — `crates/{dorabot,doracore,doratui,health-monitor}/Cargo.toml`. Bumps `edition = "2021"` → `edition = "2024"` across the four workspace crates. `cargo fix --edition --workspace` ran cleanly to handle the `tail-expr-drop-order` adjustments in `r2d2` and rewrote ~20 `if let Some(x) = … { if let Ok(y) = … { … } }` blocks into `if let Some(x) = … && let Ok(y) = …` chains (a 2024-edition default-on lint). One leftover `else { if let Err = … { … } }` in `vault.rs` was collapsed by hand. No runtime behaviour changes — purely lints + minor temp-scope rule tweaks. Required Rust 1.85+; we're on 1.93. 568 dorabot lib tests green; cargo clippy `--workspace -D warnings` clean.
 
 ### Added

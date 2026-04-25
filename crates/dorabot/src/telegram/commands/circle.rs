@@ -1,6 +1,5 @@
 use crate::conversion::video::{
-    GIF_MAX_DURATION_SECS, GifOptions, VIDEO_NOTE_MAX_DURATION, VIDEO_NOTE_MAX_PARTS, calculate_video_note_split,
-    is_too_long_for_split, to_gif, to_video_notes_split,
+    GIF_MAX_DURATION_SECS, GifOptions, VIDEO_NOTE_MAX_DURATION, to_gif, to_video_notes_split,
 };
 use crate::core::config;
 use crate::core::error::AppError;
@@ -739,10 +738,12 @@ fn compute_clip_max_len_secs(
     is_android_ringtone: bool,
     is_gif: bool,
 ) -> i64 {
-    if is_video_note && !video_note_needs_split {
+    if is_video_note {
+        // Multi-circle split is disabled — every video note is capped at
+        // exactly one 60 s clip. The `video_note_needs_split` parameter
+        // is kept in the signature for future re-enabling but ignored.
+        let _ = video_note_needs_split;
         VIDEO_NOTE_MAX_DURATION as i64
-    } else if is_video_note && video_note_needs_split {
-        (VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64) as i64
     } else if is_iphone_ringtone {
         crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
     } else if is_android_ringtone {
@@ -852,22 +853,15 @@ pub async fn process_video_clip(
         total_len
     };
 
-    // For video notes, determine if we need multi-circle split (using effective duration).
-    // Mutable because we re-check after probing the real output file below.
-    let mut video_note_needs_split =
-        is_video_note && effective_len > VIDEO_NOTE_MAX_DURATION as i64 && !is_too_long_for_split(effective_len as u64);
-
-    // Check if video note is too long for splitting (> 360s)
-    if is_video_note && is_too_long_for_split(effective_len as u64) {
-        let args = doracore::fluent_args!("max_minutes" => VIDEO_NOTE_MAX_PARTS as i64);
-        bot.send_message(
-            chat_id,
-            i18n::t_args(&lang, "commands.video_note_too_long_for_split", &args),
-        )
-        .await
-        .ok();
-        return Ok(());
-    }
+    // Multi-circle split is intentionally disabled — empirically the split
+    // path produced lower-quality circles than a single 60 s clip (the
+    // post-cut split ffmpeg pass ran with `ultrafast`-ish defaults and
+    // dropped audio in some failure modes). Always emit exactly **one**
+    // circle: if the user-requested range exceeds 60 s the segments get
+    // truncated to fit, and the user is notified instead of getting a
+    // multi-part delivery.
+    let video_note_needs_split = false;
+    let _ = effective_len; // kept for future re-enabling of split path
 
     let max_len_secs = compute_clip_max_len_secs(
         is_video_note,
@@ -877,9 +871,10 @@ pub async fn process_video_clip(
         is_gif,
     );
 
-    // For ringtones only, truncate segments to fit within limit and notify user
-    // Video notes with split don't need truncation
-    let (adjusted_segments, truncated) = if (is_ringtone || is_gif) && total_len > max_len_secs {
+    // For ringtones only, truncate segments to fit within limit and notify user.
+    // Video notes also truncate to a single 60 s clip when the requested range
+    // is longer (multi-circle split path is disabled — see comment above).
+    let (adjusted_segments, truncated) = if (is_ringtone || is_gif || is_video_note) && total_len > max_len_secs {
         let mut adjusted = Vec::new();
         let mut accumulated = 0i64;
 
@@ -927,13 +922,8 @@ pub async fn process_video_clip(
         actual_total_len
     };
 
-    // Notify user about multi-circle split
-    if video_note_needs_split && let Some(split_info) = calculate_video_note_split(effective_total_len as u64) {
-        let args = doracore::fluent_args!("count" => split_info.num_parts as i64);
-        bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_will_split", &args))
-            .await
-            .ok();
-    }
+    // Multi-circle split disabled — single-clip mode is enforced above.
+    // The "video_note_will_split" notification path is intentionally skipped.
 
     // Notify user if segments were truncated (ringtones and GIF)
     if truncated {
@@ -1539,11 +1529,9 @@ pub async fn process_video_clip(
             } else {
                 effective_total_len
             };
-            // Recompute split flag from the real length — the file may be
-            // shorter than expected and no longer need splitting.
-            video_note_needs_split = is_video_note
-                && effective_total_len > VIDEO_NOTE_MAX_DURATION as i64
-                && !is_too_long_for_split(effective_total_len as u64);
+            // Multi-circle split path is disabled (single-clip mode);
+            // `video_note_needs_split` stays `false` regardless of the
+            // probed duration.
         }
     }
 
