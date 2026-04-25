@@ -136,3 +136,19 @@ pub async fn set_offline_avatar(bot: &Bot) -> anyhow::Result<()> {
     set_bot_avatar(bot, OFFLINE_AVATAR).await?;
     Ok(())
 }
+
+/// Try to set both bot name **and** profile photo, returning each result
+/// separately. Used by `/update_health_check` so the admin can see exactly
+/// which step failed (one rate-limit on `setMyProfilePhoto` doesn't hide
+/// a parallel rate-limit on `setMyName`, and vice versa).
+pub async fn try_set_state_verbose(bot: &Bot, online: bool) -> (anyhow::Result<()>, anyhow::Result<()>) {
+    let (name, photo) = if online {
+        let name = if is_staging() { STAGING_NAME } else { ONLINE_NAME };
+        (name, ONLINE_AVATAR)
+    } else {
+        (OFFLINE_NAME, OFFLINE_AVATAR)
+    };
+    let name_result = set_bot_name(bot, name).await;
+    let avatar_result = set_bot_avatar(bot, photo).await;
+    (name_result, avatar_result)
+}

@@ -2,6 +2,7 @@ pub mod circle;
 pub mod info;
 pub mod loop_to_audio;
 pub mod subtitles;
+pub mod x264_params;
 
 pub use circle::*;
 pub use info::*;

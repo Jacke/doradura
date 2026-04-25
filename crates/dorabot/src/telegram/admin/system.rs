@@ -691,6 +691,98 @@ pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> 
 }
 
 /// Handle /downsub_health command - check Downsub gRPC server health via gRPC
+/// `/test_circle` — empirical-test command for tuning the video-note encoding
+/// pipeline against Telegram's server-side re-encode.
+///
+/// Reads three pre-baked test files from `${TEST_CIRCLES_DIR}` (default
+/// `./test_circles`) and sends each as a `sendVideoNote` so the admin can
+/// compare what Telegram does to small / medium / max-quality inputs. Files
+/// are expected to be named `test_small.mp4`, `test_medium.mp4`, and
+/// `test_max.mp4`. Each video-note is preceded by a labelled text message
+/// describing the encode preset, file size, and bitrate so the admin can
+/// match render quality back to encoder choices when comparing.
+pub async fn handle_test_circle_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let dir = std::env::var("TEST_CIRCLES_DIR").unwrap_or_else(|_| "./test_circles".to_string());
+    let dir_path = std::path::PathBuf::from(&dir);
+
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "test_small.mp4",
+            "🟢 SMALL",
+            "preset=veryslow, CRF=16, maxrate=1500k → 12 MB (under cloud cap)",
+        ),
+        (
+            "test_medium.mp4",
+            "🟡 MEDIUM",
+            "preset=medium, CRF=14, maxrate=2800k → 21 MB (just over cap, local Bot API only)",
+        ),
+        (
+            "test_max.mp4",
+            "🔴 MAX",
+            "preset=medium, CRF=12, maxrate=5000k → 34 MB (near-lossless input, local Bot API only)",
+        ),
+    ];
+
+    bot.send_message(
+        chat_id,
+        format!(
+            "🧪 Sending {} test video-notes from `{}`. Compare each one — the rendered quality on the Telegram client tells us which input survives the server re-encode best.",
+            cases.len(),
+            dir
+        ),
+    )
+    .await?;
+
+    for (filename, label, settings) in cases {
+        let path = dir_path.join(filename);
+        if !path.exists() {
+            bot.send_message(
+                chat_id,
+                format!(
+                    "❌ {} — file missing at `{}`. Place it there or set TEST_CIRCLES_DIR.",
+                    label,
+                    path.display()
+                ),
+            )
+            .await
+            .ok();
+            continue;
+        }
+        let size_bytes = fs_err::tokio::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+        let size_mb = size_bytes as f64 / 1024.0 / 1024.0;
+        bot.send_message(chat_id, format!("{label} — {settings}\n📊 File: {size_mb:.1} MB"))
+            .await
+            .ok();
+
+        let file = teloxide::types::InputFile::file(&path);
+        match bot.send_video_note(chat_id, file).await {
+            Ok(_) => {
+                bot.send_message(chat_id, format!("✅ {label} sent successfully"))
+                    .await
+                    .ok();
+            }
+            Err(e) => {
+                bot.send_message(chat_id, format!("❌ {label} send failed: {e}"))
+                    .await
+                    .ok();
+            }
+        }
+    }
+
+    bot.send_message(
+        chat_id,
+        "🧪 Test complete. Re-download each video-note from Telegram and run `ffprobe` on it — Telegram's chosen bitrate, encoder version, and any size/aspect mutation tell you what survived their pipeline.",
+    )
+    .await?;
+    Ok(())
+}
+
 /// `/update_health_check` — manual probe of the local `/health` endpoint
 /// and immediate avatar/title refresh based on the result.
 ///
@@ -759,22 +851,24 @@ pub async fn handle_update_health_check_command(bot: &Bot, chat_id: ChatId, user
         }
     };
 
-    // Run the avatar/title update next. Each call returns its own Result so
-    // we can report success/failure independently — admin sees exactly which
-    // step (name vs. avatar) tripped a Telegram rate-limit etc.
-    let avatar_result = if healthy {
-        super::super::avatar::set_online_avatar(bot).await
-    } else {
-        super::super::avatar::set_offline_avatar(bot).await
+    // Run the title and avatar updates next. Each is reported separately
+    // so the admin sees which exact Bot API call failed — e.g. the photo
+    // hits a 12 h rate-limit while the name update succeeded, or vice
+    // versa.
+    let (name_result, avatar_result) = super::super::avatar::try_set_state_verbose(bot, healthy).await;
+    let target = if healthy { "ONLINE" } else { "OFFLINE" };
+    let name_summary = match name_result {
+        Ok(()) => format!("✅ Title set to {}", target),
+        Err(e) => format!("⚠️ Title update failed: {}", e),
     };
     let avatar_summary = match avatar_result {
-        Ok(()) => format!("✅ Avatar+title set to {}", if healthy { "ONLINE" } else { "OFFLINE" }),
-        Err(e) => format!("⚠️ Avatar/title update failed: {}", e),
+        Ok(()) => format!("✅ Avatar set to {}", target),
+        Err(e) => format!("⚠️ Avatar update failed: {}", e),
     };
 
     let response = format!(
-        "🩺 *Manual health-check refresh*\n\n*Probe:*\n{}\n\n*Avatar:*\n{}",
-        probe_summary, avatar_summary
+        "🩺 *Manual health-check refresh*\n\n*Probe:*\n{}\n\n*Title:*\n{}\n\n*Avatar:*\n{}",
+        probe_summary, name_summary, avatar_summary
     );
     bot.edit_message_text(chat_id, status_id, truncate_message(&response))
         .await

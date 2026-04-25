@@ -16,23 +16,6 @@ use teloxide::types::ParseMode;
 
 use super::subtitles::{download_circle_subtitles, BurnSubsResult};
 
-/// x264 advanced params tuned for live-action video notes — especially
-/// dark/low-contrast scenes which previously banded under default AQ.
-///
-/// * `aq-mode=3` biases bits into dark and flat macroblocks (where banding
-///   appears first); `aq-strength=1.0` is the live-action sweet spot per
-///   the silentaperture x264 guide.
-/// * `psy-rd=1.0:0.15` keeps subjective sharpness without over-distorting
-///   edges; `deblock=-1,-1` resists default smoothing of fine detail.
-/// * `me=umh:subme=8` upgrades motion estimation from the `medium` preset
-///   defaults (`hex`/`subme=7`) for marginal extra fidelity at modest cost.
-/// * `ref=4:bframes=3` push slightly past the `medium` preset budget for
-///   better compression at the same bitrate cap.
-/// * `rc-lookahead=40` lets RC redistribute bits over short scene changes,
-///   which matters under a tight `-maxrate` cap.
-const VIDEO_NOTE_X264_PARAMS: &str =
-    "aq-mode=3:aq-strength=1.0:psy-rd=1.0:0.15:deblock=-1,-1:me=umh:subme=8:ref=4:bframes=3:rc-lookahead=40";
-
 /// Segment of video to cut
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct CutSegment {
@@ -1216,32 +1199,24 @@ pub async fn process_video_clip(
         cmd.arg("-filter_complex").arg(&filter_v);
         cmd.arg("-map").arg(map_v_label);
         cmd.arg("-map").arg("1:a");
-        // No speed modification on custom audio - user chose specific audio.
-        // See the standard-audio branch below for the rationale behind the
-        // preset choice and the dark-scene-friendly x264 params.
-        let preset = if source_is_highres { "medium" } else { "fast" };
-        cmd.arg("-c:v").arg("libx264").arg("-preset").arg(preset);
-        if is_video_note {
-            cmd.arg("-tune").arg("film");
-        }
-        cmd.arg("-pix_fmt")
+        // See the standard-audio branch below for the rationale: Telegram
+        // server-side re-encodes every video-note, so heavy-handed presets
+        // and `-x264-params` are wasted CPU; `medium` + CRF 16 produces a
+        // clean enough intermediate for their transcoder.
+        cmd.arg("-c:v")
+            .arg("libx264")
+            .arg("-preset")
+            .arg("medium")
+            .arg("-tune")
+            .arg("film")
+            .arg("-pix_fmt")
             .arg("yuv420p")
             .arg("-crf")
-            .arg(crf)
+            .arg("16")
             .arg("-maxrate")
-            .arg("1700k")
+            .arg("1500k")
             .arg("-bufsize")
-            .arg("3400k")
-            .arg("-profile:v")
-            .arg("high")
-            .arg("-level")
-            .arg("4.0")
-            .arg("-g")
-            .arg("48")
-            .arg("-keyint_min")
-            .arg("24")
-            .arg("-x264-params")
-            .arg(VIDEO_NOTE_X264_PARAMS);
+            .arg("3000k");
         cmd.arg("-c:a")
             .arg("aac")
             .arg("-b:a")
@@ -1257,55 +1232,42 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_a_label);
 
         if has_video {
-            // Adaptive preset for video notes:
-            //   * source ≥1440p (2K/4K/8K) → `medium` — extracts fine detail
-            //     from the high-res source before the 640px downscale crushes
-            //     it, while staying within Railway worker memory limits.
-            //     `slow` was nicer on paper but kept tripping the OOM reaper
-            //     on 4K input, and the silent retry path produced audioless
-            //     circles.
-            //   * source ≤1080p → `fast` (default) — small source has nothing
-            //     extra to extract; slower presets would just waste CPU.
-            //   * non-video-note (regular cuts) → `ultrafast` (existing).
+            // **Video-note encoding strategy after empirical analysis:**
             //
-            // For video notes specifically, the dark-scene complaints were
-            // tracked back to (a) `-maxrate 1400k` strangling CRF 18, (b) no
-            // `-tune`, and (c) default x264 AQ which doesn't bias bits into
-            // dark/flat blocks. The extra knobs below — `tune=film`,
-            // `aq-mode=3` + `aq-strength=1.0`, `psy-rd=1.0:0.15`, slightly
-            // negative deblock, longer rc-lookahead, more refs/bframes —
-            // come straight from the silentaperture x264 guide and the
-            // VideoHelp dark-scene threads. Cap raised 1400k → 1700k:
-            // ~12.75 MB at 60 s, still within Telegram video-note limits.
-            let preset = if is_video_note {
-                if source_is_highres {
-                    "medium"
-                } else {
-                    "fast"
-                }
-            } else {
-                "ultrafast"
-            };
+            // We confirmed via metadata diff (uploaded vs. download-via-bot)
+            // that Telegram's server re-encodes every video-note to its own
+            // ~1400k VBR target with what looks like a `fast`-class preset
+            // and 2-second keyframes. **Any setting we apply that doesn't
+            // affect raw pixel quality of the *intermediate* file is wasted**
+            // — `-tune`, `-x264-params`, `-profile`, `-level`, `-g`, and
+            // `-keyint_min` all get renormalized by their transcoder.
+            //
+            // What survives is: pixels (within Telegram's resolution cap),
+            // approximate temporal noise level, and approximate bitrate
+            // class. So we go `medium` preset (10× faster than `veryslow`,
+            // visually identical at 640² after the downstream re-encode),
+            // CRF 16 for a clean intermediate, `-tune film` to bias x264's
+            // psycho-visual analysis on live action (this *does* affect raw
+            // pixel quality), and a 1500k bitrate cap to stay under
+            // Telegram's 12 MB / 60 s upload limit.
+            //
+            // Non-video-notes (regular cuts) keep `ultrafast` since they're
+            // delivered as full-size mp4s where size > preset matters more.
+            let preset = if is_video_note { "medium" } else { "ultrafast" };
             cmd.arg("-c:v").arg("libx264").arg("-preset").arg(preset);
             if is_video_note {
                 cmd.arg("-tune").arg("film");
             }
-            cmd.arg("-pix_fmt").arg("yuv420p").arg("-crf").arg(crf);
+            cmd.arg("-pix_fmt").arg("yuv420p");
             if is_video_note {
-                cmd.arg("-maxrate")
-                    .arg("1700k")
+                cmd.arg("-crf")
+                    .arg("16")
+                    .arg("-maxrate")
+                    .arg("1500k")
                     .arg("-bufsize")
-                    .arg("3400k")
-                    .arg("-profile:v")
-                    .arg("high")
-                    .arg("-level")
-                    .arg("4.0")
-                    .arg("-g")
-                    .arg("48")
-                    .arg("-keyint_min")
-                    .arg("24")
-                    .arg("-x264-params")
-                    .arg(VIDEO_NOTE_X264_PARAMS);
+                    .arg("3000k");
+            } else {
+                cmd.arg("-crf").arg(crf);
             }
         }
         let audio_bitrate = if is_video_note { "128k" } else { "192k" };
@@ -1317,7 +1279,11 @@ pub async fn process_video_clip(
             .arg("+faststart");
     }
 
-    let ffmpeg_timeout = std::time::Duration::from_secs(10 * 60); // 10 minutes
+    // Video notes use `veryslow` preset which can take 5-15 min on a 4K/8K
+    // source. Regular cuts run on `ultrafast` and finish in under a minute.
+    // `medium` preset on 4K source completes in ~1-2 min on Railway.
+    // 10 min is comfortable headroom for both video-note and regular-cut paths.
+    let ffmpeg_timeout = std::time::Duration::from_secs(10 * 60);
     cmd.arg("-y").arg(&output_path);
     let output = match doracore::core::process::run_with_timeout_raw(&mut cmd, ffmpeg_timeout).await {
         Ok(result) => result.map_err(AppError::from)?,

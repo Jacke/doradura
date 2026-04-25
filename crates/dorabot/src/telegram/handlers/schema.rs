@@ -415,7 +415,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         handle_admin_command, handle_analytics_command, handle_backup_command, handle_botapi_speed_command,
         handle_charges_command, handle_download_tg_command, handle_downsub_command, handle_downsub_health_command,
         handle_health_command, handle_info_command, handle_metrics_command, handle_revenue_command,
-        handle_sent_files_command, handle_setplan_command, handle_transactions_command,
+        handle_sent_files_command, handle_setplan_command, handle_test_circle_command, handle_transactions_command,
         handle_update_health_check_command, handle_users_command, handle_version_command, show_main_menu,
     };
 
@@ -622,6 +622,10 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             Command::UpdateHealthCheck => {
                                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                                 let _ = handle_update_health_check_command(&bot, msg.chat.id, user_id).await;
+                            }
+                            Command::TestCircle => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = handle_test_circle_command(&bot, msg.chat.id, user_id).await;
                             }
                             Command::Metrics => {
                                 let _ = handle_metrics_command(

@@ -61,3 +61,4 @@ docs/PRD.md
 
 # Claude Code per-user overrides (shared project config lives in .claude/settings.json)
 .claude/settings.local.json
+test_circles/

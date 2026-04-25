@@ -80,6 +80,11 @@ pub enum Command {
         description = "manually refresh /health probe + bot avatar/title (admin only)"
     )]
     UpdateHealthCheck,
+    #[command(
+        rename = "test_circle",
+        description = "send 3 test video-notes for empirical Telegram-transcode comparison (admin only)"
+    )]
+    TestCircle,
     #[command(description = "my content subscriptions")]
     Subscriptions,
     #[command(description = "music player")]
