@@ -16,6 +16,23 @@ use teloxide::types::ParseMode;
 
 use super::subtitles::{download_circle_subtitles, BurnSubsResult};
 
+/// x264 advanced params tuned for live-action video notes — especially
+/// dark/low-contrast scenes which previously banded under default AQ.
+///
+/// * `aq-mode=3` biases bits into dark and flat macroblocks (where banding
+///   appears first); `aq-strength=1.0` is the live-action sweet spot per
+///   the silentaperture x264 guide.
+/// * `psy-rd=1.0:0.15` keeps subjective sharpness without over-distorting
+///   edges; `deblock=-1,-1` resists default smoothing of fine detail.
+/// * `me=umh:subme=8` upgrades motion estimation from the `medium` preset
+///   defaults (`hex`/`subme=7`) for marginal extra fidelity at modest cost.
+/// * `ref=4:bframes=3` push slightly past the `medium` preset budget for
+///   better compression at the same bitrate cap.
+/// * `rc-lookahead=40` lets RC redistribute bits over short scene changes,
+///   which matters under a tight `-maxrate` cap.
+const VIDEO_NOTE_X264_PARAMS: &str =
+    "aq-mode=3:aq-strength=1.0:psy-rd=1.0:0.15:deblock=-1,-1:me=umh:subme=8:ref=4:bframes=3:rc-lookahead=40";
+
 /// Segment of video to cut
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct CutSegment {
@@ -1200,23 +1217,31 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_v_label);
         cmd.arg("-map").arg("1:a");
         // No speed modification on custom audio - user chose specific audio.
-        // Adaptive preset (mirrors no-custom-audio branch below):
-        //   high-res source → `medium` for maximum quality on Telegram viewport
-        //                     without OOM-killing ffmpeg on Railway workers
-        //   else → `fast` for speed.
+        // See the standard-audio branch below for the rationale behind the
+        // preset choice and the dark-scene-friendly x264 params.
         let preset = if source_is_highres { "medium" } else { "fast" };
-        cmd.arg("-c:v")
-            .arg("libx264")
-            .arg("-preset")
-            .arg(preset)
+        cmd.arg("-c:v").arg("libx264").arg("-preset").arg(preset);
+        if is_video_note {
+            cmd.arg("-tune").arg("film");
+        }
+        cmd.arg("-pix_fmt")
+            .arg("yuv420p")
             .arg("-crf")
             .arg(crf)
             .arg("-maxrate")
-            .arg("1400k")
+            .arg("1700k")
             .arg("-bufsize")
-            .arg("2800k")
+            .arg("3400k")
             .arg("-profile:v")
-            .arg("high");
+            .arg("high")
+            .arg("-level")
+            .arg("4.0")
+            .arg("-g")
+            .arg("48")
+            .arg("-keyint_min")
+            .arg("24")
+            .arg("-x264-params")
+            .arg(VIDEO_NOTE_X264_PARAMS);
         cmd.arg("-c:a")
             .arg("aac")
             .arg("-b:a")
@@ -1242,6 +1267,16 @@ pub async fn process_video_clip(
             //   * source ≤1080p → `fast` (default) — small source has nothing
             //     extra to extract; slower presets would just waste CPU.
             //   * non-video-note (regular cuts) → `ultrafast` (existing).
+            //
+            // For video notes specifically, the dark-scene complaints were
+            // tracked back to (a) `-maxrate 1400k` strangling CRF 18, (b) no
+            // `-tune`, and (c) default x264 AQ which doesn't bias bits into
+            // dark/flat blocks. The extra knobs below — `tune=film`,
+            // `aq-mode=3` + `aq-strength=1.0`, `psy-rd=1.0:0.15`, slightly
+            // negative deblock, longer rc-lookahead, more refs/bframes —
+            // come straight from the silentaperture x264 guide and the
+            // VideoHelp dark-scene threads. Cap raised 1400k → 1700k:
+            // ~12.75 MB at 60 s, still within Telegram video-note limits.
             let preset = if is_video_note {
                 if source_is_highres {
                     "medium"
@@ -1251,19 +1286,26 @@ pub async fn process_video_clip(
             } else {
                 "ultrafast"
             };
-            cmd.arg("-c:v")
-                .arg("libx264")
-                .arg("-preset")
-                .arg(preset)
-                .arg("-crf")
-                .arg(crf);
+            cmd.arg("-c:v").arg("libx264").arg("-preset").arg(preset);
+            if is_video_note {
+                cmd.arg("-tune").arg("film");
+            }
+            cmd.arg("-pix_fmt").arg("yuv420p").arg("-crf").arg(crf);
             if is_video_note {
                 cmd.arg("-maxrate")
-                    .arg("1400k")
+                    .arg("1700k")
                     .arg("-bufsize")
-                    .arg("2800k")
+                    .arg("3400k")
                     .arg("-profile:v")
-                    .arg("high");
+                    .arg("high")
+                    .arg("-level")
+                    .arg("4.0")
+                    .arg("-g")
+                    .arg("48")
+                    .arg("-keyint_min")
+                    .arg("24")
+                    .arg("-x264-params")
+                    .arg(VIDEO_NOTE_X264_PARAMS);
             }
         }
         let audio_bitrate = if is_video_note { "128k" } else { "192k" };

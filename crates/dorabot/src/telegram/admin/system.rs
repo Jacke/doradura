@@ -691,6 +691,97 @@ pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> 
 }
 
 /// Handle /downsub_health command - check Downsub gRPC server health via gRPC
+/// `/update_health_check` — manual probe of the local `/health` endpoint
+/// and immediate avatar/title refresh based on the result.
+///
+/// Mirrors what the external `health-monitor` s6 service does on its 30 s
+/// loop, but on-demand and reporting *every* failure mode (including timeouts)
+/// straight back to the admin chat.
+pub async fn handle_update_health_check_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let status = bot
+        .send_message(chat_id, "🩺 Probing /health and refreshing avatar…")
+        .await?;
+    let status_id = status.id;
+
+    // Probe /health with the same URL the external monitor uses.
+    let health_url =
+        std::env::var("HEALTH_MONITOR_HEALTH_URL").unwrap_or_else(|_| "http://localhost:9090/health".to_string());
+    let probe_timeout = Duration::from_secs(10);
+    let probe_started = std::time::Instant::now();
+
+    let client = reqwest::Client::new();
+    let probe_result = timeout(probe_timeout, async {
+        client
+            .get(&health_url)
+            .timeout(probe_timeout)
+            .send()
+            .await
+            .map_err(|e| format!("request: {e}"))
+            .map(|r| {
+                let status = r.status();
+                (status, r)
+            })
+    })
+    .await;
+
+    // Each branch yields a (healthy: bool, summary: String) so we can drive
+    // the avatar update *and* render a single response with full diagnostics —
+    // including timeout, transport, and HTTP-level failures.
+    let (healthy, probe_summary) = match probe_result {
+        Err(_) => (
+            false,
+            format!(
+                "❌ Probe timed out after {} s (url: {})",
+                probe_timeout.as_secs(),
+                health_url
+            ),
+        ),
+        Ok(Err(e)) => (false, format!("❌ Probe transport error: {} (url: {})", e, health_url)),
+        Ok(Ok((status_code, resp))) => {
+            let body = resp.text().await.unwrap_or_default();
+            let elapsed_ms = probe_started.elapsed().as_millis();
+            let healthy = status_code.is_success() && body.contains("healthy");
+            let body_preview: String = body.chars().take(200).collect();
+            let icon = if healthy { "✅" } else { "❌" };
+            (
+                healthy,
+                format!(
+                    "{} HTTP {} in {} ms\nbody: {}",
+                    icon, status_code, elapsed_ms, body_preview
+                ),
+            )
+        }
+    };
+
+    // Run the avatar/title update next. Each call returns its own Result so
+    // we can report success/failure independently — admin sees exactly which
+    // step (name vs. avatar) tripped a Telegram rate-limit etc.
+    let avatar_result = if healthy {
+        super::super::avatar::set_online_avatar(bot).await
+    } else {
+        super::super::avatar::set_offline_avatar(bot).await
+    };
+    let avatar_summary = match avatar_result {
+        Ok(()) => format!("✅ Avatar+title set to {}", if healthy { "ONLINE" } else { "OFFLINE" }),
+        Err(e) => format!("⚠️ Avatar/title update failed: {}", e),
+    };
+
+    let response = format!(
+        "🩺 *Manual health-check refresh*\n\n*Probe:*\n{}\n\n*Avatar:*\n{}",
+        probe_summary, avatar_summary
+    );
+    bot.edit_message_text(chat_id, status_id, truncate_message(&response))
+        .await
+        .ok();
+    Ok(())
+}
+
 pub async fn handle_downsub_health_command(
     bot: &Bot,
     chat_id: ChatId,

@@ -75,6 +75,11 @@ pub enum Command {
     ProxyStats,
     #[command(rename = "proxy_reset", description = "reset proxy stats (admin only)")]
     ProxyReset,
+    #[command(
+        rename = "update_health_check",
+        description = "manually refresh /health probe + bot avatar/title (admin only)"
+    )]
+    UpdateHealthCheck,
     #[command(description = "my content subscriptions")]
     Subscriptions,
     #[command(description = "music player")]
