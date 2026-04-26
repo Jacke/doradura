@@ -38,18 +38,35 @@ use url::Url;
 /// default (~99.5 VMAF). `Lossless` reuses `Master` in v0.46.0 — codec-aware
 /// remux/skip is staged for v0.47.0.
 ///
-/// All variants share `-tune film -pix_fmt yuv420p -profile:v high -level 4.2
+/// All variants share `-tune film -pix_fmt yuv420p -profile:v high -level 5.1
 /// -movflags +faststart` for Telegram inline-playback compatibility.
+///
+/// **Why `-level 5.1` instead of `4.2`** (changed in v0.46.1): Level 4.2
+/// caps at *either* 4K@30 *or* 1080p@60, with a 50 Mbps bitrate ceiling.
+/// This path only runs for 1440p / 2160p / 4320p sources, where:
+///
+/// * **4K@60** sources can't fit in 4.2 — x264 either drops every other
+///   frame (output stutters) or quietly overrides our `-level` flag
+///   (header lies about the level it was encoded at). YouTube ships 4K@60
+///   for almost all modern music videos, gaming and sports content.
+/// * **CRF 12 + veryslow** on a 4K source genuinely wants 60-100 Mbps on
+///   complex scenes. The 50 Mbps cap of 4.2 forces x264 into a worse
+///   rate-distortion trade-off, costing us VMAF for no compatibility win.
+///
+/// Level 5.1 (240 Mbps cap, up to 4K@60 / 8K@30) is supported by every
+/// H.264 decoder shipped since iPhone 6s (2015), all Smart TVs from the
+/// last decade, and every desktop browser. It is a strict superset of
+/// 4.2 — any device that plays 4.2 plays 5.1.
 fn highres_recode_opts(preset: VideoQualityPreset) -> &'static str {
     match preset {
         VideoQualityPreset::Balanced => {
-            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 192k -movflags +faststart"
+            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 192k -movflags +faststart"
         }
         VideoQualityPreset::Transparent => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 320k -movflags +faststart"
+            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart"
         }
         VideoQualityPreset::Master | VideoQualityPreset::Lossless => {
-            "VideoConvertor:-c:v libx264 -preset veryslow -tune film -crf 12 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 320k -movflags +faststart"
+            "VideoConvertor:-c:v libx264 -preset veryslow -tune film -crf 12 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart"
         }
     }
 }
