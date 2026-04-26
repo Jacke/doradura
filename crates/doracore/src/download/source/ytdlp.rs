@@ -18,7 +18,7 @@ use crate::download::metadata::{
     build_telegram_safe_format, default_pot_token, default_youtube_extractor_args, find_actual_downloaded_file,
     get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
 };
-use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress};
+use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress, VideoQualityPreset};
 use crate::download::ytdlp_errors::{YtDlpErrorType, analyze_ytdlp_error, get_error_message};
 use async_trait::async_trait;
 use std::collections::VecDeque;
@@ -28,6 +28,31 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use url::Url;
+
+/// Return the `--postprocessor-args` value for the highres AV1/VP9 → H.264
+/// recode, parameterised by the user's quality preset.
+///
+/// `Balanced` is the v0.45.3 baseline (memory-safe on small workers);
+/// `Transparent` is the v0.45.1 setting that previously OOM'd on small
+/// workers but is fine on Railway Pro; `Master` is the new "best bot"
+/// default (~99.5 VMAF). `Lossless` reuses `Master` in v0.46.0 — codec-aware
+/// remux/skip is staged for v0.47.0.
+///
+/// All variants share `-tune film -pix_fmt yuv420p -profile:v high -level 4.2
+/// -movflags +faststart` for Telegram inline-playback compatibility.
+fn highres_recode_opts(preset: VideoQualityPreset) -> &'static str {
+    match preset {
+        VideoQualityPreset::Balanced => {
+            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 192k -movflags +faststart"
+        }
+        VideoQualityPreset::Transparent => {
+            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 320k -movflags +faststart"
+        }
+        VideoQualityPreset::Master | VideoQualityPreset::Lossless => {
+            "VideoConvertor:-c:v libx264 -preset veryslow -tune film -crf 12 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 320k -movflags +faststart"
+        }
+    }
+}
 
 /// Convert `concurrent_fragments` to a static string for yt-dlp's `-N` flag.
 /// Returns `""` (no-op) for unsupported values including 1 (the default).
@@ -380,15 +405,23 @@ impl YtDlpSource {
         // mkv intermediate so yt-dlp's FFmpegVideoConvertorPP actually
         // triggers (mp4 → mp4 would be a no-op).
         let container: &'static str = if is_highres { "mkv" } else { "mp4" };
-        const HIGHRES_RECODE_OPTS: &str = "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 4.2 -c:a aac -b:a 192k -movflags +faststart";
+        // Per-user encoding tier. Preset → exact x264 / AAC params. See the
+        // pre-existing tuning history above; this is the parametric form so
+        // users can opt into Master quality (`veryslow / CRF 12`) on Pro
+        // hardware. Lossless reuses Master recode in v0.46.0; codec-aware
+        // remux/skip lands in v0.47.0.
+        let preset = request.quality_preset.unwrap_or_default();
+        let recode_opts = highres_recode_opts(preset);
         log::debug!(
-            "yt-dlp video format string ({}, highres={}): {}",
+            "yt-dlp video format string ({}, highres={}, preset={}): {}",
             container,
             is_highres,
+            preset,
             format_arg
         );
 
-        let subprocess_timeout = config::download::ytdlp_download_timeout_for_quality(request.video_quality.as_deref());
+        let subprocess_timeout =
+            config::download::ytdlp_download_timeout_for(request.video_quality.as_deref(), Some(preset));
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(
                 &ytdl_bin,
@@ -405,7 +438,7 @@ impl YtDlpSource {
                         args.push("--recode-video");
                         args.push("mp4");
                         args.push("--postprocessor-args");
-                        args.push(HIGHRES_RECODE_OPTS);
+                        args.push(recode_opts);
                     }
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
@@ -427,7 +460,7 @@ impl YtDlpSource {
                             args.push("--recode-video");
                             args.push("mp4");
                             args.push("--postprocessor-args");
-                            args.push(HIGHRES_RECODE_OPTS);
+                            args.push(recode_opts);
                         }
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
@@ -448,7 +481,7 @@ impl YtDlpSource {
                         args.push("--recode-video");
                         args.push("mp4");
                         args.push("--postprocessor-args");
-                        args.push(HIGHRES_RECODE_OPTS);
+                        args.push(recode_opts);
                     }
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");

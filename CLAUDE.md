@@ -37,6 +37,24 @@ Primary languages: Rust and Go. Use `cargo check` for Rust and `go build` for Go
 
 **Если хотя бы на один вопрос ответ "нет" - НЕ КОММИТЬ!**
 
+### Approval-flag workflow (enforces чеклист)
+
+Хук `.claude/hooks/require-commit-approval.sh` блокирует все `git commit` / `git push`, пока в проекте нет свежего файла `.claude/commit-approved` (TTL 10 минут). Это physical-evidence variant правила выше — Claude не может подделать `touch` через свой собственный bash, потому что хук перехватит.
+
+**Workflow:**
+
+1. Я (Claude) показываю diff и предлагаю commit message.
+2. Я спрашиваю: "Можно закоммитить и задеплоить?"
+3. Ты соглашаешься в чате — отвечая `да` И выполняя в чате через `!`-prefix:
+   ```
+   !touch .claude/commit-approved
+   ```
+4. После этого я делаю `git commit` + `git push` без блокировки в течение 10 минут.
+5. По истечении 10 минут флаг авто-устаревает, новые commit/push снова блокируются.
+6. Если хочешь отозвать раньше: `!rm .claude/commit-approved`.
+
+Файл `.claude/commit-approved` в `.gitignore` — не попадёт в репо.
+
 ---
 
 ## Deployment

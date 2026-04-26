@@ -61,4 +61,8 @@ docs/PRD.md
 
 # Claude Code per-user overrides (shared project config lives in .claude/settings.json)
 .claude/settings.local.json
+# Per-commit approval flag — created by `!touch .claude/commit-approved` in chat,
+# consumed by .claude/hooks/require-commit-approval.sh. Never tracked in git.
+.claude/commit-approved
+.claude/worktrees/
 test_circles/
