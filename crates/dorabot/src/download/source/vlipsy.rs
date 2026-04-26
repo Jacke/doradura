@@ -493,6 +493,7 @@ mod tests {
             time_range: None,
             carousel_mask: None,
             concurrent_fragments: 1,
+            quality_preset: None,
         };
 
         let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();

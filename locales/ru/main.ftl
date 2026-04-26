@@ -62,6 +62,14 @@ menu =
     .plan_free = Free 🌟
     .plan_premium = Premium ⭐
     .plan_vip = VIP 💎
+    .quality_preset_balanced = ⚡ Пресет: Сбалансированный
+    .quality_preset_transparent = 💎 Пресет: Прозрачный
+    .quality_preset_master = 🏆 Пресет: Мастер
+    .quality_preset_lossless = 🎯 Пресет: Без потерь 1:1
+    .quality_preset_alert_balanced = ⚡ Сбалансированный — быстрая обработка (~96 VMAF). Стандарт до v0.46.0.
+    .quality_preset_alert_transparent = 💎 Прозрачный — визуально идентично источнику (~99 VMAF). 4K кодируется 15–20 мин.
+    .quality_preset_alert_master = 🏆 Мастер — почти мастеринговое качество (~99.5 VMAF). 4K кодируется 50–80 мин.
+    .quality_preset_alert_lossless = 🎯 Без потерь 1:1 — без перекодирования (Phase 2). Сейчас работает как Мастер.
 
 common =
     .back = 🔙 Назад

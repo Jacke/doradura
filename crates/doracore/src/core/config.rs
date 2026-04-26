@@ -280,12 +280,33 @@ pub mod download {
     /// preview fetches. The download subprocess needs to be generous for
     /// high-res; the default covers audio + ≤1080p video.
     pub fn ytdlp_download_timeout_for_quality(video_quality: Option<&str>) -> Duration {
-        match video_quality {
-            Some("4320p") => Duration::from_secs(7200),
-            Some("2160p") => Duration::from_secs(3600),
-            Some("1440p") => Duration::from_secs(1800),
-            _ => Duration::from_secs(1200), // 20 min — safe default for any ≤1080p
-        }
+        ytdlp_download_timeout_for(video_quality, None)
+    }
+
+    /// Variant of [`ytdlp_download_timeout_for_quality`] that scales the cap
+    /// for the user's encoding preset. `Master`/`Lossless` on 4K can spend
+    /// 50-80 min in the recode pass alone; without scaling, the worker would
+    /// SIGKILL ffmpeg before it finishes.
+    pub fn ytdlp_download_timeout_for(
+        video_quality: Option<&str>,
+        preset: Option<crate::download::source::VideoQualityPreset>,
+    ) -> Duration {
+        use crate::download::source::VideoQualityPreset;
+        let base = match video_quality {
+            Some("4320p") => 7200,
+            Some("2160p") => 3600,
+            Some("1440p") => 1800,
+            _ => 1200, // 20 min — safe default for any ≤1080p
+        };
+        // Master/Lossless ≈ 4-5× wall-clock of Balanced on 4K AV1.
+        // Transparent ≈ 2-3×. Apply only for high-res qualities; sub-1080p
+        // doesn't trigger the recode path so the preset is irrelevant.
+        let multiplier = match (video_quality, preset) {
+            (Some("4320p" | "2160p" | "1440p"), Some(VideoQualityPreset::Master | VideoQualityPreset::Lossless)) => 3,
+            (Some("4320p" | "2160p" | "1440p"), Some(VideoQualityPreset::Transparent)) => 2,
+            _ => 1,
+        };
+        Duration::from_secs(base * multiplier)
     }
 
     /// Returns `true` if this quality needs the high-resolution code path

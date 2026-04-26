@@ -62,6 +62,14 @@ menu =
     .plan_free = Free 🌟
     .plan_premium = Premium ⭐
     .plan_vip = VIP 💎
+    .quality_preset_balanced = ⚡ Preset: Balanced
+    .quality_preset_transparent = 💎 Preset: Transparent
+    .quality_preset_master = 🏆 Preset: Master
+    .quality_preset_lossless = 🎯 Preset: Lossless 1:1
+    .quality_preset_alert_balanced = ⚡ Balanced — fast encode (~96 VMAF). Memory-safe default before v0.46.0.
+    .quality_preset_alert_transparent = 💎 Transparent — visually identical to source (~99 VMAF). 4K takes 15–20 min.
+    .quality_preset_alert_master = 🏆 Master — near-master quality (~99.5 VMAF). 4K takes 50–80 min.
+    .quality_preset_alert_lossless = 🎯 Lossless 1:1 — no recode (Phase 2). For now behaves like Master.
 
 common =
     .back = 🔙 Back

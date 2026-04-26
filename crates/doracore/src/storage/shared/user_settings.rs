@@ -36,6 +36,16 @@ impl SharedStorage {
         .await
     }
 
+    pub async fn get_user_video_quality_preset(&self, telegram_id: i64) -> Result<String> {
+        self.get_user_string_setting(
+            telegram_id,
+            "video_quality_preset",
+            "SELECT COALESCE(video_quality_preset, 'master') AS video_quality_preset FROM users WHERE telegram_id = $1",
+            "master",
+        )
+        .await
+    }
+
     pub async fn get_user_download_format(&self, telegram_id: i64) -> Result<String> {
         self.get_user_string_setting(
             telegram_id,
@@ -157,6 +167,16 @@ impl SharedStorage {
             "video_quality",
             quality,
             "UPDATE users SET video_quality = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_video_quality_preset(&self, telegram_id: i64, preset: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "video_quality_preset",
+            preset,
+            "UPDATE users SET video_quality_preset = $2, updated_at = NOW() WHERE telegram_id = $1",
         )
         .await
     }

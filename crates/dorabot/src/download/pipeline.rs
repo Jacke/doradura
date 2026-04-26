@@ -271,7 +271,7 @@ pub async fn download_phase(
     registry: &SourceRegistry,
     progress_msg: &mut ProgressMessage,
     message_id: Option<i32>,
-    _shared_storage: Option<&Arc<SharedStorage>>,
+    shared_storage: Option<&Arc<SharedStorage>>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
     let pipeline_start = std::time::Instant::now();
     let file_format_str = format.label().to_string();
@@ -539,6 +539,21 @@ pub async fn download_phase(
     // Experimental features graduated to main workflow — always use 16 concurrent fragments.
     let concurrent_fragments = 16u8;
     builder = builder.concurrent_fragments(concurrent_fragments);
+
+    // Inject the user's quality preset for high-res video. Audio paths and
+    // sub-1080p video are unaffected — `is_highres` in ytdlp.rs gates the
+    // preset use.
+    if matches!(format, PipelineFormat::Video { .. })
+        && let Some(storage) = shared_storage
+    {
+        let preset_str = storage
+            .get_user_video_quality_preset(chat_id.0)
+            .await
+            .unwrap_or_else(|_| "master".to_string());
+        if let Ok(preset) = preset_str.parse::<doracore::download::source::VideoQualityPreset>() {
+            builder = builder.quality_preset(preset);
+        }
+    }
 
     let request = builder.build(&title, &artist);
 

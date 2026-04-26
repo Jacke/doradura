@@ -62,6 +62,14 @@ menu =
     .plan_free = Kostenlos 🌟
     .plan_premium = Premium ⭐
     .plan_vip = VIP 💎
+    .quality_preset_balanced = ⚡ Voreinstellung: Ausgewogen
+    .quality_preset_transparent = 💎 Voreinstellung: Transparent
+    .quality_preset_master = 🏆 Voreinstellung: Master
+    .quality_preset_lossless = 🎯 Voreinstellung: Verlustfrei 1:1
+    .quality_preset_alert_balanced = ⚡ Ausgewogen — schnelle Kodierung (~96 VMAF). Standard vor v0.46.0.
+    .quality_preset_alert_transparent = 💎 Transparent — visuell identisch zur Quelle (~99 VMAF). 4K in 15–20 Min.
+    .quality_preset_alert_master = 🏆 Master — fast Master-Qualität (~99.5 VMAF). 4K in 50–80 Min.
+    .quality_preset_alert_lossless = 🎯 Verlustfrei 1:1 — keine Neukodierung (Phase 2). Verhält sich wie Master.
 
 common =
     .back = 🔙 Zurück

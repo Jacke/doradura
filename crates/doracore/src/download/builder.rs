@@ -6,7 +6,7 @@
 use crate::core::config;
 use crate::core::utils::escape_filename;
 use crate::download::downloader::generate_file_name_with_ext;
-use crate::download::source::DownloadRequest;
+use crate::download::source::{DownloadRequest, VideoQualityPreset};
 use url::Url;
 
 /// Builder for constructing download requests.
@@ -30,6 +30,7 @@ pub struct DownloadConfigBuilder {
     time_range: Option<(String, String)>,
     carousel_mask: Option<u32>,
     concurrent_fragments: u8,
+    quality_preset: Option<VideoQualityPreset>,
 }
 
 impl DownloadConfigBuilder {
@@ -45,6 +46,7 @@ impl DownloadConfigBuilder {
             time_range: None,
             carousel_mask: None,
             concurrent_fragments: 1,
+            quality_preset: None,
         }
     }
 
@@ -98,6 +100,12 @@ impl DownloadConfigBuilder {
         self
     }
 
+    /// Set the encoding tier preset for high-res (1440p+) video downloads.
+    pub fn quality_preset(mut self, preset: VideoQualityPreset) -> Self {
+        self.quality_preset = Some(preset);
+        self
+    }
+
     /// Build the `DownloadRequest`, generating the output path from title and artist.
     ///
     /// Adds a timestamp to the filename to prevent race conditions with concurrent downloads.
@@ -118,6 +126,7 @@ impl DownloadConfigBuilder {
             time_range: self.time_range,
             carousel_mask: self.carousel_mask,
             concurrent_fragments: self.concurrent_fragments,
+            quality_preset: self.quality_preset,
         }
     }
 

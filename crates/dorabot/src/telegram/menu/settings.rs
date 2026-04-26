@@ -8,6 +8,42 @@ use teloxide::types::{InlineKeyboardMarkup, MessageId};
 
 use super::helpers::edit_caption_or_text;
 
+/// Label for the quality-preset cycle button. Maps the stored preset string
+/// to a localised button label including the icon and rough VMAF tier.
+fn preset_button_label(lang: &unic_langid::LanguageIdentifier, preset: &str) -> String {
+    let key = match preset {
+        "balanced" => "menu.quality_preset_balanced",
+        "transparent" => "menu.quality_preset_transparent",
+        "lossless" => "menu.quality_preset_lossless",
+        _ => "menu.quality_preset_master", // default + unknown values land here
+    };
+    i18n::t(lang, key)
+}
+
+/// Cycle order for the preset button. Click moves to the next preset.
+pub fn next_preset(current: &str) -> &'static str {
+    match current {
+        "balanced" => "transparent",
+        "transparent" => "master",
+        "master" => "lossless",
+        "lossless" => "balanced",
+        _ => "master",
+    }
+}
+
+/// Pop-up alert text shown when the user switches preset. Surfaces the
+/// trade-off so users opting into Master/Lossless aren't surprised by the
+/// long encode time.
+pub fn preset_alert_text(lang: &unic_langid::LanguageIdentifier, preset: &str) -> String {
+    let key = match preset {
+        "balanced" => "menu.quality_preset_alert_balanced",
+        "transparent" => "menu.quality_preset_alert_transparent",
+        "lossless" => "menu.quality_preset_alert_lossless",
+        _ => "menu.quality_preset_alert_master",
+    };
+    i18n::t(lang, key)
+}
+
 /// Shows the download type menu.
 ///
 /// Displays available formats (MP3, MP4, SRT, TXT) and marks the current choice.
@@ -260,6 +296,10 @@ pub async fn show_video_quality_menu(
         .await
         .unwrap_or_else(|_| "best".to_string());
     let send_as_document = shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0);
+    let quality_preset = shared_storage
+        .get_user_video_quality_preset(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "master".to_string());
     let download_subs = shared_storage
         .get_user_download_subtitles(chat_id.0)
         .await
@@ -350,6 +390,10 @@ pub async fn show_video_quality_menu(
                 i18n::t(&lang, "menu.send_video_document")
             },
             "send_type:toggle",
+        )],
+        vec![crate::telegram::cb(
+            preset_button_label(&lang, &quality_preset),
+            "qpreset:cycle",
         )],
     ];
 

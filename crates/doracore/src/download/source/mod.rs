@@ -66,6 +66,59 @@ pub struct SourceProgress {
     pub merge_position_secs: Option<f32>,
 }
 
+/// Per-user encoding tier for high-res (1440p+) video downloads.
+///
+/// Controls the trade-off between visual quality and CPU/wait time when the
+/// source codec must be transcoded for Telegram inline playback. H.264
+/// sources are always stream-copied regardless of preset.
+///
+/// VMAF / time figures below are empirical for a 4-minute 4K AV1 source on
+/// a Railway Pro worker (~8 GB / 4 vCPU).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VideoQualityPreset {
+    /// `medium / CRF 17 / AAC 192k` — the v0.45.3 fallback (~96 VMAF, ~5 min).
+    Balanced,
+    /// `slow / CRF 14 / AAC 320k` — visually identical to source (~99 VMAF, ~15-20 min).
+    Transparent,
+    /// `veryslow / CRF 12 / AAC 320k` — near-master quality (~99.5 VMAF, ~50-80 min).
+    /// Default for all new users.
+    #[default]
+    Master,
+    /// No recode. AV1 sources are sent as `.mkv` documents (no inline preview);
+    /// VP9 routes through the Master recode (user-confirmed default).
+    Lossless,
+}
+
+impl VideoQualityPreset {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::Transparent => "transparent",
+            Self::Master => "master",
+            Self::Lossless => "lossless",
+        }
+    }
+}
+
+impl std::fmt::Display for VideoQualityPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for VideoQualityPreset {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "balanced" => Ok(Self::Balanced),
+            "transparent" => Ok(Self::Transparent),
+            "master" => Ok(Self::Master),
+            "lossless" => Ok(Self::Lossless),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Request parameters for a download operation.
 #[derive(Debug, Clone)]
 pub struct DownloadRequest {
@@ -91,6 +144,8 @@ pub struct DownloadRequest {
     /// Use 1 for the default sequential behaviour. Values above 1 are experimental
     /// and may increase download speed at the cost of higher server load.
     pub concurrent_fragments: u8,
+    /// Encoding tier for 1440p+ video downloads. None for audio / sub-1080p video.
+    pub quality_preset: Option<VideoQualityPreset>,
 }
 
 /// An additional media file from a multi-item post (e.g., Instagram carousel).
@@ -344,6 +399,7 @@ mod tests {
             time_range: None,
             carousel_mask: None,
             concurrent_fragments: 1,
+            quality_preset: None,
         };
 
         let (tx, mut rx) = mpsc::unbounded_channel();

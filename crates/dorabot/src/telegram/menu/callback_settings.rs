@@ -129,6 +129,11 @@ pub async fn handle_settings_callback(
         return Ok(true);
     }
 
+    if data == "qpreset:cycle" {
+        handle_settings_quality_preset_cycle(bot, callback_id, chat_id, message_id, db_pool, shared_storage).await?;
+        return Ok(true);
+    }
+
     if data == "video:toggle_burn_subs" {
         handle_settings_video_toggle_burn_subs(bot, callback_id, chat_id, message_id, db_pool, shared_storage).await?;
         return Ok(true);
@@ -714,6 +719,48 @@ async fn handle_settings_quality(
         .set_user_video_quality(chat_id.0, stored_quality)
         .await
         .map_err(db_err)?;
+
+    show_video_quality_menu(
+        bot,
+        chat_id,
+        message_id,
+        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Handles `qpreset:cycle` — cycles the user's video quality preset
+/// (Master → Lossless → Balanced → Transparent → …) and re-renders the
+/// quality menu. Surfaces the trade-off as a callback alert so users
+/// opting into long-encode presets aren't surprised.
+async fn handle_settings_quality_preset_cycle(
+    bot: &Bot,
+    callback_id: &CallbackQueryId,
+    chat_id: ChatId,
+    message_id: teloxide::types::MessageId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    let current = shared_storage
+        .get_user_video_quality_preset(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "master".to_string());
+    let next = super::settings::next_preset(&current);
+    shared_storage
+        .set_user_video_quality_preset(chat_id.0, next)
+        .await
+        .map_err(db_err)?;
+
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let alert = super::settings::preset_alert_text(&lang, next);
+    let _ = bot
+        .answer_callback_query(callback_id.clone())
+        .text(alert)
+        .show_alert(true)
+        .await;
 
     show_video_quality_menu(
         bot,
