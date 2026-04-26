@@ -71,6 +71,18 @@ menu =
     .quality_preset_alert_master = 🏆 Master — near-master quality (~99.5 VMAF). 4K takes 50–80 min.
     .quality_preset_alert_lossless = 🎯 Lossless 1:1 — no recode (Phase 2). For now behaves like Master.
 
+cut_confirm =
+    .title = ✂️ Confirm cut
+    .result_label = 📋 Result
+    .segment_one = segment
+    .segment_many = segments
+    .button_confirm = ✅ Cut
+    .button_cancel = ❌ Cancel
+    .confirmed = ✅ Cutting started…
+    .cancelled = ❌ Cancelled. Send fresh intervals when ready.
+    .expired = ⏰ Confirmation expired. Send the intervals again.
+    .video_note_truncate_warning = ⚠️ Video notes are capped at 60 sec — your cut will be trimmed to fit.
+
 common =
     .back = 🔙 Back
     .seconds = seconds

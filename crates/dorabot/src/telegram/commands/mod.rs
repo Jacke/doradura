@@ -1,4 +1,5 @@
 pub mod circle;
+pub mod cut_confirm;
 pub mod info;
 pub mod loop_to_audio;
 pub mod subtitles;
@@ -395,7 +396,7 @@ async fn try_intercept_audio_cut_session(
 async fn try_intercept_video_clip_text(
     bot: &Bot,
     msg: &Message,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
     lang: &unic_langid::LanguageIdentifier,
     text: &str,
@@ -443,29 +444,20 @@ async fn try_intercept_video_clip_text(
     };
 
     if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
-        let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
-
-        let bot_clone = bot.clone();
-        let db_pool_clone = db_pool.clone();
-        let shared_storage_clone = shared_storage.clone();
-        let chat_id = msg.chat.id;
-        tokio::spawn(async move {
-            if let Err(e) = process_video_clip(
-                bot_clone,
-                db_pool_clone,
-                shared_storage_clone,
-                chat_id,
-                session,
-                segments,
-                segments_text,
-                speed,
-            )
-            .await
-            {
-                log::warn!("Failed to process video clip: {}", e);
-            }
-        });
-
+        // GH #11: don't run ffmpeg on the user's first guess. Stash the
+        // parsed cut and send a confirmation card with the resulting
+        // duration. The previous direct-spawn path is preserved at the
+        // `cut_confirm:yes` callback in `cut_confirm::handle_callback`.
+        // Note: we keep the persisted session alive until confirm/cancel
+        // so the user can review and back out without losing context.
+        let pending = cut_confirm::PendingCut {
+            session,
+            segments,
+            segments_text,
+            speed,
+            created_at: std::time::Instant::now(),
+        };
+        cut_confirm::send_confirmation(bot, msg.chat.id, Some(msg.id.0), lang, pending).await?;
         Ok(true)
     } else {
         let extra_note = if session.output_kind == OutputKind::VideoNote {

@@ -509,6 +509,23 @@ pub async fn handle_menu_callback(
                     .await?;
                 }
 
+                CallbackKind::CutConfirm => {
+                    use crate::telegram::commands::cut_confirm;
+                    if let Err(e) = cut_confirm::handle_callback(
+                        bot.clone(),
+                        callback_id.clone(),
+                        chat_id,
+                        message_id,
+                        &data,
+                        db_pool.clone(),
+                        shared_storage.clone(),
+                    )
+                    .await
+                    {
+                        log::warn!("cut_confirm callback failed: {:?}", e);
+                    }
+                }
+
                 // Admin/settings kinds are already handled above; reaching here means
                 // the group handler returned false (no match) — silently drop.
                 CallbackKind::Analytics

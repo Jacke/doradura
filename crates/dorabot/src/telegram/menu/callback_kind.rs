@@ -108,6 +108,8 @@ pub(crate) enum CallbackKind {
     Videos,
     #[strum(serialize = "convert")]
     Convert,
+    #[strum(serialize = "cut_confirm")]
+    CutConfirm,
 }
 
 impl CallbackKind {

@@ -71,6 +71,18 @@ menu =
     .quality_preset_alert_master = 🏆 Мастер — почти мастеринговое качество (~99.5 VMAF). 4K кодируется 50–80 мин.
     .quality_preset_alert_lossless = 🎯 Без потерь 1:1 — без перекодирования (Phase 2). Сейчас работает как Мастер.
 
+cut_confirm =
+    .title = ✂️ Подтверди вырезку
+    .result_label = 📋 Результат
+    .segment_one = сегмент
+    .segment_many = сегментов
+    .button_confirm = ✅ Вырезать
+    .button_cancel = ❌ Отмена
+    .confirmed = ✅ Запустил…
+    .cancelled = ❌ Отменено. Пришли новые интервалы когда будешь готов.
+    .expired = ⏰ Время на подтверждение истекло. Пришли интервалы заново.
+    .video_note_truncate_warning = ⚠️ Кружок ограничен 60 сек — твой кусок будет обрезан до этого предела.
+
 common =
     .back = 🔙 Назад
     .seconds = секунд

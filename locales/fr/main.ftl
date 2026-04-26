@@ -71,6 +71,18 @@ menu =
     .quality_preset_alert_master = 🏆 Master — qualité quasi-master (~99.5 VMAF). 4K en 50–80 min.
     .quality_preset_alert_lossless = 🎯 Sans perte 1:1 — pas de réencodage (Phase 2). Se comporte comme Master.
 
+cut_confirm =
+    .title = ✂️ Confirmer la coupe
+    .result_label = 📋 Résultat
+    .segment_one = segment
+    .segment_many = segments
+    .button_confirm = ✅ Couper
+    .button_cancel = ❌ Annuler
+    .confirmed = ✅ Coupe lancée…
+    .cancelled = ❌ Annulé. Envoyez de nouveaux intervalles quand vous voulez.
+    .expired = ⏰ Confirmation expirée. Renvoyez les intervalles.
+    .video_note_truncate_warning = ⚠️ Les vidéo-notes sont limitées à 60 sec — votre coupe sera tronquée.
+
 common =
     .back = 🔙 Retour
     .seconds = secondes

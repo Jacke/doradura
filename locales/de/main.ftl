@@ -71,6 +71,18 @@ menu =
     .quality_preset_alert_master = 🏆 Master — fast Master-Qualität (~99.5 VMAF). 4K in 50–80 Min.
     .quality_preset_alert_lossless = 🎯 Verlustfrei 1:1 — keine Neukodierung (Phase 2). Verhält sich wie Master.
 
+cut_confirm =
+    .title = ✂️ Schnitt bestätigen
+    .result_label = 📋 Ergebnis
+    .segment_one = Segment
+    .segment_many = Segmente
+    .button_confirm = ✅ Schneiden
+    .button_cancel = ❌ Abbrechen
+    .confirmed = ✅ Schnitt gestartet…
+    .cancelled = ❌ Abgebrochen. Sende neue Intervalle, wenn du bereit bist.
+    .expired = ⏰ Bestätigung abgelaufen. Sende die Intervalle erneut.
+    .video_note_truncate_warning = ⚠️ Video-Notizen sind auf 60 Sek. begrenzt — dein Schnitt wird gekürzt.
+
 common =
     .back = 🔙 Zurück
     .seconds = Sekunden
