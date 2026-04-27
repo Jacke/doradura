@@ -821,10 +821,31 @@ pub(crate) async fn process_audio_effects(
         fs_err::tokio::create_dir_all(parent).await?;
     }
 
-    // Apply effects
+    // Apply effects with progress pulses (GH #8). The watcher task edits the
+    // editor message every 3 seconds with elapsed time so the user sees the
+    // bot is alive — audio-effects encodes can run 30-90s on long sources.
+    let (pulse_tx, mut pulse_rx) = tokio::sync::mpsc::unbounded_channel::<std::time::Duration>();
+    let watcher_bot = bot.clone();
+    let watcher_chat = chat_id;
+    let watcher_msg = editor_message_id;
+    let watcher = tokio::spawn(async move {
+        while let Some(elapsed) = pulse_rx.recv().await {
+            let body = format!("🎛️ Applying effects… {}s elapsed", elapsed.as_secs());
+            let _ = watcher_bot.edit_message_text(watcher_chat, watcher_msg, body).await;
+        }
+    });
+
     let settings = session.settings();
-    let result =
-        crate::download::audio_effects::apply_audio_effects(&session.original_file_path, &output_path, &settings).await;
+    let result = crate::download::audio_effects::apply_audio_effects(
+        &session.original_file_path,
+        &output_path,
+        &settings,
+        Some(move |elapsed: std::time::Duration| {
+            let _ = pulse_tx.send(elapsed);
+        }),
+    )
+    .await;
+    let _ = watcher.await;
 
     // Clear processing flag
     shared_storage

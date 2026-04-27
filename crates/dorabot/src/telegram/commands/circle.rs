@@ -1940,9 +1940,37 @@ pub async fn process_audio_cut(
         .arg("0")
         .arg("-y")
         .arg(&output_path);
-    let output = match doracore::core::process::run_with_timeout_raw(&mut audio_cmd, audio_timeout).await {
-        Ok(result) => result.map_err(AppError::from)?,
-        Err(_) => {
+    // GH #8: pulse the user's status message every 3s during audio cut encode
+    // so it doesn't look frozen on long inputs. Same channel-watcher pattern
+    // as process_video_clip.
+    let (audio_pulse_tx, mut audio_pulse_rx) = tokio::sync::mpsc::unbounded_channel::<std::time::Duration>();
+    let audio_watcher_bot = bot.clone();
+    let audio_watcher_chat = chat_id;
+    let audio_watcher_msg = status.id;
+    let audio_watcher = tokio::spawn(async move {
+        while let Some(elapsed) = audio_pulse_rx.recv().await {
+            let body = format!("🎵 Cutting audio… {}s elapsed", elapsed.as_secs());
+            let _ = audio_watcher_bot
+                .edit_message_text(audio_watcher_chat, audio_watcher_msg, body)
+                .await;
+        }
+    });
+
+    let audio_outcome = doracore::core::process::run_with_pulses(
+        &mut audio_cmd,
+        audio_timeout,
+        std::time::Duration::from_secs(3),
+        move |elapsed| {
+            let _ = audio_pulse_tx.send(elapsed);
+        },
+    )
+    .await;
+    let _ = audio_watcher.await;
+
+    let output = match audio_outcome {
+        doracore::core::process::PulseOutcome::Done(o) => o,
+        doracore::core::process::PulseOutcome::Io(e) => return Err(AppError::Io(e)),
+        doracore::core::process::PulseOutcome::Timeout => {
             log::error!("❌ Audio ffmpeg timed out after {} seconds", audio_timeout.as_secs());
             bot.delete_message(chat_id, status.id).await.ok();
             bot.send_message(chat_id, "❌ Audio processing timed out. Try a shorter segment.")

@@ -1,7 +1,6 @@
 use crate::core::error::AppError;
 use crate::storage::SharedStorage;
 use chrono::{DateTime, Duration, Utc};
-use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -290,12 +289,23 @@ fn append_morph_filter(base: String, profile: MorphProfile) -> String {
     }
 }
 
-/// Apply audio effects to a file using FFmpeg
-pub async fn apply_audio_effects(
+/// Apply audio effects to a file using FFmpeg.
+///
+/// `on_pulse` (GH #8): if `Some`, the closure is invoked every 3 seconds with
+/// the elapsed wall-clock duration since ffmpeg started. Telegram-side callers
+/// wire it to `edit_message_text` so the user's status message proves the bot
+/// is still alive on long encodes (audio effects on a 60-min source can run
+/// 30-90s — short enough most users tolerate, long enough to feel frozen).
+/// Pass `None` for non-interactive callers (tests, batch tools).
+pub async fn apply_audio_effects<F>(
     input_path: &str,
     output_path: &str,
     settings: &AudioEffectSettings,
-) -> Result<(), AppError> {
+    on_pulse: Option<F>,
+) -> Result<(), AppError>
+where
+    F: FnMut(std::time::Duration) + Send + 'static,
+{
     let effects_start = std::time::Instant::now();
     // Validate settings
     validate_settings(settings)?;
@@ -325,47 +335,66 @@ pub async fn apply_audio_effects(
         .await
         .map_err(|e| AppError::AudioEffect(AudioEffectError::FFmpegError(e.to_string())))?;
 
-    // Execute FFmpeg in blocking task
-    let input_path = input_path.to_string();
-    let output_path_clone = output_path.to_string();
-    tokio::task::spawn_blocking(move || {
-        let output = Command::new("ffmpeg")
-            .args([
-                "-i",
-                &input_path,
-                "-af",
-                &filter,
-                "-q:a",
-                "0",  // Highest quality VBR
-                "-y", // Overwrite output
-                &output_path_clone,
-            ])
-            .output()
-            .map_err(|e| {
-                AppError::AudioEffect(AudioEffectError::FFmpegError(format!(
-                    "Failed to execute FFmpeg: {}",
-                    e
-                )))
-            })?;
+    // Run ffmpeg with pulse callback (or plain output() when no callback).
+    // We use the async helper rather than spawn_blocking + std::Command because
+    // the pulse mechanism needs tokio's interval + select.
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.args([
+        "-i",
+        input_path,
+        "-af",
+        &filter,
+        "-q:a",
+        "0",  // Highest quality VBR
+        "-y", // Overwrite output
+        output_path,
+    ]);
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+    // 5-minute hard cap on audio-effects encode (filters are cheap; this is
+    // just a sanity backstop in case ffmpeg deadlocks).
+    let timeout = std::time::Duration::from_secs(5 * 60);
+    let outcome = match on_pulse {
+        Some(cb) => {
+            crate::core::process::run_with_pulses(&mut cmd, timeout, std::time::Duration::from_secs(3), cb).await
+        }
+        None => {
+            // No callback: fall through to a plain output() so we don't pay
+            // the interval-tick overhead. Match the same outcome shape.
+            cmd.kill_on_drop(true);
+            match tokio::time::timeout(timeout, cmd.output()).await {
+                Ok(Ok(o)) => crate::core::process::PulseOutcome::Done(o),
+                Ok(Err(e)) => crate::core::process::PulseOutcome::Io(e),
+                Err(_) => crate::core::process::PulseOutcome::Timeout,
+            }
+        }
+    };
+
+    let output = match outcome {
+        crate::core::process::PulseOutcome::Done(o) => o,
+        crate::core::process::PulseOutcome::Io(e) => {
+            crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
             return Err(AppError::AudioEffect(AudioEffectError::FFmpegError(format!(
-                "FFmpeg failed: {}",
-                stderr
+                "Failed to execute FFmpeg: {}",
+                e
             ))));
         }
+        crate::core::process::PulseOutcome::Timeout => {
+            crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
+            return Err(AppError::AudioEffect(AudioEffectError::FFmpegError(format!(
+                "FFmpeg timed out after {}s",
+                timeout.as_secs()
+            ))));
+        }
+    };
 
-        Ok(())
-    })
-    .await
-    .map_err(|e| {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
-        AppError::AudioEffect(AudioEffectError::FFmpegError(format!("Task join error: {}", e)))
-    })?
-    .inspect_err(|_| {
-        crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
-    })?;
+        return Err(AppError::AudioEffect(AudioEffectError::FFmpegError(format!(
+            "FFmpeg failed: {}",
+            stderr
+        ))));
+    }
 
     // Verify output file exists
     if !std::path::Path::new(output_path).exists() {

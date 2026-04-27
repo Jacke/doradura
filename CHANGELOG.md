@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Progress pulses extended to /audio_cut and audio effects** (v0.50.1, more of [#8](https://github.com/Jacke/doradura/issues/8)) — `crates/doracore/src/download/audio_effects.rs` (apply_audio_effects gains `on_pulse: Option<F>` parameter — None for tests/batch, Some for Telegram callers), `crates/dorabot/src/telegram/menu/audio_effects.rs` (process_audio_effects wires the callback), `crates/dorabot/src/telegram/commands/circle.rs` (process_audio_cut wires the callback). Same channel-watcher pattern as v0.50.0. Audio cut shows "🎵 Cutting audio… 12s elapsed", audio effects shows "🎛️ Applying effects… 12s elapsed". 581 lib tests green; clippy clean.
+
+### Added
 - **Progress pulses for /circle, /cut, /gif, /ringtone encodes** (v0.50.0, partial fix for [#8](https://github.com/Jacke/doradura/issues/8)) — `crates/doracore/src/core/process.rs` (new `run_with_pulses` + `PulseOutcome`), `crates/dorabot/src/telegram/commands/circle.rs`. Until now `process_video_clip`'s main ffmpeg encode ran silent for 1-5 minutes — users assumed the bot froze. New helper spawns the subprocess, tokio::select on a 3-second `interval` ticker + `child.wait()`, and fires a closure on each tick with the elapsed wall-clock duration. The call site forwards each tick through an unbounded mpsc channel to a watcher task that `edit_message_text` the user's status message ("🎬 Encoding circle… 12s elapsed"). Pulse-based, not parsed `-progress pipe:1` — gives "still alive" feedback without reshaping every ffmpeg call site's args. Helper is generic and ready for the audio_effects / audio_cut / speed-mod / voice-effects ffmpeg call sites in v0.50.1. 581 lib tests green; clippy clean.
 
 ### Fixed
