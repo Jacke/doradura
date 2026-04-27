@@ -17,6 +17,7 @@ use crate::download::metadata::{
     add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, build_highres_format,
     build_telegram_safe_format, default_pot_token, default_youtube_extractor_args, find_actual_downloaded_file,
     get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
+    probe_video_codec,
 };
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress, VideoQualityPreset};
 use crate::download::ytdlp_errors::{YtDlpErrorType, analyze_ytdlp_error, get_error_message};
@@ -444,7 +445,6 @@ impl YtDlpSource {
         // hardware. Lossless reuses Master recode in v0.46.0; codec-aware
         // remux/skip lands in v0.47.0.
         let preset = request.quality_preset.unwrap_or_default();
-        let recode_opts = highres_recode_opts(preset);
         log::debug!(
             "yt-dlp video format string ({}, highres={}, preset={}): {}",
             container,
@@ -465,14 +465,11 @@ impl YtDlpSource {
                 subprocess_timeout,
                 move |args, proxy_option| {
                     push_video_format_args(args, true, container);
-                    if is_highres {
-                        // Recode AV1/VP9 → H.264 with near-lossless
-                        // medium/CRF 17 settings. See header comment.
-                        args.push("--recode-video");
-                        args.push("mp4");
-                        args.push("--postprocessor-args");
-                        args.push(recode_opts);
-                    }
+                    // Phase 2 (v0.49.0): skip yt-dlp's --recode-video.
+                    // We probe vcodec post-download and dispatch ourselves —
+                    // H.264/VP9 sources get -c copy remux (instant true 1:1),
+                    // AV1 still recodes via libx264 (the only codec Telegram
+                    // doesn't play inline). Saves 5-10 min per non-AV1 video.
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
@@ -489,12 +486,8 @@ impl YtDlpSource {
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
                         // Tier 2 (cookies + PO token).
                         push_video_format_args(args, true, container);
-                        if is_highres {
-                            args.push("--recode-video");
-                            args.push("mp4");
-                            args.push("--postprocessor-args");
-                            args.push(recode_opts);
-                        }
+                        // Phase 2: see Tier 1 comment — yt-dlp produces mkv,
+                        // we transmux-or-recode after download.
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
@@ -510,12 +503,8 @@ impl YtDlpSource {
                     args.push("--fixup");
                     args.push("never");
                     push_video_format_args(args, false, container);
-                    if is_highres {
-                        args.push("--recode-video");
-                        args.push("mp4");
-                        args.push("--postprocessor-args");
-                        args.push(recode_opts);
-                    }
+                    // Phase 2: see Tier 1 comment — yt-dlp produces mkv,
+                    // we transmux-or-recode after download.
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
                     args.push(default_youtube_extractor_args());
@@ -531,16 +520,36 @@ impl YtDlpSource {
             .await
             .map_err(|e| AppError::Download(DownloadError::YtDlp(format!("Task join error: {}", e))))??;
 
-        let actual_path = find_actual_downloaded_file(&request.output_path)?;
+        // Phase 2 codec-aware dispatch (v0.49.0): for highres yt-dlp produces
+        // `.mkv` (per `--merge-output-format mkv`, no `--recode-video`). We
+        // probe the source vcodec and either remux (`-c copy`, instant true
+        // 1:1) for H.264/VP9 or recode via libx264 for AV1. Saves 5-10 min
+        // per non-AV1 video — and most of YouTube's 1440p+ catalogue still
+        // ships VP9 alongside AV1.
+        let actual_path = if is_highres {
+            let mkv_expected = swap_extension(&request.output_path, "mkv");
+            let mkv_actual = find_actual_downloaded_file(&mkv_expected)?;
+            let mp4_target = swap_extension(&mkv_actual, "mp4");
+            let codec = probe_video_codec(&mkv_actual).await.unwrap_or_default();
+            log::info!(
+                "Phase 2 dispatch: vcodec={:?} preset={} mkv={} -> mp4={}",
+                codec,
+                preset,
+                mkv_actual,
+                mp4_target,
+            );
+            transmux_or_recode_to_mp4(&mkv_actual, &mp4_target, &codec, preset).await?;
+            // Cleanup the mkv intermediate — pipeline only needs the mp4.
+            let _ = fs_err::remove_file(&mkv_actual);
+            mp4_target
+        } else {
+            find_actual_downloaded_file(&request.output_path)?
+        };
 
         let file_size = fs_err::metadata(&actual_path).map(|m| m.len()).unwrap_or(0);
 
         let duration = probe_duration_seconds(&actual_path).await;
 
-        // No recode — yt-dlp muxes whatever codec YouTube serves
-        // (typically AV1 for 1440p+, H.264 for ≤1080p) into mp4.
-        // mime stays "video/mp4" — Telegram routes by container, not
-        // by inner codec.
         let mime = "video/mp4";
 
         Ok(DownloadOutput {
@@ -551,6 +560,76 @@ impl YtDlpSource {
             additional_files: None,
         })
     }
+}
+
+/// Replace the file extension on a path string. `swap_extension("a/b.mp4", "mkv")` → `"a/b.mkv"`.
+/// If the path has no extension, appends one.
+fn swap_extension(path: &str, new_ext: &str) -> String {
+    let p = std::path::Path::new(path);
+    p.with_extension(new_ext).to_string_lossy().into_owned()
+}
+
+/// Phase 2 dispatch: H.264/VP9 sources stream-copy into mp4 (instant true 1:1);
+/// AV1 (and unknown codecs) get the full libx264 recode per the user's preset.
+/// VP9-in-MP4 plays inline on Telegram Desktop 4.9+, iOS 16+, Android since 2022 —
+/// the rare older clients fall back to "Open with…" but that's an acceptable
+/// trade for a 30-second remux vs a 5-10 minute encode.
+async fn transmux_or_recode_to_mp4(
+    input_mkv: &str,
+    output_mp4: &str,
+    vcodec: &str,
+    preset: VideoQualityPreset,
+) -> Result<(), AppError> {
+    use tokio::process::Command;
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        input_mkv,
+        "-map",
+        "0",
+        "-dn",
+        "-ignore_unknown",
+    ]);
+
+    let is_remux = matches!(vcodec, "h264" | "vp9");
+    if is_remux {
+        // Instant true 1:1 — stream copy. Audio also copied (yt-dlp picked
+        // AAC where available; if it's Opus, mp4 still accepts it on modern
+        // ffmpeg via `-c:a copy` — Telegram accepts both).
+        cmd.args(["-c", "copy", "-movflags", "+faststart"]);
+    } else {
+        // AV1 or unknown: full recode. Reuse the per-preset libx264 args
+        // string and split off the `VideoConvertor:` prefix that yt-dlp
+        // expected; the remaining tokens are valid ffmpeg args.
+        let raw = highres_recode_opts(preset);
+        let stripped = raw.strip_prefix("VideoConvertor:").unwrap_or(raw);
+        for token in stripped.split_whitespace() {
+            cmd.arg(token);
+        }
+    }
+    cmd.arg(output_mp4);
+
+    log::info!(
+        "ffmpeg dispatch ({}): {:?}",
+        if is_remux { "remux -c copy" } else { "recode libx264" },
+        cmd.as_std()
+    );
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| AppError::Download(DownloadError::Other(format!("ffmpeg spawn failed: {}", e))))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Download(DownloadError::Other(format!(
+            "ffmpeg dispatch failed (vcodec={}): {}",
+            vcodec, stderr
+        ))));
+    }
+    Ok(())
 }
 
 /// Check if a URL string belongs to Instagram.

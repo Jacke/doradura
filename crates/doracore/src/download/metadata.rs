@@ -515,6 +515,34 @@ pub async fn probe_duration_seconds(path: &str) -> Option<u32> {
     Some(secs.round() as u32)
 }
 
+/// Probe the video stream's codec name (`h264`, `vp9`, `av1`, `hevc`, …).
+///
+/// Used by the post-download dispatch in `ytdlp.rs` (Phase 2 codec-aware
+/// skip): if the source codec is already H.264 or VP9, we can `-c copy`
+/// straight into mp4 (instant, true 1:1) instead of running x264 for
+/// 5-10 minutes. Only AV1 sources actually need the full recode.
+///
+/// Returns `None` if ffprobe fails or the file has no video stream.
+pub async fn probe_video_codec(path: &str) -> Option<String> {
+    use crate::core::process::{FFPROBE_TIMEOUT, run_with_timeout};
+
+    let mut cmd = TokioCommand::new("ffprobe");
+    cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]);
+    let output = run_with_timeout(&mut cmd, FFPROBE_TIMEOUT).await.ok()?;
+    let codec = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if codec.is_empty() { None } else { Some(codec) }
+}
+
 /// Returns `true` if the media file at `path` contains both a video and an audio stream.
 ///
 /// Uses `tokio::process::Command` with a 30-second timeout per probe.
