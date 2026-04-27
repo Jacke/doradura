@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Progress pulses for /circle, /cut, /gif, /ringtone encodes** (v0.50.0, partial fix for [#8](https://github.com/Jacke/doradura/issues/8)) — `crates/doracore/src/core/process.rs` (new `run_with_pulses` + `PulseOutcome`), `crates/dorabot/src/telegram/commands/circle.rs`. Until now `process_video_clip`'s main ffmpeg encode ran silent for 1-5 minutes — users assumed the bot froze. New helper spawns the subprocess, tokio::select on a 3-second `interval` ticker + `child.wait()`, and fires a closure on each tick with the elapsed wall-clock duration. The call site forwards each tick through an unbounded mpsc channel to a watcher task that `edit_message_text` the user's status message ("🎬 Encoding circle… 12s elapsed"). Pulse-based, not parsed `-progress pipe:1` — gives "still alive" feedback without reshaping every ffmpeg call site's args. Helper is generic and ready for the audio_effects / audio_cut / speed-mod / voice-effects ffmpeg call sites in v0.50.1. 581 lib tests green; clippy clean.
+
 ### Fixed
 - **Kill orphan ffmpeg/yt-dlp on bot startup — fix multi-ffmpeg-at-once after restart** (v0.49.2) — `crates/dorabot/src/{background_tasks.rs,startup.rs}`. Yesterday: bot restart during a Master encode left the prior generation's ffmpeg reparented to pid 1, still running. The new bot started fresh — including a fresh `HIGHRES_DOWNLOAD_SEMAPHORE` LazyLock — and happily took the next high-res task. Two ffmpegs in parallel meant 9+ GB peak RAM and 3× CPU contention from cache thrashing. New `kill_orphan_media_processes` runs once at startup, `pkill -9 -f ffmpeg` and `pkill -9 -f yt-dlp`, before the queue processor takes its first task. Best-effort — pkill returning 1 (no matches) is the happy path. The semaphore staying process-local stays correct for `numReplicas: 1` (which `railway.json` enforces). 581 lib tests green; clippy clean.
 

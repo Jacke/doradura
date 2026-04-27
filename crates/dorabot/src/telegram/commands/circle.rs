@@ -1327,9 +1327,50 @@ pub async fn process_video_clip(
         std::time::Duration::from_secs(10 * 60)
     };
     cmd.arg("-y").arg(&output_path);
-    let output = match doracore::core::process::run_with_timeout_raw(&mut cmd, ffmpeg_timeout).await {
-        Ok(result) => result.map_err(AppError::from)?,
-        Err(_) => {
+
+    // GH #8: surface progress on long encodes. /circle on a 4K source can run
+    // 5+ minutes silently, which feels like the bot froze. We pulse every 3s
+    // with elapsed seconds; a watcher task edits the user's status message so
+    // they see motion. Strict percent isn't worth the ffmpeg-args reshape —
+    // "still alive" is the actual UX gap. Channel-based decoupling so the
+    // sync pulse callback doesn't need to await Telegram.
+    let (pulse_tx, mut pulse_rx) = tokio::sync::mpsc::unbounded_channel::<std::time::Duration>();
+    let watcher_bot = bot.clone();
+    let watcher_chat = chat_id;
+    let watcher_msg = status.id;
+    let watcher_label = if is_video_note {
+        "🎬 Encoding circle"
+    } else if is_iphone_ringtone || is_android_ringtone {
+        "🔔 Building ringtone"
+    } else if is_gif {
+        "🖼️ Encoding GIF"
+    } else {
+        "✂️ Encoding cut"
+    };
+    let watcher = tokio::spawn(async move {
+        while let Some(elapsed) = pulse_rx.recv().await {
+            let secs = elapsed.as_secs();
+            let body = format!("{}… {}s elapsed", watcher_label, secs);
+            let _ = watcher_bot.edit_message_text(watcher_chat, watcher_msg, body).await;
+        }
+    });
+
+    let pulse_outcome = doracore::core::process::run_with_pulses(
+        &mut cmd,
+        ffmpeg_timeout,
+        std::time::Duration::from_secs(3),
+        move |elapsed| {
+            let _ = pulse_tx.send(elapsed);
+        },
+    )
+    .await;
+    // Drop the channel sender so the watcher task can drain and exit.
+    let _ = watcher.await;
+
+    let output = match pulse_outcome {
+        doracore::core::process::PulseOutcome::Done(o) => o,
+        doracore::core::process::PulseOutcome::Io(e) => return Err(AppError::Io(e)),
+        doracore::core::process::PulseOutcome::Timeout => {
             log::error!("❌ ffmpeg timed out after {} seconds", ffmpeg_timeout.as_secs());
             bot.delete_message(chat_id, status.id).await.ok();
             bot.send_message(
