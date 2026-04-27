@@ -236,8 +236,13 @@ pub mod queue {
 pub mod download {
     use super::Duration;
 
-    /// Delay before cleaning up downloaded files (in seconds)
-    pub const FILE_CLEANUP_DELAY_SECS: u64 = 600; // 10 minutes
+    /// Delay before cleaning up downloaded files (in seconds).
+    /// Lowered v0.49.1 from 600 → 120 — at Master quality, 1440p outputs
+    /// run 500 MB-1.8 GB and a couple users an hour was filling /data
+    /// faster than the cleanup cron's 6 h cycle. 2 min is enough headroom
+    /// for Telegram retry-after rate-limits and any post-send share-page
+    /// indexing that might want to read the file.
+    pub const FILE_CLEANUP_DELAY_SECS: u64 = 120; // 2 minutes
 
     /// Timeout for yt-dlp commands (in seconds)
     pub const YTDLP_TIMEOUT_SECS: u64 = 240; // 4 minutes, to avoid timeouts on slow metadata fetches

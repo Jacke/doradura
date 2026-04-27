@@ -25,7 +25,14 @@ const LOCK_DOWNLOADS_CLEANUP: i64 = 1106;
 /// Default retention period for files in the downloads folder (in days).
 /// Override with the `DOWNLOADS_RETENTION_DAYS` env var. Files older than
 /// this are deleted by `spawn_downloads_cleanup` every 6 hours.
-const DOWNLOADS_RETENTION_DAYS_DEFAULT: u64 = 7;
+/// Default retention window for `DOWNLOAD_FOLDER` files. Lowered v0.49.1
+/// from 7 → 1 day — at Master quality, 1440p mp4 outputs are 500 MB-1.8 GB,
+/// and a 18 GB Railway volume fills inside a day at normal usage. The
+/// post-send 2-min cleanup catches the happy path; this nightly sweep
+/// catches everything that fell through (bot restart mid-pipeline,
+/// orphaned recodes from previous container generations).
+/// Override with `DOWNLOADS_RETENTION_DAYS` env var.
+const DOWNLOADS_RETENTION_DAYS_DEFAULT: u64 = 1;
 
 async fn try_acquire_pg_singleton_lock(
     shared_storage: &Arc<SharedStorage>,

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Disk hygiene: post-send cleanup 10 min → 2 min, retention default 7 day → 1 day** (v0.49.1) — `crates/doracore/src/core/config.rs`, `crates/dorabot/src/background_tasks.rs`. Yesterday's incident: 6 GB of orphaned mp4/mkv files lingering in `/data/downloads/` from previous days, taking the volume to 45% used despite a 6-hour cleanup cron and a 7-day retention. Two reasons: (1) post-send cleanup task `tokio::spawn`'d with a 10-minute delay was getting lost on bot restarts (multi-instance + orphan ffmpegs from version transitions), and (2) at Master quality 1440p+ outputs are 500 MB-1.8 GB so a 7-day retention is multi-tens-of-GB at normal usage which doesn't fit in 18 GB. New defaults: 2-min post-send cleanup (still enough for Telegram retry-after / share-page indexing windows), 1-day retention (overridable via `DOWNLOADS_RETENTION_DAYS`). The interval-based startup cleanup already runs immediately on first tick — that catches anything left behind by the previous generation. 581 lib tests green; clippy clean.
+
 ### Added
 - **Phase 2: codec-aware skip — H.264/VP9 sources stream-copy instead of re-encode** (v0.49.0) — `crates/doracore/src/download/metadata.rs` (new `probe_video_codec`), `crates/doracore/src/download/source/ytdlp.rs` (drop `--recode-video` from yt-dlp args, add post-download `transmux_or_recode_to_mp4` dispatch). Until now every 1440p+ download went through the full libx264 recode regardless of the source codec — even when YouTube served VP9, which Telegram plays inline natively (Desktop 4.9+, iOS 16+, Android since 2022). New flow: yt-dlp downloads into mkv (no `--recode-video`), then we ffprobe the video stream and dispatch:
   - **H.264 source** → `ffmpeg -c copy` remux into mp4. Instant true byte-1:1 (~30s for the whole pipeline).
