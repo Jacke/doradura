@@ -146,6 +146,14 @@ pub struct DownloadRequest {
     pub concurrent_fragments: u8,
     /// Encoding tier for 1440p+ video downloads. None for audio / sub-1080p video.
     pub quality_preset: Option<VideoQualityPreset>,
+    /// User-cancellation flag (GH #9). When the bot's pipeline registers a
+    /// cancel button on the progress message, it shares this flag with the
+    /// download. The yt-dlp subprocess polling loop checks the flag every
+    /// 200 ms; once set, the child is killed and the download returns a
+    /// `Cancelled` error instead of completing.
+    ///
+    /// `None` for non-cancellable contexts (queued background tasks, tests).
+    pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// An additional media file from a multi-item post (e.g., Instagram carousel).
@@ -400,6 +408,7 @@ mod tests {
             carousel_mask: None,
             concurrent_fragments: 1,
             quality_preset: None,
+            cancel_flag: None,
         };
 
         let (tx, mut rx) = mpsc::unbounded_channel();

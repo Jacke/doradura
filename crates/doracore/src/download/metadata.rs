@@ -898,6 +898,7 @@ pub async fn get_metadata_from_ytdlp(
             YtDlpErrorType::FragmentError => "fragment_error",
             YtDlpErrorType::PostprocessingError => "postprocessing_error",
             YtDlpErrorType::DiskSpaceError => "disk_space_error",
+            YtDlpErrorType::Cancelled => "cancelled",
             YtDlpErrorType::Unknown => "ytdlp_unknown",
         };
         let operation = format!("metadata:{}", error_category);

@@ -494,6 +494,7 @@ mod tests {
             carousel_mask: None,
             concurrent_fragments: 1,
             quality_preset: None,
+            cancel_flag: None,
         };
 
         let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();

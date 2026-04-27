@@ -526,6 +526,24 @@ pub async fn handle_menu_callback(
                     }
                 }
 
+                CallbackKind::DlCancel => {
+                    let signalled = crate::download::cancel_registry::cancel(chat_id.0);
+                    let answer_text = if signalled {
+                        i18n::t(&lang, "download_cancel.signalled")
+                    } else {
+                        i18n::t(&lang, "download_cancel.not_active")
+                    };
+                    let _ = bot.answer_callback_query(callback_id.clone()).text(answer_text).await;
+                    // Edit out the inline keyboard so the user can't double-click.
+                    if signalled {
+                        use teloxide::types::InlineKeyboardMarkup;
+                        let _ = bot
+                            .edit_message_reply_markup(chat_id, message_id)
+                            .reply_markup(InlineKeyboardMarkup::new(Vec::<Vec<_>>::new()))
+                            .await;
+                    }
+                }
+
                 // Admin/settings kinds are already handled above; reaching here means
                 // the group handler returned false (no match) — silently drop.
                 CallbackKind::Analytics

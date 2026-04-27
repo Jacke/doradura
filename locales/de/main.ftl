@@ -83,6 +83,11 @@ cut_confirm =
     .expired = ⏰ Bestätigung abgelaufen. Sende die Intervalle erneut.
     .video_note_truncate_warning = ⚠️ Video-Notizen sind auf 60 Sek. begrenzt — dein Schnitt wird gekürzt.
 
+download_cancel =
+    .button = ❌ Abbrechen
+    .signalled = ❌ Abbrechen… Download stoppt in wenigen Sekunden.
+    .not_active = ℹ️ Kein aktiver Download zum Abbrechen.
+
 common =
     .back = 🔙 Zurück
     .seconds = Sekunden

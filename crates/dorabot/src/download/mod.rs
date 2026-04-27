@@ -20,6 +20,7 @@ pub use doracore::download::builder; // DownloadRequest builder (shared with dor
 
 // ── Bot-specific modules ──────────────────────────────────────────────────────
 pub mod audio; // Telegram audio download + send pipeline
+pub mod cancel_registry; // GH #9: per-user cancel flags for active downloads
 pub mod context; // Shared DownloadContext for download entry points
 pub mod downloader; // Full download logic with Telegram upload
 pub use doracore::download::metadata; // Metadata fetching (shared with doracore)

@@ -39,34 +39,43 @@ use url::Url;
 /// remux/skip is staged for v0.47.0.
 ///
 /// All variants share `-tune film -pix_fmt yuv420p -profile:v high -level 5.1
-/// -movflags +faststart` for Telegram inline-playback compatibility.
+/// -movflags +faststart -threads 24` for Telegram inline-playback compatibility.
 ///
-/// **Why `-level 5.1` instead of `4.2`** (changed in v0.46.1): Level 4.2
-/// caps at *either* 4K@30 *or* 1080p@60, with a 50 Mbps bitrate ceiling.
-/// This path only runs for 1440p / 2160p / 4320p sources, where:
+/// **Why `-threads 24`** (added v0.48.0): without an explicit cap, ffmpeg
+/// spawns ~150-160 threads (NCPUs * 1.5) for x264 frame/slice work. On a
+/// shared Railway host with 48 visible cores, those threads thrash the
+/// CPU caches and spend most of their time in kernel sleep — measured
+/// 9:1 ratio of nonvoluntary-to-voluntary context switches. Capping at
+/// 24 (matching our cgroup budget) eliminates the thrashing without
+/// sacrificing parallelism we'd actually use.
 ///
-/// * **4K@60** sources can't fit in 4.2 — x264 either drops every other
-///   frame (output stutters) or quietly overrides our `-level` flag
-///   (header lies about the level it was encoded at). YouTube ships 4K@60
-///   for almost all modern music videos, gaming and sports content.
-/// * **CRF 12 + veryslow** on a 4K source genuinely wants 60-100 Mbps on
-///   complex scenes. The 50 Mbps cap of 4.2 forces x264 into a worse
-///   rate-distortion trade-off, costing us VMAF for no compatibility win.
+/// **Why `slow` preset for Master** (changed v0.48.0, was `veryslow`):
+/// `veryslow` is the slowest x264 preset (after `placebo`). On 1440p+ it
+/// runs at ~0.3-0.5× real-time — 1440p = 20-30 min wall-clock, 4K =
+/// 50-80 min. Even on Railway Pro with 24 cores, x264 frame-level
+/// dependencies prevent meaningful parallelism beyond ~6-8 threads of
+/// real work. Worse, `veryslow + CRF 12` produces output ~4× the size
+/// of the AV1 source (~50 Mbps vs ~12 Mbps). That extra 30 minutes of
+/// encoding plus 5-minute Telegram upload of a 1.5 GB file gets us
+/// ~0.5 VMAF over `slow + CRF 14` — perceptually indistinguishable.
+/// `slow` keeps Master at ~99 VMAF (visually identical to source) at
+/// 3× the speed: 1440p in ~5-7 min, 4K in ~15-25 min.
 ///
-/// Level 5.1 (240 Mbps cap, up to 4K@60 / 8K@30) is supported by every
-/// H.264 decoder shipped since iPhone 6s (2015), all Smart TVs from the
-/// last decade, and every desktop browser. It is a strict superset of
-/// 4.2 — any device that plays 4.2 plays 5.1.
+/// **Why `-level 5.1` instead of `4.2`** (v0.46.1): Level 4.2 caps at
+/// *either* 4K@30 *or* 1080p@60 with a 50 Mbps ceiling. 4K@60 sources
+/// (most modern music videos) can't fit, and CRF-driven bitrate is
+/// throttled. Level 5.1 (240 Mbps, 4K@60 / 8K@30) is supported by every
+/// H.264 decoder shipped since iPhone 6s (2015) — strict superset of 4.2.
 fn highres_recode_opts(preset: VideoQualityPreset) -> &'static str {
     match preset {
         VideoQualityPreset::Balanced => {
-            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 192k -movflags +faststart"
+            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 192k -movflags +faststart -threads 24"
         }
         VideoQualityPreset::Transparent => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart"
+            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 15 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
         }
         VideoQualityPreset::Master | VideoQualityPreset::Lossless => {
-            "VideoConvertor:-c:v libx264 -preset veryslow -tune film -crf 12 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart"
+            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
         }
     }
 }
@@ -264,6 +273,7 @@ impl YtDlpSource {
         let download_path = request.output_path.clone();
         let bitrate_str = request.audio_bitrate.clone().unwrap_or_else(|| "320k".to_string());
         let time_range = request.time_range.clone();
+        let cancel_flag = request.cancel_flag.clone();
 
         // Experimental features graduated to main workflow
         if request.concurrent_fragments > 1 {
@@ -328,6 +338,7 @@ impl YtDlpSource {
                 },
                 &postprocessor_args,
                 time_range.as_ref(),
+                cancel_flag,
             )
         });
 
@@ -359,6 +370,7 @@ impl YtDlpSource {
         let url_str = request.url.to_string();
         let download_path = request.output_path.clone();
         let time_range = request.time_range.clone();
+        let cancel_flag = request.cancel_flag.clone();
 
         // Experimental features graduated to main workflow
         if request.concurrent_fragments > 1 {
@@ -507,6 +519,7 @@ impl YtDlpSource {
                 },
                 &format_arg,
                 time_range.as_ref(),
+                cancel_flag,
             )
         });
 
@@ -555,6 +568,7 @@ enum Tier2Outcome {
 ///
 /// Builds args via `tier1_args_fn`, runs yt-dlp with live progress, returns
 /// `Ok(())` on success or `Err((error_type, stderr))` on failure.
+#[allow(clippy::too_many_arguments)]
 fn try_tier1<F>(
     ytdl_bin: &str,
     download_path: &str,
@@ -566,6 +580,7 @@ fn try_tier1<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier1_args_fn: &F,
     subprocess_timeout: Duration,
+    cancel_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), (YtDlpErrorType, String)>
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -598,7 +613,7 @@ where
         ytdl_bin,
         args.join(" ")
     );
-    let result = run_ytdlp_with_progress(ytdl_bin, &args, progress_tx, subprocess_timeout);
+    let result = run_ytdlp_with_progress(ytdl_bin, &args, progress_tx, subprocess_timeout, cancel_flag);
 
     if let Some(path) = info_json_path {
         let _ = fs_err::remove_file(&path);
@@ -613,6 +628,7 @@ where
 /// - `Success` — download completed
 /// - `CookieRefreshed` — cookies were refreshed, caller should retry from Tier 1
 /// - `Failed` — Tier 2 failed, continue to next tier/proxy
+#[allow(clippy::too_many_arguments)]
 fn try_tier2<F>(
     ytdl_bin: &str,
     download_path: &str,
@@ -625,6 +641,7 @@ fn try_tier2<F>(
     tier2_args_fn: &F,
     runtime_handle: &tokio::runtime::Handle,
     subprocess_timeout: Duration,
+    cancel_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Tier2Outcome
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -650,7 +667,7 @@ where
         media_type
     );
 
-    match run_ytdlp_with_progress(ytdl_bin, &cookies_args, progress_tx, subprocess_timeout) {
+    match run_ytdlp_with_progress(ytdl_bin, &cookies_args, progress_tx, subprocess_timeout, cancel_flag) {
         Ok(()) => {
             log::info!("✅ [WITH_COOKIES] {} download succeeded!", media_type);
             return Tier2Outcome::Success;
@@ -698,6 +715,7 @@ where
 /// Try Tier 3 (--fixup never) download with progress reporting.
 ///
 /// Returns `true` if the download succeeded.
+#[allow(clippy::too_many_arguments)]
 fn try_tier3<F>(
     ytdl_bin: &str,
     download_path: &str,
@@ -709,6 +727,7 @@ fn try_tier3<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier3_args_fn: &F,
     subprocess_timeout: Duration,
+    cancel_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> bool
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -734,7 +753,7 @@ where
         media_type
     );
 
-    match run_ytdlp_with_progress(ytdl_bin, &fixup_args, progress_tx, subprocess_timeout) {
+    match run_ytdlp_with_progress(ytdl_bin, &fixup_args, progress_tx, subprocess_timeout, cancel_flag) {
         Ok(()) => {
             log::info!("✅ [FIXUP_NEVER] {} download succeeded!", media_type);
             true
@@ -755,6 +774,7 @@ where
 ///
 /// The `tier1_args_fn`, `tier2_args_fn`, and `tier3_args_fn` closures add
 /// format-specific arguments (audio vs video) for each tier.
+#[allow(clippy::too_many_arguments)]
 fn download_with_fallback_chain<F1, F2, F3>(
     ytdl_bin: &str,
     url_str: &str,
@@ -767,6 +787,7 @@ fn download_with_fallback_chain<F1, F2, F3>(
     tier3_args_fn: F3,
     extra_arg: &str,
     time_range: Option<&(String, String)>,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<Option<u32>, AppError>
 where
     F1: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -824,6 +845,7 @@ where
             progress_tx,
             &tier1_args_fn,
             subprocess_timeout,
+            cancel_flag.as_ref(),
         );
         log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
 
@@ -851,6 +873,15 @@ where
                     error_type,
                     &stderr_text
                 );
+
+                // GH #9: user cancelled — bail out of the entire proxy/tier
+                // fallback chain. No retries, no escalation; the user clicked
+                // a button and that's the final word.
+                if error_type == YtDlpErrorType::Cancelled {
+                    return Err(AppError::Download(DownloadError::YtDlp(
+                        "Cancelled by user".to_string(),
+                    )));
+                }
 
                 // Geo-block: cookies/PO-token can't unlock a country restriction,
                 // but a different proxy might (e.g. preview succeeded via [Direct]
@@ -906,6 +937,7 @@ where
                         &tier2_args_fn,
                         &runtime_handle,
                         subprocess_timeout,
+                        cancel_flag.as_ref(),
                     );
                     log::info!("⏱️ [TIER2] done in {:.1}s", tier2_start.elapsed().as_secs_f64());
                     match tier2_result {
@@ -940,6 +972,7 @@ where
                         progress_tx,
                         &tier3_args_fn,
                         subprocess_timeout,
+                        cancel_flag.as_ref(),
                     );
                     crate::core::metrics::record_tier_attempt("tier3_fixup_never", tier3_ok);
                     if tier3_ok {
@@ -959,6 +992,7 @@ where
                     YtDlpErrorType::FragmentError => "fragment_error",
                     YtDlpErrorType::PostprocessingError => "postprocessing_error",
                     YtDlpErrorType::DiskSpaceError => "disk_space_error",
+                    YtDlpErrorType::Cancelled => "cancelled",
                     YtDlpErrorType::Unknown => "ytdlp_unknown",
                 };
                 crate::core::metrics::record_error("download", &format!("{}_download:{}", media_type, error_category));
@@ -1200,11 +1234,16 @@ mod common_args_tests {
 /// Run yt-dlp with stdout/stderr capture and progress reporting.
 ///
 /// Returns Ok(()) on success, or Err((YtDlpErrorType, stderr_text)) on failure.
+///
+/// `cancel_flag` (GH #9): if set to `true` from another task, the polling
+/// loop kills the child process and returns `YtDlpErrorType::Cancelled`.
+/// Pass `None` for non-cancellable contexts (queued background tasks, tests).
 fn run_ytdlp_with_progress(
     ytdl_bin: &str,
     args: &[&str],
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     subprocess_timeout: Duration,
+    cancel_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), (YtDlpErrorType, String)> {
     let ytdlp_start = std::time::Instant::now();
     let child_result = Command::new(ytdl_bin)
@@ -1283,6 +1322,21 @@ fn run_ytdlp_with_progress(
         match child.try_wait() {
             Ok(Some(s)) => break s,
             Ok(None) => {
+                // GH #9: user-initiated cancellation. Polled here (≤200 ms
+                // latency) instead of relying on `spawn_blocking` abort —
+                // blocking tasks aren't actually cancelled by tokio's
+                // abort, so we have to physically kill the subprocess.
+                if let Some(flag) = cancel_flag
+                    && flag.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    log::info!("yt-dlp cancelled by user, killing subprocess");
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    crate::core::metrics::YTDLP_EXECUTION_DURATION_SECONDS
+                        .with_label_values(&["download"])
+                        .observe(ytdlp_start.elapsed().as_secs_f64());
+                    return Err((YtDlpErrorType::Cancelled, "Cancelled by user".to_string()));
+                }
                 if std::time::Instant::now() >= deadline {
                     log::error!("yt-dlp process timed out after {}s, killing", ytdlp_timeout.as_secs());
                     let _ = child.kill();

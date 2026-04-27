@@ -7,6 +7,8 @@ use crate::core::config;
 use crate::core::utils::escape_filename;
 use crate::download::downloader::generate_file_name_with_ext;
 use crate::download::source::{DownloadRequest, VideoQualityPreset};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use url::Url;
 
 /// Builder for constructing download requests.
@@ -31,6 +33,7 @@ pub struct DownloadConfigBuilder {
     carousel_mask: Option<u32>,
     concurrent_fragments: u8,
     quality_preset: Option<VideoQualityPreset>,
+    cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 impl DownloadConfigBuilder {
@@ -47,6 +50,7 @@ impl DownloadConfigBuilder {
             carousel_mask: None,
             concurrent_fragments: 1,
             quality_preset: None,
+            cancel_flag: None,
         }
     }
 
@@ -106,6 +110,14 @@ impl DownloadConfigBuilder {
         self
     }
 
+    /// Attach a user-cancellation flag (GH #9). Setting the flag to `true`
+    /// from another task asks the running download to terminate as soon
+    /// as it next polls (≤200 ms in practice).
+    pub fn cancel_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel_flag = Some(flag);
+        self
+    }
+
     /// Build the `DownloadRequest`, generating the output path from title and artist.
     ///
     /// Adds a timestamp to the filename to prevent race conditions with concurrent downloads.
@@ -127,6 +139,7 @@ impl DownloadConfigBuilder {
             carousel_mask: self.carousel_mask,
             concurrent_fragments: self.concurrent_fragments,
             quality_preset: self.quality_preset,
+            cancel_flag: self.cancel_flag,
         }
     }
 

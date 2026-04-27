@@ -372,7 +372,21 @@
       "Bash(awk -F: '{print $1}')",
       "Bash(awk *)"
     ],
-    "deny": [],
-    "ask": []
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push * --force)",
+      "Bash(git push -f *)",
+      "Bash(* --no-verify *)",
+      "Bash(git reset --hard*)"
+    ],
+    "ask": [
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git -C * commit*)",
+      "Bash(git -C * push*)",
+      "Bash(git rebase*)",
+      "Bash(git filter-repo*)",
+      "Bash(git filter-branch*)"
+    ]
   }
 }

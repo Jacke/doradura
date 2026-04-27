@@ -34,6 +34,19 @@ use teloxide::types::Message;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::Url;
 
+/// RAII guard that unregisters a cancel flag on drop. Used by
+/// `download_phase` so the registry stays clean across all exit paths
+/// (success, error, panic) without sprinkling `unregister` calls.
+struct CancelGuard {
+    chat_id: i64,
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        crate::download::cancel_registry::unregister(self.chat_id);
+    }
+}
+
 /// Global cap on concurrent high-res (2K/4K/8K) video downloads.
 ///
 /// A single 8K job holds a worker for 30+ minutes and consumes 20+ GB of disk
@@ -554,6 +567,15 @@ pub async fn download_phase(
             builder = builder.quality_preset(preset);
         }
     }
+
+    // GH #9: register a cancel flag so the user can interrupt long downloads
+    // (Master 4K = 50-80 min). The flag is shared with the yt-dlp polling
+    // loop via the request; setting it from the cancel callback (≤200 ms
+    // poll latency) physically kills the subprocess. The `_cancel_guard`
+    // RAII handle unregisters the flag on every exit path of this fn.
+    let cancel_flag = crate::download::cancel_registry::register(chat_id.0);
+    let _cancel_guard = CancelGuard { chat_id: chat_id.0 };
+    builder = builder.cancel_flag(Arc::clone(&cancel_flag));
 
     let request = builder.build(&title, &artist);
 
@@ -1386,6 +1408,7 @@ pub async fn handle_pipeline_error(
             ytdlp_errors::YtDlpErrorType::FragmentError => ("📦", "FRAGMENT ERROR"),
             ytdlp_errors::YtDlpErrorType::PostprocessingError => ("🎬", "FFMPEG / POSTPROCESS"),
             ytdlp_errors::YtDlpErrorType::DiskSpaceError => ("💾", "DISK FULL"),
+            ytdlp_errors::YtDlpErrorType::Cancelled => ("🚫", "CANCELLED"),
             ytdlp_errors::YtDlpErrorType::Unknown => ("❓", "UNKNOWN"),
         };
         let truncated_error = if error_str.chars().count() > 300 {

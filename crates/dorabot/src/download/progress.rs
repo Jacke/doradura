@@ -55,8 +55,29 @@ impl ProgressMessage {
         }
     }
 
+    /// Build the inline keyboard attached to in-progress messages. Currently
+    /// just a single "❌ Cancel" button (GH #9). Returns `None` for terminal
+    /// statuses (success / error / cancellation) so the keyboard is removed
+    /// at the end of the lifecycle.
+    fn keyboard_for(&self, status: &DownloadStatus) -> Option<teloxide::types::InlineKeyboardMarkup> {
+        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+        let show = matches!(
+            status,
+            DownloadStatus::Starting { .. } | DownloadStatus::Downloading { .. } | DownloadStatus::Merging { .. }
+        );
+        if !show {
+            return None;
+        }
+        let label = crate::i18n::t(&self.lang, "download_cancel.button");
+        Some(InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+            label,
+            "dl_cancel:1",
+        )]]))
+    }
+
     pub async fn update(&mut self, bot: &Bot, status: DownloadStatus) -> ResponseResult<()> {
         let text = status.to_message(&self.lang, self.style, self.source_badge.as_deref());
+        let keyboard = self.keyboard_for(&status);
 
         if let Some(msg_id) = self.message_id {
             // Throttle edits: skip if last successful edit was < 1.5s ago
@@ -69,11 +90,13 @@ impl ProgressMessage {
             }
 
             // Update existing message
-            match bot
+            let mut req = bot
                 .edit_message_text(self.chat_id, msg_id, text.clone())
-                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                .await
-            {
+                .parse_mode(teloxide::types::ParseMode::MarkdownV2);
+            if let Some(kbd) = keyboard.clone() {
+                req = req.reply_markup(kbd);
+            }
+            match req.await {
                 Ok(_) => {
                     self.last_edit_at = Some(std::time::Instant::now());
                     Ok(())
@@ -93,11 +116,13 @@ impl ProgressMessage {
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(retry_after_secs + 1)).await;
                         // Try to edit again
-                        match bot
+                        let mut retry_req = bot
                             .edit_message_text(self.chat_id, msg_id, text.clone())
-                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                            .await
-                        {
+                            .parse_mode(teloxide::types::ParseMode::MarkdownV2);
+                        if let Some(kbd) = keyboard.clone() {
+                            retry_req = retry_req.reply_markup(kbd);
+                        }
+                        match retry_req.await {
                             Ok(_) => return Ok(()),
                             Err(e2) => {
                                 let error_str2 = e2.to_string();
@@ -115,20 +140,26 @@ impl ProgressMessage {
                     }
 
                     // If editing failed for another reason, send a new message
-                    let msg = bot
+                    let mut send_req = bot
                         .send_message(self.chat_id, text)
-                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                        .await?;
+                        .parse_mode(teloxide::types::ParseMode::MarkdownV2);
+                    if let Some(kbd) = keyboard.clone() {
+                        send_req = send_req.reply_markup(kbd);
+                    }
+                    let msg = send_req.await?;
                     self.message_id = Some(msg.id);
                     Ok(())
                 }
             }
         } else {
             // Send a new message
-            let msg = bot
+            let mut send_req = bot
                 .send_message(self.chat_id, text)
-                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                .await?;
+                .parse_mode(teloxide::types::ParseMode::MarkdownV2);
+            if let Some(kbd) = keyboard {
+                send_req = send_req.reply_markup(kbd);
+            }
+            let msg = send_req.await?;
             self.message_id = Some(msg.id);
             Ok(())
         }

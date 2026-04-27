@@ -19,6 +19,10 @@ pub enum YtDlpErrorType {
     PostprocessingError,
     /// Insufficient disk space
     DiskSpaceError,
+    /// User cancelled the download via the cancel button (GH #9).
+    /// Distinguished from generic failures so the pipeline can surface a
+    /// neutral "Cancelled" message instead of an error sticker.
+    Cancelled,
     /// Unknown error
     Unknown,
 }
@@ -154,6 +158,7 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
         YtDlpErrorType::DiskSpaceError => {
             "❌ Server is overloaded.\n\nTry again later — we are already working on it.".to_string()
         }
+        YtDlpErrorType::Cancelled => "❌ Download cancelled.".to_string(),
         YtDlpErrorType::Unknown => "❌ Failed to download video.\n\nCheck that the link is correct.".to_string(),
     }
 }
@@ -174,6 +179,7 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
         YtDlpErrorType::FragmentError => false, // Temporary fragment errors - no action needed
         YtDlpErrorType::PostprocessingError => false, // Retried with --fixup never
         YtDlpErrorType::DiskSpaceError => true, // CRITICAL: disk space must be freed immediately!
+        YtDlpErrorType::Cancelled => false,     // user action, not a server problem
         YtDlpErrorType::Unknown => true,
     }
 }
@@ -281,6 +287,7 @@ pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
               4. Check logs: du -sh /app/logs/*\n\
               5. If Railway — increase disk size in the settings"
             .to_string(),
+        YtDlpErrorType::Cancelled => "ℹ️  User cancelled the download — no action required".to_string(),
         YtDlpErrorType::Unknown => "🔧 FIX RECOMMENDATIONS:\n\
             • Check yt-dlp logs for details\n\
             • Ensure the video is accessible\n\

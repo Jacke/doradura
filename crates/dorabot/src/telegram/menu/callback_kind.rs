@@ -110,6 +110,8 @@ pub(crate) enum CallbackKind {
     Convert,
     #[strum(serialize = "cut_confirm")]
     CutConfirm,
+    #[strum(serialize = "dl_cancel")]
+    DlCancel,
 }
 
 impl CallbackKind {
