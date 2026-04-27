@@ -41,41 +41,46 @@ use url::Url;
 /// All variants share `-tune film -pix_fmt yuv420p -profile:v high -level 5.1
 /// -movflags +faststart -threads 24` for Telegram inline-playback compatibility.
 ///
-/// **Why `-threads 24`** (added v0.48.0): without an explicit cap, ffmpeg
-/// spawns ~150-160 threads (NCPUs * 1.5) for x264 frame/slice work. On a
-/// shared Railway host with 48 visible cores, those threads thrash the
-/// CPU caches and spend most of their time in kernel sleep — measured
-/// 9:1 ratio of nonvoluntary-to-voluntary context switches. Capping at
-/// 24 (matching our cgroup budget) eliminates the thrashing without
-/// sacrificing parallelism we'd actually use.
+/// **Bot-UX over master-quality** (v0.48.1): production load showed that even
+/// `slow / CRF 14` was a UX disaster — 1440p AV1 → H.264 took 25-32 min on
+/// shared Railway hosts (CPU contention from neighbouring tenants), with
+/// output mp4 ~3× source size. Users were waiting 30+ min from click to
+/// inline playback. The honest engineering call: bot users overwhelmingly
+/// prefer "good and fast" over "perfect and slow". x264 below `medium`
+/// hits a quality cliff (banding on dark gradients), but `medium` itself is
+/// already perceptually clean for the screens people watch Telegram on
+/// (phones, laptops, occasionally desktop monitors). VMAF differences
+/// between `medium / CRF 17` and `slow / CRF 14` are below the human
+/// detection threshold for typical music-video content. So: collapse
+/// Master/Lossless onto `medium / CRF 17` — same as Balanced — and let
+/// Transparent be the slightly-better-but-slower opt-in tier.
 ///
-/// **Why `slow` preset for Master** (changed v0.48.0, was `veryslow`):
-/// `veryslow` is the slowest x264 preset (after `placebo`). On 1440p+ it
-/// runs at ~0.3-0.5× real-time — 1440p = 20-30 min wall-clock, 4K =
-/// 50-80 min. Even on Railway Pro with 24 cores, x264 frame-level
-/// dependencies prevent meaningful parallelism beyond ~6-8 threads of
-/// real work. Worse, `veryslow + CRF 12` produces output ~4× the size
-/// of the AV1 source (~50 Mbps vs ~12 Mbps). That extra 30 minutes of
-/// encoding plus 5-minute Telegram upload of a 1.5 GB file gets us
-/// ~0.5 VMAF over `slow + CRF 14` — perceptually indistinguishable.
-/// `slow` keeps Master at ~99 VMAF (visually identical to source) at
-/// 3× the speed: 1440p in ~5-7 min, 4K in ~15-25 min.
+/// **Why `-threads 24`**: without an explicit cap, ffmpeg spawns 150+
+/// threads (NCPUs × 1.5) for x264 frame/slice work. On a shared host with
+/// 48 visible cores, those threads thrash CPU caches and spend most time
+/// in kernel sleep (measured 9:1 nonvoluntary-to-voluntary ctx switch
+/// ratio). Capping at 24 — our cgroup budget — eliminates the thrashing.
 ///
-/// **Why `-level 5.1` instead of `4.2`** (v0.46.1): Level 4.2 caps at
-/// *either* 4K@30 *or* 1080p@60 with a 50 Mbps ceiling. 4K@60 sources
-/// (most modern music videos) can't fit, and CRF-driven bitrate is
-/// throttled. Level 5.1 (240 Mbps, 4K@60 / 8K@30) is supported by every
-/// H.264 decoder shipped since iPhone 6s (2015) — strict superset of 4.2.
+/// **Why `-level 5.1`**: covers 4K@60 and 8K@30 with a 240 Mbps ceiling;
+/// 4.2 capped at 4K@30 / 1080p@60 / 50 Mbps and forced x264 into worse
+/// rate-distortion choices. 5.1 supported by every H.264 decoder since
+/// iPhone 6s (2015) — strict superset of 4.2.
 fn highres_recode_opts(preset: VideoQualityPreset) -> &'static str {
     match preset {
         VideoQualityPreset::Balanced => {
             "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 192k -movflags +faststart -threads 24"
         }
         VideoQualityPreset::Transparent => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 15 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
+            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
         }
         VideoQualityPreset::Master | VideoQualityPreset::Lossless => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
+            // Same params as Balanced. Master remains as a label for users
+            // who clicked it in the picker — the encoder spec is what we
+            // measured to be the right point on the quality/time curve for
+            // bot UX. If/when we ship hardware-accelerated encoding (qsv)
+            // or codec-aware remux skip, Master can climb back to slower
+            // settings without the wall-clock penalty.
+            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
         }
     }
 }
