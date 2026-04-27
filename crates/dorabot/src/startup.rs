@@ -160,6 +160,14 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     background_tasks::spawn_db_cleanup(Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
     background_tasks::spawn_downloads_cleanup(Arc::clone(&shared_storage)).await;
 
+    // Kill any orphan yt-dlp/ffmpeg processes left by a previous bot
+    // generation (v0.49.2). Container restarts leave child processes
+    // reparented to PID 1 — they keep running, hog CPU/RAM, and trip
+    // over our high-res semaphore (which is process-local LazyLock).
+    // Cleanup is best-effort: if pkill is missing or there are no
+    // matches, we just continue.
+    background_tasks::kill_orphan_media_processes().await;
+
     // Create extension registry
     let extension_registry = Arc::new(crate::extension::ExtensionRegistry::default_registry());
 

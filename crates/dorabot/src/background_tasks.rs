@@ -25,6 +25,40 @@ const LOCK_DOWNLOADS_CLEANUP: i64 = 1106;
 /// Default retention period for files in the downloads folder (in days).
 /// Override with the `DOWNLOADS_RETENTION_DAYS` env var. Files older than
 /// this are deleted by `spawn_downloads_cleanup` every 6 hours.
+/// Kill orphan `yt-dlp` and `ffmpeg` processes left over from a previous
+/// bot generation (v0.49.2). Container restarts via Railway / pid-1 init
+/// leave the children reparented but still running — they keep hogging
+/// CPU/RAM and slip past our process-local high-res semaphore. The
+/// resulting "two ffmpegs at once" tripled wall-clock time and tripled
+/// peak RAM in yesterday's incident.
+///
+/// Best-effort: shells out to `pkill -9 -f`. If no matches, exit-code
+/// is 1 (which we ignore). If `pkill` itself is missing (shouldn't be —
+/// it's in the Alpine base image), we log and move on.
+pub async fn kill_orphan_media_processes() {
+    for pattern in &["ffmpeg", "yt-dlp"] {
+        let result = tokio::process::Command::new("pkill")
+            .args(["-9", "-f", pattern])
+            .output()
+            .await;
+        match result {
+            Ok(out) if out.status.success() => {
+                log::info!(
+                    "🧹 Startup: killed orphan {} processes from previous generation",
+                    pattern
+                );
+            }
+            Ok(_) => {
+                // pkill returns 1 when no processes matched — that's the happy case.
+                log::debug!("🧹 Startup: no orphan {} processes", pattern);
+            }
+            Err(e) => {
+                log::warn!("🧹 Startup: pkill {} failed: {} (continuing)", pattern, e);
+            }
+        }
+    }
+}
+
 /// Default retention window for `DOWNLOAD_FOLDER` files. Lowered v0.49.1
 /// from 7 → 1 day — at Master quality, 1440p mp4 outputs are 500 MB-1.8 GB,
 /// and a 18 GB Railway volume fills inside a day at normal usage. The
