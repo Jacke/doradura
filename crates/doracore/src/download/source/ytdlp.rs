@@ -74,13 +74,12 @@ fn highres_recode_opts(preset: VideoQualityPreset) -> &'static str {
             "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
         }
         VideoQualityPreset::Master | VideoQualityPreset::Lossless => {
-            // Same params as Balanced. Master remains as a label for users
-            // who clicked it in the picker — the encoder spec is what we
-            // measured to be the right point on the quality/time curve for
-            // bot UX. If/when we ship hardware-accelerated encoding (qsv)
-            // or codec-aware remux skip, Master can climb back to slower
-            // settings without the wall-clock penalty.
-            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
+            // User explicit ask in v0.48.2: visually-1:1 (~99 VMAF) at
+            // ≤10 min wall-clock on 1440p. `slow / CRF 14` is the answer
+            // — assuming the shared-host CPU contention isn't pathological,
+            // which v0.48.0 couldn't validate cleanly because the orphaned
+            // veryslow ffmpegs from v0.45.3 were still hogging the worker.
+            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
         }
     }
 }
