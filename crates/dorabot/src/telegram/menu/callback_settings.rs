@@ -134,6 +134,11 @@ pub async fn handle_settings_callback(
         return Ok(true);
     }
 
+    if data == "experimental:toggle" {
+        handle_settings_experimental_toggle(bot, callback_id, chat_id, message_id, db_pool, shared_storage).await?;
+        return Ok(true);
+    }
+
     if data == "video:toggle_burn_subs" {
         handle_settings_video_toggle_burn_subs(bot, callback_id, chat_id, message_id, db_pool, shared_storage).await?;
         return Ok(true);
@@ -759,6 +764,51 @@ async fn handle_settings_quality_preset_cycle(
     let _ = bot
         .answer_callback_query(callback_id.clone())
         .text(alert)
+        .show_alert(true)
+        .await;
+
+    show_video_quality_menu(
+        bot,
+        chat_id,
+        message_id,
+        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Handles `experimental:toggle` (v0.50.2) — flips the user's
+/// `experimental_features` flag, which currently gates the aggressive
+/// x264 tuning for highres recodes (~1.75× faster encode at ~1 VMAF cost).
+async fn handle_settings_experimental_toggle(
+    bot: &Bot,
+    callback_id: &CallbackQueryId,
+    chat_id: ChatId,
+    message_id: teloxide::types::MessageId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    let current = shared_storage
+        .get_user_experimental_features(chat_id.0)
+        .await
+        .unwrap_or(false);
+    let next = !current;
+    shared_storage
+        .set_user_experimental_features(chat_id.0, next)
+        .await
+        .map_err(db_err)?;
+
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let alert_key = if next {
+        "menu.experimental_alert_on"
+    } else {
+        "menu.experimental_alert_off"
+    };
+    let _ = bot
+        .answer_callback_query(callback_id.clone())
+        .text(crate::i18n::t(&lang, alert_key))
         .show_alert(true)
         .await;
 

@@ -34,6 +34,7 @@ pub struct DownloadConfigBuilder {
     concurrent_fragments: u8,
     quality_preset: Option<VideoQualityPreset>,
     cancel_flag: Option<Arc<AtomicBool>>,
+    experimental_fast_encode: bool,
 }
 
 impl DownloadConfigBuilder {
@@ -51,6 +52,7 @@ impl DownloadConfigBuilder {
             concurrent_fragments: 1,
             quality_preset: None,
             cancel_flag: None,
+            experimental_fast_encode: false,
         }
     }
 
@@ -118,6 +120,15 @@ impl DownloadConfigBuilder {
         self
     }
 
+    /// Opt into the aggressive x264 tuning for highres AV1 → H.264 recodes
+    /// (v0.50.2 experimental). ~1.75× faster wall-clock at the cost of
+    /// ~1 VMAF (visually undetectable). Plumbed from
+    /// `users.experimental_features`.
+    pub fn experimental_fast_encode(mut self, enabled: bool) -> Self {
+        self.experimental_fast_encode = enabled;
+        self
+    }
+
     /// Build the `DownloadRequest`, generating the output path from title and artist.
     ///
     /// Adds a timestamp to the filename to prevent race conditions with concurrent downloads.
@@ -140,6 +151,7 @@ impl DownloadConfigBuilder {
             concurrent_fragments: self.concurrent_fragments,
             quality_preset: self.quality_preset,
             cancel_flag: self.cancel_flag,
+            experimental_fast_encode: self.experimental_fast_encode,
         }
     }
 

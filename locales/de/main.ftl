@@ -70,6 +70,10 @@ menu =
     .quality_preset_alert_transparent = 💎 Transparent — visuell identisch zur Quelle (~99 VMAF). 4K in 15–20 Min.
     .quality_preset_alert_master = 🏆 Master — fast Master-Qualität (~99.5 VMAF). 4K in 50–80 Min.
     .quality_preset_alert_lossless = 🎯 Verlustfrei 1:1 — keine Neukodierung (Phase 2). Verhält sich wie Master.
+    .experimental_on = 🧪 Experimentell: AN
+    .experimental_off = 🧪 Experimentell: AUS
+    .experimental_alert_on = 🧪 Experimentell aktiviert. Hochauflösende Kodierung verwendet aggressive x264-Einstellungen (~1.75× schneller, ~1 VMAF niedriger — visuell unverändert).
+    .experimental_alert_off = 🧪 Experimentell deaktiviert. Hochauflösende Kodierung verwendet Standardeinstellungen.
 
 cut_confirm =
     .title = ✂️ Schnitt bestätigen

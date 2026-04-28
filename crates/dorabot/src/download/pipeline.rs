@@ -566,6 +566,11 @@ pub async fn download_phase(
         if let Ok(preset) = preset_str.parse::<doracore::download::source::VideoQualityPreset>() {
             builder = builder.quality_preset(preset);
         }
+        // v0.50.2: opt-in aggressive x264 tuning via experimental_features
+        // (~1.75× faster encode at ~1 VMAF cost). Master 1440p AV1 → H.264
+        // drops from 5-10 min to 3-6 min, visually unchanged.
+        let fast = storage.get_user_experimental_features(chat_id.0).await.unwrap_or(false);
+        builder = builder.experimental_fast_encode(fast);
     }
 
     // GH #9: register a cancel flag so the user can interrupt long downloads

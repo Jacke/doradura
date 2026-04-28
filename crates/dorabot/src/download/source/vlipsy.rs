@@ -495,6 +495,7 @@ mod tests {
             concurrent_fragments: 1,
             quality_preset: None,
             cancel_flag: None,
+            experimental_fast_encode: false,
         };
 
         let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();

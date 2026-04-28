@@ -70,6 +70,10 @@ menu =
     .quality_preset_alert_transparent = 💎 Transparent — visually identical to source (~99 VMAF). 4K takes 15–20 min.
     .quality_preset_alert_master = 🏆 Master — near-master quality (~99.5 VMAF). 4K takes 50–80 min.
     .quality_preset_alert_lossless = 🎯 Lossless 1:1 — no recode (Phase 2). For now behaves like Master.
+    .experimental_on = 🧪 Experimental: ON
+    .experimental_off = 🧪 Experimental: OFF
+    .experimental_alert_on = 🧪 Experimental enabled. Highres encodes use aggressive x264 tuning (~1.75× faster, ~1 VMAF lower — visually unchanged).
+    .experimental_alert_off = 🧪 Experimental disabled. Highres encodes use the standard quality settings.
 
 cut_confirm =
     .title = ✂️ Confirm cut

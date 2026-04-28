@@ -70,6 +70,10 @@ menu =
     .quality_preset_alert_transparent = 💎 Transparent — visuellement identique à la source (~99 VMAF). 4K en 15–20 min.
     .quality_preset_alert_master = 🏆 Master — qualité quasi-master (~99.5 VMAF). 4K en 50–80 min.
     .quality_preset_alert_lossless = 🎯 Sans perte 1:1 — pas de réencodage (Phase 2). Se comporte comme Master.
+    .experimental_on = 🧪 Expérimental : ACTIVÉ
+    .experimental_off = 🧪 Expérimental : DÉSACTIVÉ
+    .experimental_alert_on = 🧪 Expérimental activé. Encodage haute résolution avec réglages x264 agressifs (~1.75× plus rapide, ~1 VMAF en moins — visuellement identique).
+    .experimental_alert_off = 🧪 Expérimental désactivé. Encodage haute résolution avec paramètres standards.
 
 cut_confirm =
     .title = ✂️ Confirmer la coupe

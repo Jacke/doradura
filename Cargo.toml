@@ -101,3 +101,50 @@ crossterm = "0.28"
 # Dev-only — nicer diffs in test failures. Import in tests as
 # `use pretty_assertions::assert_eq;` to replace the std macro.
 pretty_assertions = "1"
+
+# ────────────────────────────────────────────────────────────────────
+# Build profiles (v0.51.0): tune dev/release for the team's workflow.
+#
+# Why each setting:
+#   dev.opt-level = 1
+#     Default 0 produces unoptimized debug binaries that run 5-10× slower.
+#     Cargo defaults to 0 because it's the cheapest *compile* setting, but
+#     for a workspace this size that means `cargo run` of the bot is
+#     painfully slow even before it's hit a real workload. Level 1 gets
+#     us "fast enough to use" without bloating compile time meaningfully.
+#
+#   dev.package."*".opt-level = 3
+#     Optimize *dependencies* fully even in dev. Deps recompile rarely
+#     (only on Cargo.lock changes), so paying once for max speed in their
+#     hot loops is a big win — sqlx queries, ffmpeg log parsing, regex
+#     matching all run at release speed during development.
+#
+#   release.lto = "thin"
+#     Default `false` skips link-time optimization. Thin LTO (~20% extra
+#     link time) lets the compiler inline across crate boundaries — for
+#     a multi-crate workspace this finds optimizations the per-crate
+#     compiler can't see. Visible runtime win on hot paths.
+#
+#   release.codegen-units = 1
+#     Default 16 splits each crate into 16 parallel codegen jobs (faster
+#     compile, less optimal output). 1 unit per crate = single-pass
+#     optimization with full local view. Adds ~30% to release build time
+#     but produces measurably faster binaries on tight loops.
+#
+#   release.strip = "symbols"
+#     Strip debug info from the final binary. Bot is shipped as a stripped
+#     production binary; release builds don't need symbols (we keep them
+#     in Sentry/log lines via stderr backtraces if needed).
+[profile.dev]
+opt-level = 1
+incremental = true
+
+# Optimize all dependencies (not our code) fully even in dev builds.
+# Recompiles rarely — pay once, benefit on every `cargo run`.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

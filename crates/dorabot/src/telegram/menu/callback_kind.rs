@@ -56,6 +56,8 @@ pub(crate) enum CallbackKind {
     Settings,
     #[strum(serialize = "back")]
     Back,
+    #[strum(serialize = "experimental")]
+    Experimental,
 
     // Shape 1: forwarded CallbackQuery handlers
     #[strum(serialize = "lyr")]
@@ -145,6 +147,7 @@ impl CallbackKind {
                 | Self::VideoSendType
                 | Self::Settings
                 | Self::Back
+                | Self::Experimental
         )
     }
 }

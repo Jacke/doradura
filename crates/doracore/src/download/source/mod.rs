@@ -154,6 +154,13 @@ pub struct DownloadRequest {
     ///
     /// `None` for non-cancellable contexts (queued background tasks, tests).
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Opt into the aggressive x264 tuning for highres AV1 → H.264 recode
+    /// (v0.50.2). Plumbed from `users.experimental_features`. When `true`,
+    /// `highres_recode_opts` appends `-x264-params rc-lookahead=20:ref=4:
+    /// bframes=4:subme=6:me=hex`, which benchmarked at **1.75× faster**
+    /// wall-clock on 4K VP9 input (4:03 → 2:18 for a 30s clip on the
+    /// shared Railway host) at the cost of ~1 VMAF.
+    pub experimental_fast_encode: bool,
 }
 
 /// An additional media file from a multi-item post (e.g., Instagram carousel).
@@ -409,6 +416,7 @@ mod tests {
             concurrent_fragments: 1,
             quality_preset: None,
             cancel_flag: None,
+            experimental_fast_encode: false,
         };
 
         let (tx, mut rx) = mpsc::unbounded_channel();

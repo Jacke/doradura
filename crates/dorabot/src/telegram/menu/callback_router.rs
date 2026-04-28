@@ -565,7 +565,8 @@ pub async fn handle_menu_callback(
                 | CallbackKind::PbarStyle
                 | CallbackKind::VideoSendType
                 | CallbackKind::Settings
-                | CallbackKind::Back => {}
+                | CallbackKind::Back
+                | CallbackKind::Experimental => {}
             }
         }
     }

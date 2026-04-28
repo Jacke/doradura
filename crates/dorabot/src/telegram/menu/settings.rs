@@ -300,6 +300,10 @@ pub async fn show_video_quality_menu(
         .get_user_video_quality_preset(chat_id.0)
         .await
         .unwrap_or_else(|_| "master".to_string());
+    let experimental = shared_storage
+        .get_user_experimental_features(chat_id.0)
+        .await
+        .unwrap_or(false);
     let download_subs = shared_storage
         .get_user_download_subtitles(chat_id.0)
         .await
@@ -394,6 +398,14 @@ pub async fn show_video_quality_menu(
         vec![crate::telegram::cb(
             preset_button_label(&lang, &quality_preset),
             "qpreset:cycle",
+        )],
+        vec![crate::telegram::cb(
+            if experimental {
+                i18n::t(&lang, "menu.experimental_on")
+            } else {
+                i18n::t(&lang, "menu.experimental_off")
+            },
+            "experimental:toggle",
         )],
     ];
 
