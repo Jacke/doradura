@@ -369,6 +369,70 @@ impl SharedStorage {
             }
         }
     }
+
+    /// Single-query bundle of user settings used during a video download.
+    ///
+    /// Replaces 4 round-trips (`get_user_video_quality_preset`,
+    /// `get_user_experimental_features`, `get_user_send_as_document`,
+    /// `get_user_video_no_caption`) with one Postgres SELECT. SQLite path
+    /// falls back to the per-field calls — local dev only, perf not critical.
+    pub async fn get_user_video_download_settings(&self, telegram_id: i64) -> Result<VideoDownloadSettings> {
+        match self {
+            Self::Sqlite { .. } => Ok(VideoDownloadSettings {
+                quality_preset: self
+                    .get_user_video_quality_preset(telegram_id)
+                    .await
+                    .unwrap_or_else(|_| "master".to_string()),
+                experimental_features: self.get_user_experimental_features(telegram_id).await.unwrap_or(false),
+                send_as_document: self.get_user_send_as_document(telegram_id).await.unwrap_or(0) != 0,
+                video_no_caption: self.get_user_video_no_caption(telegram_id).await.unwrap_or(false),
+            }),
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT
+                        COALESCE(video_quality_preset, 'master')      AS video_quality_preset,
+                        COALESCE(experimental_features, 0)            AS experimental_features,
+                        COALESCE(send_as_document, 0)                 AS send_as_document,
+                        COALESCE(video_no_caption, 0)                 AS video_no_caption
+                     FROM users
+                     WHERE telegram_id = $1",
+                )
+                .bind(telegram_id)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_user_video_download_settings")?;
+                Ok(row
+                    .map(|row| VideoDownloadSettings {
+                        quality_preset: row.get::<String, _>("video_quality_preset"),
+                        experimental_features: row.get::<i32, _>("experimental_features") != 0,
+                        send_as_document: row.get::<i32, _>("send_as_document") != 0,
+                        video_no_caption: row.get::<i32, _>("video_no_caption") != 0,
+                    })
+                    .unwrap_or_default())
+            }
+        }
+    }
+}
+
+/// Bundled user settings consumed by the video download pipeline.
+/// Fetched once per request to collapse 4 N+1 SELECTs into 1.
+#[derive(Debug, Clone)]
+pub struct VideoDownloadSettings {
+    pub quality_preset: String,
+    pub experimental_features: bool,
+    pub send_as_document: bool,
+    pub video_no_caption: bool,
+}
+
+impl Default for VideoDownloadSettings {
+    fn default() -> Self {
+        Self {
+            quality_preset: "master".to_string(),
+            experimental_features: false,
+            send_as_document: false,
+            video_no_caption: false,
+        }
+    }
 }
 
 fn map_pg_subtitle_style(row: sqlx::postgres::PgRow) -> SubtitleStyle {

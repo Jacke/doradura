@@ -1,3 +1,10 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+#![allow(unsafe_code)]
+#![allow(clippy::expect_used)]
+
 //! Integration tests for core modules (retry, alerts, metrics)
 //!
 //! Run with: cargo test --test core_modules_test

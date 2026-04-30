@@ -369,15 +369,23 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(DEFAULT_BOT_API_LOG_TAIL_BYTES);
 
-    let content = match read_log_tail(&log_path, tail_bytes) {
-        Ok(data) => data,
-        Err(e) => {
-            bot.send_message(
-                chat_id,
-                format!("❌ Failed to read Bot API log: {} ({})", log_path.display(), e),
-            )
-            .await?;
-            return Ok(());
+    let content = {
+        let log_path_for_read = log_path.clone();
+        match tokio::task::spawn_blocking(move || read_log_tail(&log_path_for_read, tail_bytes)).await {
+            Ok(Ok(data)) => data,
+            Ok(Err(e)) => {
+                bot.send_message(
+                    chat_id,
+                    format!("❌ Failed to read Bot API log: {} ({})", log_path.display(), e),
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(e) => {
+                bot.send_message(chat_id, format!("❌ Bot API log read task panicked: {e}"))
+                    .await?;
+                return Ok(());
+            }
         }
     };
 

@@ -1,3 +1,10 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+#![allow(unsafe_code)]
+#![allow(clippy::expect_used)]
+
 //! Load testing harness for doradura Telegram bot
 //!
 //! This test suite verifies the bot can handle high concurrent load.

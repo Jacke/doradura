@@ -29,6 +29,7 @@ mod users;
 mod vault;
 
 pub use types::{ContentSourceGroup, ContentSubscriptionRecord, PreviewContext, QueueTaskInput, SharePageRecord};
+pub use user_settings::VideoDownloadSettings;
 
 use pg_bootstrap::POSTGRES_BOOTSTRAP_SQL;
 

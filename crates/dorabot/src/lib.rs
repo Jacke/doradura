@@ -13,6 +13,16 @@
 
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::manual_flatten)]
+// v0.50.4: workspace-wide `clippy::unwrap_used` / `expect_used` are set to
+// `warn`. Existing 800+ usages suppressed here — remove the allow at
+// file/module scope as code is cleaned up. New `.unwrap()` should be `?`,
+// `.ok()`, `.unwrap_or_default()`, or `.expect("INVARIANT: ...")`.
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+#![allow(unsafe_code)]
 
 // ── Local modules ─────────────────────────────────────────────────────────────
 pub mod background_tasks;

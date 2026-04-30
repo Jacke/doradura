@@ -1,3 +1,10 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+#![allow(unsafe_code)]
+#![allow(clippy::expect_used)]
+
 //! E2E (End-to-End) Tests
 //!
 //! These tests verify complete user flows without touching real Telegram API.

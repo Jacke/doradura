@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.50.3"
+version = "0.50.5"
 edition = "2024"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -99,3 +99,6 @@ harness = false
 [[bin]]
 name = "mtproto-download"
 path = "src/bin/mtproto_download.rs"
+
+[lints]
+workspace = true

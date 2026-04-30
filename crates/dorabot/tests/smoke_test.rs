@@ -1,3 +1,10 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+#![allow(unsafe_code)]
+#![allow(clippy::expect_used)]
+
 //! Smoke tests for CI and manual verification.
 //!
 //! These tests verify the bot's core functionality by performing real downloads

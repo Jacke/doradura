@@ -8,6 +8,12 @@
 //! Single source of truth for bot name/avatar — the main bot process
 //! does NOT change avatar on smoke test results.
 
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+
 use std::env;
 use std::time::Duration;
 

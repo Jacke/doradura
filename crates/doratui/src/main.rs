@@ -27,6 +27,11 @@
 // kind — collapsing would produce ~14 duplicate `KeyCode::X` arms with
 // different guards. Suppressed at module scope for the TUI bin only.
 #![allow(clippy::collapsible_match)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
 
 use std::io;
 use std::time::Duration;

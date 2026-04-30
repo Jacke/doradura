@@ -1,3 +1,6 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+
 //! Queue benchmarks for performance testing
 //!
 //! Run with: cargo bench --bench queue_benchmark

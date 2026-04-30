@@ -556,21 +556,25 @@ pub async fn download_phase(
     // Inject the user's quality preset for high-res video. Audio paths and
     // sub-1080p video are unaffected — `is_highres` in ytdlp.rs gates the
     // preset use.
+    //
+    // Single bundle fetch collapses preset + experimental_features into one
+    // SELECT (was 2 N+1 calls).
     if matches!(format, PipelineFormat::Video { .. })
         && let Some(storage) = shared_storage
     {
-        let preset_str = storage
-            .get_user_video_quality_preset(chat_id.0)
+        let bundle = storage
+            .get_user_video_download_settings(chat_id.0)
             .await
-            .unwrap_or_else(|_| "master".to_string());
-        if let Ok(preset) = preset_str.parse::<doracore::download::source::VideoQualityPreset>() {
+            .unwrap_or_default();
+        if let Ok(preset) = bundle
+            .quality_preset
+            .parse::<doracore::download::source::VideoQualityPreset>()
+        {
             builder = builder.quality_preset(preset);
         }
         // v0.50.2: opt-in aggressive x264 tuning via experimental_features
-        // (~1.75× faster encode at ~1 VMAF cost). Master 1440p AV1 → H.264
-        // drops from 5-10 min to 3-6 min, visually unchanged.
-        let fast = storage.get_user_experimental_features(chat_id.0).await.unwrap_or(false);
-        builder = builder.experimental_fast_encode(fast);
+        // (~1.75× faster encode at ~1 VMAF cost).
+        builder = builder.experimental_fast_encode(bundle.experimental_features);
     }
 
     // GH #9: register a cancel flag so the user can interrupt long downloads
@@ -582,7 +586,7 @@ pub async fn download_phase(
     let _cancel_guard = CancelGuard { chat_id: chat_id.0 };
     builder = builder.cancel_flag(Arc::clone(&cancel_flag));
 
-    let request = builder.build(&title, &artist);
+    let request = Arc::new(builder.build(&title, &artist));
 
     // ── Step 6: Download with progress ──
     let _ = progress_msg
@@ -604,7 +608,7 @@ pub async fn download_phase(
 
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel::<SourceProgress>();
     let source_clone: Arc<dyn DownloadSource> = Arc::clone(&source);
-    let request_clone = request.clone();
+    let request_clone = Arc::clone(&request);
 
     let mut download_handle = tokio::spawn(async move { source_clone.download(&request_clone, progress_tx).await });
 
@@ -980,32 +984,33 @@ pub async fn execute(
     // ── Step 8: Send to Telegram ──
     let duration = download_output.duration_secs.unwrap_or(0);
 
-    let send_as_document = if let Some(storage) = shared_storage {
-        match format {
-            PipelineFormat::Audio { .. } => storage
-                .get_user_send_audio_as_document(chat_id.0)
+    // Single-query bundle for Video path collapses send_as_document +
+    // video_no_caption (was 2 SELECTs) into one round-trip. Audio path keeps
+    // its own send_audio_as_document call (different column).
+    let video_bundle = if matches!(format, PipelineFormat::Video { .. })
+        && let Some(storage) = shared_storage
+    {
+        Some(
+            storage
+                .get_user_video_download_settings(chat_id.0)
                 .await
-                .map(|value| value == 1)
-                .unwrap_or(false),
-            PipelineFormat::Video { .. } => storage
-                .get_user_send_as_document(chat_id.0)
-                .await
-                .map(|value| value == 1)
-                .unwrap_or(false),
-        }
+                .unwrap_or_default(),
+        )
     } else {
-        false
+        None
     };
 
-    // Per-user toggle: suppress caption on sent video (applies only to Video format).
-    let suppress_video_caption = if let Some(storage) = shared_storage {
-        match format {
-            PipelineFormat::Video { .. } => storage.get_user_video_no_caption(chat_id.0).await.unwrap_or(false),
-            PipelineFormat::Audio { .. } => false,
-        }
-    } else {
-        false
+    let send_as_document = match (format, &video_bundle, shared_storage) {
+        (PipelineFormat::Video { .. }, Some(b), _) => b.send_as_document,
+        (PipelineFormat::Audio { .. }, _, Some(storage)) => storage
+            .get_user_send_audio_as_document(chat_id.0)
+            .await
+            .map(|value| value == 1)
+            .unwrap_or(false),
+        _ => false,
     };
+
+    let suppress_video_caption = video_bundle.as_ref().is_some_and(|b| b.video_no_caption);
 
     // Verify downloaded file exists before attempting send
     if !std::path::Path::new(&download_output.file_path).exists() {

@@ -1,3 +1,9 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+
 //! MTProto Download CLI
 //!
 //! Independent CLI tool for downloading Telegram files using MTProto.

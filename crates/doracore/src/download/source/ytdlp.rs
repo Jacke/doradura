@@ -30,75 +30,103 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use url::Url;
 
-/// Return the `--postprocessor-args` value for the highres AV1/VP9 → H.264
-/// recode, parameterised by the user's quality preset.
+/// Per-preset encode parameters for highres AV1/VP9 → H.264 recode.
 ///
-/// `Balanced` is the v0.45.3 baseline (memory-safe on small workers);
-/// `Transparent` is the v0.45.1 setting that previously OOM'd on small
-/// workers but is fine on Railway Pro; `Master` is the new "best bot"
-/// default (~99.5 VMAF). `Lossless` reuses `Master` in v0.46.0 — codec-aware
-/// remux/skip is staged for v0.47.0.
+/// Replaced 4 copy-pasted long format strings + a fragile
+/// `split_whitespace()` parser with a typed struct (v0.50.5). The
+/// `append_to_ffmpeg` method pushes args directly to the `Command`
+/// builder — no string parsing, no quote-handling footguns.
 ///
-/// All variants share `-tune film -pix_fmt yuv420p -profile:v high -level 5.1
-/// -movflags +faststart -threads 24` for Telegram inline-playback compatibility.
+/// **Why `-threads 24`** (v0.48.0): without an explicit cap, ffmpeg spawns
+/// 150+ threads (NCPUs × 1.5) on the shared 48-core Railway host, thrashing
+/// CPU caches (measured 9:1 nonvoluntary ctx switch ratio). Capping at our
+/// cgroup budget eliminates the thrashing.
 ///
-/// **Bot-UX over master-quality** (v0.48.1): production load showed that even
-/// `slow / CRF 14` was a UX disaster — 1440p AV1 → H.264 took 25-32 min on
-/// shared Railway hosts (CPU contention from neighbouring tenants), with
-/// output mp4 ~3× source size. Users were waiting 30+ min from click to
-/// inline playback. The honest engineering call: bot users overwhelmingly
-/// prefer "good and fast" over "perfect and slow". x264 below `medium`
-/// hits a quality cliff (banding on dark gradients), but `medium` itself is
-/// already perceptually clean for the screens people watch Telegram on
-/// (phones, laptops, occasionally desktop monitors). VMAF differences
-/// between `medium / CRF 17` and `slow / CRF 14` are below the human
-/// detection threshold for typical music-video content. So: collapse
-/// Master/Lossless onto `medium / CRF 17` — same as Balanced — and let
-/// Transparent be the slightly-better-but-slower opt-in tier.
+/// **Why `-level 5.1`** (v0.46.1): covers 4K@60 and 8K@30 (240 Mbps).
+/// Level 4.2 capped at 4K@30 / 1080p@60 / 50 Mbps and forced x264 into worse
+/// rate-distortion choices.
 ///
-/// **Why `-threads 24`**: without an explicit cap, ffmpeg spawns 150+
-/// threads (NCPUs × 1.5) for x264 frame/slice work. On a shared host with
-/// 48 visible cores, those threads thrash CPU caches and spend most time
-/// in kernel sleep (measured 9:1 nonvoluntary-to-voluntary ctx switch
-/// ratio). Capping at 24 — our cgroup budget — eliminates the thrashing.
-///
-/// **Why `-level 5.1`**: covers 4K@60 and 8K@30 with a 240 Mbps ceiling;
-/// 4.2 capped at 4K@30 / 1080p@60 / 50 Mbps and forced x264 into worse
-/// rate-distortion choices. 5.1 supported by every H.264 decoder since
-/// iPhone 6s (2015) — strict superset of 4.2.
-fn highres_recode_opts(preset: VideoQualityPreset, fast_encode: bool) -> &'static str {
-    // v0.50.2: when `fast_encode` is true (user opted into experimental_features),
-    // append aggressive x264 tuning to the base preset string. Local benchmark
-    // on a 30s 4K VP9→H.264 recode: 4:03 baseline → 2:18 tuned (1.75× faster).
-    // Quality cost: ~1 VMAF (99 → ~98), visually undetectable.
-    //
-    // Chosen tuning rationale:
-    //   rc-lookahead=20 — `slow` defaults to 60. Cuts frame-look-ahead analysis
-    //                    by 67%; minor impact on rate-control accuracy.
-    //   ref=4         — `slow` defaults to 5. One fewer reference frame slot,
-    //                    noticeable RAM win, very minor visual cost.
-    //   bframes=4     — `slow` defaults to 8. Halves bidirectional prediction
-    //                    work (B-frames are computed against both past and
-    //                    future references — expensive).
-    //   subme=6       — `slow` defaults to 8. Subpixel motion estimation tier;
-    //                    6 = "RD" (rate-distortion), 8 = "RD with refinement".
-    //   me=hex        — `slow` uses umh (uneven multi-hexagon). hex is the
-    //                    plain hexagon search, ~2× faster, marginal quality cost.
-    match (preset, fast_encode) {
-        (VideoQualityPreset::Balanced, _) => {
-            "VideoConvertor:-c:v libx264 -preset medium -tune film -crf 17 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 192k -movflags +faststart -threads 24"
+/// **Why `-tune film -profile:v high`**: `tune film` biases x264 toward
+/// live-action content (deblocking + psy params). Profile high needed for
+/// any modern level above 4.0.
+struct EncodeParams {
+    /// x264 preset name: `medium`, `slow`, `veryslow`, etc.
+    x264_preset: &'static str,
+    /// Constant Rate Factor — lower = better quality + bigger file.
+    /// 12-14 = visually transparent, 17-18 = perceptually clean,
+    /// 20+ = visible artefacts on dark gradients.
+    crf: u8,
+    /// AAC bitrate string for `-b:a`, e.g. `"320k"`.
+    audio_bitrate: &'static str,
+    /// `experimental_features` opt-in: append aggressive x264 tuning
+    /// (`-x264-params rc-lookahead=20:…:me=hex`) which benchmarked at
+    /// 1.75× speedup on a 4K VP9→H.264 recode at the cost of ~1 VMAF.
+    apply_fast_tuning: bool,
+}
+
+impl EncodeParams {
+    /// Resolve the per-preset encode params (v0.50.5: differentiated
+    /// Master from Transparent — they were producing identical output
+    /// strings since v0.48.2, which made the preset cycle button a UX
+    /// fiction).
+    ///
+    /// Tier ladder by visual quality (top-down):
+    /// - **Master** — `slow / CRF 14 / AAC 320k` (~99 VMAF). Default.
+    /// - **Transparent** — `slow / CRF 16 / AAC 256k` (~97 VMAF).
+    ///   30% smaller files than Master, ~25% faster encode.
+    /// - **Balanced** — `medium / CRF 17 / AAC 192k` (~96 VMAF). The
+    ///   v0.45.3 fallback; smallest files, fastest encode.
+    /// - **Lossless** — same as Master for now. Codec-aware mkv-document
+    ///   skip for AV1 sources is parked (user explicitly rejected).
+    fn for_preset(preset: VideoQualityPreset, fast_encode: bool) -> Self {
+        let (x264_preset, crf, audio_bitrate) = match preset {
+            VideoQualityPreset::Balanced => ("medium", 17, "192k"),
+            VideoQualityPreset::Transparent => ("slow", 16, "256k"),
+            VideoQualityPreset::Master | VideoQualityPreset::Lossless => ("slow", 14, "320k"),
+        };
+        Self {
+            x264_preset,
+            crf,
+            audio_bitrate,
+            apply_fast_tuning: fast_encode,
         }
-        (VideoQualityPreset::Transparent, false) => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
-        }
-        (VideoQualityPreset::Transparent, true) => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24 -x264-params rc-lookahead=20:ref=4:bframes=4:subme=6:me=hex"
-        }
-        (VideoQualityPreset::Master | VideoQualityPreset::Lossless, false) => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24"
-        }
-        (VideoQualityPreset::Master | VideoQualityPreset::Lossless, true) => {
-            "VideoConvertor:-c:v libx264 -preset slow -tune film -crf 14 -pix_fmt yuv420p -profile:v high -level 5.1 -c:a aac -b:a 320k -movflags +faststart -threads 24 -x264-params rc-lookahead=20:ref=4:bframes=4:subme=6:me=hex"
+    }
+
+    /// Append the libx264 + AAC + container args to a `Command`.
+    /// Direct `cmd.args` instead of going through a shell-tokenised string
+    /// so future args with spaces (e.g. `-x264-params "key=val with space"`)
+    /// don't silently break.
+    fn append_to_ffmpeg(&self, cmd: &mut tokio::process::Command) {
+        let crf_str = self.crf.to_string();
+        cmd.args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            self.x264_preset,
+            "-tune",
+            "film",
+            "-crf",
+            &crf_str,
+            "-pix_fmt",
+            "yuv420p",
+            "-profile:v",
+            "high",
+            "-level",
+            "5.1",
+            "-c:a",
+            "aac",
+            "-b:a",
+            self.audio_bitrate,
+            "-movflags",
+            "+faststart",
+            "-threads",
+            "24",
+        ]);
+        if self.apply_fast_tuning {
+            // Aggressive x264 tuning behind `experimental_features` flag.
+            // Benchmark on 30s 4K VP9→H.264: 4:03 baseline → 2:18 tuned
+            // (1.75× faster), ~1 VMAF cost.
+            cmd.args(["-x264-params", "rc-lookahead=20:ref=4:bframes=4:subme=6:me=hex"]);
         }
     }
 }
@@ -628,14 +656,11 @@ async fn transmux_or_recode_to_mp4(
         // ffmpeg via `-c:a copy` — Telegram accepts both).
         cmd.args(["-c", "copy", "-movflags", "+faststart"]);
     } else {
-        // AV1 or unknown: full recode. Reuse the per-preset libx264 args
-        // string and split off the `VideoConvertor:` prefix that yt-dlp
-        // expected; the remaining tokens are valid ffmpeg args.
-        let raw = highres_recode_opts(preset, fast_encode);
-        let stripped = raw.strip_prefix("VideoConvertor:").unwrap_or(raw);
-        for token in stripped.split_whitespace() {
-            cmd.arg(token);
-        }
+        // AV1 or unknown: full recode via libx264. Args are pushed directly
+        // to the Command (v0.50.5 refactor) instead of going through a
+        // string + split_whitespace round-trip — same result, no future
+        // surprise when a quoted arg lands in the params.
+        EncodeParams::for_preset(preset, fast_encode).append_to_ffmpeg(&mut cmd);
     }
     cmd.arg(output_mp4);
 

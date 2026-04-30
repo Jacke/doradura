@@ -7,6 +7,13 @@
 //! - `background_tasks.rs` — periodic background tasks
 //! - `queue_processor.rs`  — download queue processing
 
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unreachable)]
+#![allow(clippy::unwrap_in_result)]
+#![allow(unsafe_code)]
+
 use anyhow::Result;
 use dotenvy::dotenv;
 
