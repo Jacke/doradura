@@ -50,8 +50,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
   - Effort: 1 h · Win: −200–500 ms per highres download
 - [ ] **Box<dyn DownloadSource> → enum_dispatch** — 3 impls (YtDlp, Http, Instagram). Inline dispatch, removes one heap alloc per call.
   - Effort: 1 h
-- [ ] **Disk-pressure-aware cleanup** — proactively delete oldest at >80% disk usage instead of waiting for TTL.
-  - Effort: 1 h
+- [x] **Disk-pressure-aware cleanup** — `crates/dorabot/src/background_tasks.rs::cleanup_oldest_until_threshold` deletes LRU-by-mtime until disk usage <= 75%, runs after each TTL pass when usage > 80%. Skips files <1h old (in-flight). ✅ done
 - [ ] **Health check refusing new tasks at <2 GB free** — bot replies "server busy" instead of accepting work it can't finish.
   - Effort: 30 min
 - [ ] **Multi-instance Postgres advisory lock** for high-res semaphore — current `LazyLock<Arc<Semaphore>>` is process-local; orphan-kill on startup partially closes the gap.
@@ -107,9 +106,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 
 ## ⚡ Performance / innovation (top-5 from "best practices")
 
-- [ ] **`mimalloc` global allocator** — 10–25% improvement on alloc-heavy paths (and we have many).
-  - Add via `[dependencies] mimalloc = "0.1"`, `#[global_allocator] static GLOBAL: MiMalloc = MiMalloc;` in main.rs.
-  - Effort: 5 min
+- [x] **`mimalloc` global allocator** — added to `crates/dorabot/Cargo.toml` (`default-features = false`), `#[global_allocator]` in `crates/dorabot/src/main.rs`. ✅ done
 - [ ] **`tokio_util::sync::CancellationToken`** — replace our custom `Arc<AtomicBool>` cancel signal with hierarchical/structured cancellation. Solves edge cases bare bool can't.
   - Effort: 2 h
 - [ ] **Newtypes for IDs** — `ChatId(i64)`, `UserId(i64)`, `MessageId(i32)` instead of bare `i64`. Compile-time prevents id-swap bugs.

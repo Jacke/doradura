@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.50.5"
+version = "0.50.6"
 edition = "2024"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -76,6 +76,7 @@ grammers-client = "0.6"
 grammers-session = "0.5"
 grammers-tl-types = "0.6"
 grammers-mtsender = "0.5"
+mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.8"

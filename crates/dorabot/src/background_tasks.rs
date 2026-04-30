@@ -323,8 +323,66 @@ pub async fn spawn_downloads_cleanup(shared_storage: Arc<SharedStorage>) {
             } else {
                 log::debug!("🧹 Downloads cleanup: nothing to delete (folder={})", folder);
             }
+
+            // Disk-pressure cleanup: when used% > 80, proactively delete oldest
+            // files (LRU by mtime) until under threshold. Avoids waiting until
+            // the TTL pass to free space — important on shared infra where a
+            // burst of high-res downloads can fill /data faster than retention.
+            if let Ok(info) = doracore::core::disk::get_disk_space(&folder)
+                && info.used_percent > 80.0
+            {
+                match cleanup_oldest_until_threshold(&folder, 75.0).await {
+                    Ok((extra_removed, extra_freed)) if extra_removed > 0 => {
+                        log::warn!(
+                            "🧹 Disk-pressure cleanup: was {:.1}% full → removed {} oldest files, freed {:.1} MB",
+                            info.used_percent,
+                            extra_removed,
+                            extra_freed as f64 / (1024.0 * 1024.0)
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("🧹 Disk-pressure cleanup failed: {}", e),
+                }
+            }
         }
     });
+}
+
+/// Delete oldest files in `folder` (LRU by mtime) until disk usage falls below
+/// `target_percent`. Skips files newer than 1 hour to avoid deleting in-flight
+/// downloads. Returns `(removed_count, freed_bytes)`.
+async fn cleanup_oldest_until_threshold(folder: &str, target_percent: f64) -> std::io::Result<(usize, u64)> {
+    let recent_cutoff = std::time::SystemTime::now() - Duration::from_secs(3600);
+
+    let mut candidates: Vec<(std::time::SystemTime, std::path::PathBuf, u64)> = Vec::new();
+    let mut entries = tokio::fs::read_dir(folder).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let Ok(meta) = entry.metadata().await else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(mtime) = meta.modified() else { continue };
+        if mtime >= recent_cutoff {
+            continue;
+        }
+        candidates.push((mtime, entry.path(), meta.len()));
+    }
+    candidates.sort_by_key(|(mtime, _, _)| *mtime);
+
+    let mut removed = 0usize;
+    let mut freed = 0u64;
+    for (_, path, size) in candidates {
+        if let Ok(info) = doracore::core::disk::get_disk_space(folder)
+            && info.used_percent <= target_percent
+        {
+            break;
+        }
+        if tokio::fs::remove_file(&path).await.is_ok() {
+            removed += 1;
+            freed += size;
+        }
+    }
+    Ok((removed, freed))
 }
 
 /// Walk `folder` (one level deep, files only), delete entries with mtime older

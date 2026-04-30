@@ -20,6 +20,12 @@ use dotenvy::dotenv;
 use doradura::cli::{Cli, Commands, WebhookCommand};
 use doradura::core::{config, init_logger};
 
+// mimalloc is faster than the default allocator on alloc-heavy workloads —
+// String/Vec churn in metadata parsing, ffmpeg log scanning, and per-update
+// teloxide payloads. 10-25% improvement on alloc-heavy paths is typical.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse_args();
