@@ -154,28 +154,56 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 
 Synthesized from Reddit r/rust 2024 thread + freestyle.sh 2025 list + Pragmatic Programmers "Ten Favorite Rust Crates". Filtered to crates NOT already in our stack (we have: tokio, anyhow, thiserror, serde, sqlx, reqwest, teloxide, prometheus, tracing, lazy-regex, dashmap, regex, mimalloc, chrono).
 
-### Top 3 — add next sprint
-- [ ] **`bon`** — typed builder macro. Cleaner than `derive_builder`, especially for callback-state construction (`ringtone:select:*`, menu kinds). Effort: 30 min POC on one builder.
-- [ ] **`strum`** — `EnumString` + `EnumIter` + `Display` derive macros. Perfect for our callback-kind enums and locale keys. Removes 4-arm `match` boilerplate. Effort: 1h to migrate `CallbackKind` + `Platform`.
-- [ ] **`insta`** — snapshot tests for menu rendering, locale output, callback parsing. Locks regressions on `format_duration`, `escape_markdown`, FTL output. Effort: 1h initial setup + write 5 anchor snapshots.
+### ✅ Top 3 — add next sprint (high ROI / low risk)
 
-### Probable value — evaluate during related work
-- [ ] **`pretty_assertions`** — drop-in replacement for `assert_eq!` with diff-style failure output. Trivial 5-min add to dev-deps.
-- [ ] **`bytes`** — `Bytes`/`BytesMut` for `HttpSource` chunked download buffer. Already noted in main TODO under "perf/innovation". Re-list with concrete site: `crates/doracore/src/download/source/http.rs`.
-- [ ] **`camino`** — UTF-8 `Path` instead of `OsString`. Cleans up yt-dlp temp-path handling; rules out `to_string_lossy()` clutter. Effort: 1h to migrate `download_output.file_path`-touching code.
-- [ ] **`mockall`** — mock the `DownloadSource` trait for unit tests of pipeline branches without invoking yt-dlp. Pairs with proptest for builder/parser tests.
-- [ ] **`proptest`** — already on the testing list above; pairs naturally here.
-- [ ] **`testcontainers`** — Postgres-in-Docker for sqlx integration tests instead of relying on a live local Postgres. Already on the testing list above.
-- [ ] **`serde_with`** — DRY for `Option<DateTime>`, `#[serde(default)]`-heavy structs in queue payloads / preview cache.
-- [ ] **`dotenvy`** — drop-in replacement for unmaintained `dotenv`. We use `dotenvy::dotenv()` already? Verify; if `dotenv` is in deps, swap to `dotenvy` (it is — fine).
+| Crate | Why | Where in doradura | Effort | ROI |
+|---|---|---|---|---|
+| **`bon`** | Typed builders with compile-time required-field check; replaces ad-hoc `expect("title required")` runtime panics | `DownloadConfigBuilder` + new menu/callback state structs in `telegram/menu/*` | 30 min POC | 🟢 High — eliminates a class of "forgot to set field" panics |
+| **`strum`** | `EnumString` / `EnumIter` / `Display` / `EnumDiscriminants` derives | `CallbackKind`, `Platform` (iphone/android), `VideoQualityPreset`, `Plan` enums — replace hand-written `parse()` / `as_str()` / `match` arms | 1 h | 🟢 High — removes ~200 LOC of boilerplate, gives `iter()` for `/admin metrics` debugging and i18n key validation |
+| **`insta`** | Snapshot tests with reviewable `.snap` files | Menu rendering, FTL locales (4 langs), `format_media_caption`, `format_duration`, callback parser output, error message strings | 1 h setup + 5 anchor snapshots | 🟢 High — locks UX regressions cheaply; the existing snapshot test harness in `tests/bot_snapshots.rs` is hand-rolled and would shrink once `insta` is wired |
 
-### Skip — not a fit
-- `compact_str`, `smallvec`, `smallstr` — CLAUDE memo `feedback_no_hot_path_micro_opts` says skip until flamegraph proves a bottleneck.
-- `actix-web`, `hyper`, `diesel` — duplicate teloxide/reqwest/sqlx coverage.
-- `embassy`, `defmt`, `heapless`, `modular-bitfield` — embedded-only.
-- `wgpu`, `mlua`, `v8`, `rppal` — graphics/scripting/Pi GPIO, irrelevant.
-- `tarpc`, `utoipa`, `hickory`, `schemars` — no RPC/OpenAPI/DNS-server need (we're a Telegram bot, not a public REST API).
-- `rand` — std + getrandom is enough; pull in only when needed.
+### 🟡 Probable value — evaluate during related work
+
+| Crate | Why | Where to apply | Activation trigger | ROI |
+|---|---|---|---|---|
+| **`pretty_assertions`** | Diff-style assert failure output | All `tests/*.rs` and `#[cfg(test)]` modules | Add now — drop-in dev-dep, no code change | 🟢 5-min payoff |
+| **`bytes`** | `Bytes` / `BytesMut` zero-copy buffers for HTTP/file paths | `crates/doracore/src/download/source/http.rs` chunked download body, `send.rs` upload buffers | When we touch HTTP source for any reason | 🟡 Medium — already on main TODO `bytes::Bytes for zero-copy buffers` |
+| **`camino`** | `Utf8Path` / `Utf8PathBuf` — UTF-8-guaranteed paths | yt-dlp temp paths in `download_output.file_path`, `actual_file_path` chains in `video.rs` | Next time we audit path handling | 🟡 Medium — eliminates `.to_string_lossy()` clutter |
+| **`mockall`** | Mock traits at compile time | Mock `DownloadSource` for unit tests covering pipeline branches without invoking real yt-dlp | When we add the next round of pipeline tests | 🟡 Medium — pairs with proptest |
+| **`proptest`** | Property-based / fuzz testing | `parse_time_range_secs`, `parse_segments_spec`, `parse_speed_modifier`, URL canonicalizer, filename sanitizer | Already on main testing list (4-6 h) | 🟡 Medium — fuzzes user-input paths |
+| **`testcontainers`** | Docker-based ephemeral Postgres for tests | `tests/*` that currently rely on a live local Postgres; sqlx integration tests | Already on main testing list (1 day) | 🟡 Medium — isolates CI |
+| **`serde_with`** | Helpers for `Option<DateTime>`, `#[serde(default)]`-heavy structs, comma-sep lists, etc. | Queue payloads, preview cache structs, share page records | When we touch serde-heavy structs | 🟡 Low–medium |
+| **`dotenvy`** | Maintained replacement for the abandoned `dotenv` | `crates/dorabot/src/main.rs` | ✅ Already on `dotenvy` — verified | ✅ Done |
+
+### ❌ Skip — not a fit (with reasoning)
+
+| Crate | Reason to skip |
+|---|---|
+| **`compact_str`**, **`smallvec`**, **`smallstr`** | Memo `feedback_no_hot_path_micro_opts`: queue benchmark shows 5+ orders of magnitude headroom. Skip micro-opts without flamegraph evidence. |
+| **`actix-web`**, **`hyper`** (direct), **`diesel`** | Duplicate of `teloxide` / `reqwest` / `sqlx` we already use. Adding them = two HTTP runtimes, two ORMs — pure liability. |
+| **`embassy`**, **`defmt`**, **`heapless`**, **`fixed`**, **`modular-bitfield`**, **`embedded-hal`** | All embedded / `no_std` / MCU. We're a server-side bot on Linux containers — irrelevant. |
+| **`wgpu`** | GPU rendering — bot has no graphics path. |
+| **`mlua`**, **`v8`** | Embed Lua / V8 scripting — we don't run user-supplied code. |
+| **`rppal`** | Raspberry Pi GPIO — wrong form factor. |
+| **`tarpc`** | Service-to-service RPC — bot is a single binary, no internal RPC. |
+| **`utoipa`**, **`schemars`** | OpenAPI / JSON-schema codegen — we expose a Telegram bot API, not a public REST endpoint. The `/health` and `/metrics` endpoints don't need it. |
+| **`hickory`** (formerly trust-dns) | DNS server / resolver — Linux libc resolver via reqwest is sufficient. |
+| **`rand`** | std + `getrandom` (transitive via reqwest/teloxide) covers our needs. Pull in only when explicitly required. |
+| **`egg-mode`**, **`roux`**, **`serenity`** | Twitter / Reddit / Discord API clients — wrong platform. |
+| **`fern`** | Custom log backend — `env_logger` + `tracing` + Railway log capture already covers logging. |
+| **`once_cell`** | Replaced by `std::sync::LazyLock` (Edition 2024 stable). |
+| **`lazy_static`** | Same — superseded by `LazyLock`. |
+| **`derive_more`** | `bon` (builders) + `strum` (enums) + `thiserror` (errors) cover our derive needs without the third-party generic-derive crate. |
+| **`async-trait`** | Stable Rust 2024 supports `async fn` in traits natively — no longer needed. |
+| **`hex`**, **`hmac`**, **`sha2`** | Currently flagged unused by `cargo-machete` in dorabot. If we end up needing crypto, prefer `ring` or `rustls` ecosystem instead of these stand-alones. |
+| **`r2d2`**, **`r2d2_sqlite`** in dorabot/doratui | Flagged unused by `cargo-machete`. We use `sqlx` for postgres + `rusqlite` for sqlite — r2d2 pool is dead weight. Drop in cleanup PR. |
+| **`refinery`** in dorabot | Migrations live in `migrations/` and are run via doracore — refinery dep on dorabot is unused. Drop in cleanup PR. |
+| **`select`** crate (HTML scraper) | False-positive cargo-machete match for `tokio::select!`. The actual `select` crate is unused — drop in cleanup PR. |
+| **`tower`** in dorabot/doracore | Unused middleware framework — we don't compose tower services anywhere. Drop in cleanup PR. |
+| **`fluent-templates`** in dorabot | Flagged unused. We use `fluent` directly for FTL i18n. Drop in cleanup PR. |
+| **`figment`** in doracore | Flagged unused — we read env vars directly, no config file. Drop in cleanup PR. |
+| **`dashmap`** in doracore | Flagged unused (only in dorabot). Drop the doracore-side dep in cleanup PR. |
+| **`uuid`** in doratui | Flagged unused — TUI uses `chrono` timestamps, no UUIDs anywhere. Drop in cleanup PR. |
 
 ## How to use this list
 
