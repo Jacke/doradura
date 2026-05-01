@@ -435,6 +435,44 @@ impl Default for VideoDownloadSettings {
     }
 }
 
+/// Bundled subtitle flags fetched in one SELECT (was 2 N+1 calls in
+/// `maybe_burn_subtitles`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SubtitleFlags {
+    pub download_subs: bool,
+    pub burn_subs: bool,
+}
+
+impl SharedStorage {
+    pub async fn get_user_subtitle_flags(&self, telegram_id: i64) -> Result<SubtitleFlags> {
+        match self {
+            Self::Sqlite { .. } => Ok(SubtitleFlags {
+                download_subs: self.get_user_download_subtitles(telegram_id).await.unwrap_or(false),
+                burn_subs: self.get_user_burn_subtitles(telegram_id).await.unwrap_or(false),
+            }),
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT
+                        COALESCE(download_subtitles, 0) AS download_subtitles,
+                        COALESCE(burn_subtitles, 0)    AS burn_subtitles
+                     FROM users
+                     WHERE telegram_id = $1",
+                )
+                .bind(telegram_id)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_user_subtitle_flags")?;
+                Ok(row
+                    .map(|row| SubtitleFlags {
+                        download_subs: row.get::<i32, _>("download_subtitles") != 0,
+                        burn_subs: row.get::<i32, _>("burn_subtitles") != 0,
+                    })
+                    .unwrap_or_default())
+            }
+        }
+    }
+}
+
 fn map_pg_subtitle_style(row: sqlx::postgres::PgRow) -> SubtitleStyle {
     SubtitleStyle {
         font_size: row.get("subtitle_font_size"),
@@ -446,5 +484,29 @@ fn map_pg_subtitle_style(row: sqlx::postgres::PgRow) -> SubtitleStyle {
         margin_v: row.try_get("subtitle_margin_v").unwrap_or(0),
         margin_h: row.try_get("subtitle_margin_h").unwrap_or(0),
         bold: row.try_get("subtitle_bold").unwrap_or(0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_download_settings_default_matches_per_field_defaults() {
+        // Pins the defaults the bundle returns when no row matches —
+        // must match the per-field `get_user_*` helpers above so
+        // existing-user behaviour is unchanged when we read via bundle.
+        let d = VideoDownloadSettings::default();
+        assert_eq!(d.quality_preset, "master");
+        assert!(!d.experimental_features);
+        assert!(!d.send_as_document);
+        assert!(!d.video_no_caption);
+    }
+
+    #[test]
+    fn subtitle_flags_default_matches_per_field_defaults() {
+        let d = SubtitleFlags::default();
+        assert!(!d.download_subs);
+        assert!(!d.burn_subs);
     }
 }

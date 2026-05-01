@@ -285,8 +285,14 @@ async fn generate_health_report(_db_pool: &Arc<DbPool>) -> String {
         escape_markdown(&format!("{:.0}", queue_medium))
     ));
     text.push_str(&format!(
-        "• Low priority: {}\n\n",
+        "• Low priority: {}\n",
         escape_markdown(&format!("{:.0}", queue_low))
+    ));
+
+    let avg_wait = get_histogram_average(&metrics::QUEUE_WAIT_TIME_SECONDS);
+    text.push_str(&format!(
+        "• Avg wait: {}s\n\n",
+        escape_markdown(&format!("{:.1}", avg_wait))
     ));
 
     // Error breakdown
@@ -615,6 +621,27 @@ fn get_gauge_total(gauge: &prometheus::Gauge) -> f64 {
         }
     }
     0.0
+}
+
+/// Average value of a HistogramVec (sample_sum / sample_count across all labels).
+/// Returns 0.0 when no samples have been observed yet.
+fn get_histogram_average(metric_vec: &prometheus::HistogramVec) -> f64 {
+    use prometheus::core::Collector;
+    let metric_families = metric_vec.collect();
+    let mut total_sum = 0.0;
+    let mut total_count = 0u64;
+    for mf in metric_families {
+        for m in mf.get_metric() {
+            let h = m.get_histogram();
+            total_sum += h.get_sample_sum();
+            total_count += h.get_sample_count();
+        }
+    }
+    if total_count == 0 {
+        0.0
+    } else {
+        total_sum / total_count as f64
+    }
 }
 
 /// Formats duration in seconds to human-readable uptime string — thin re-export.

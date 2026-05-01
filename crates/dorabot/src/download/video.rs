@@ -233,26 +233,24 @@ pub async fn download_and_send_video(
             // the VP9/AV1 codecs YouTube uses above 1080p aren't universally
             // handled in-line — document delivery preserves original quality and
             // lets the recipient's OS pick a native player.
-            let user_send_as_document = if let Some(ref storage) = shared_storage_clone {
+            // Single-query bundle collapses send_as_document + video_no_caption
+            // (was 2 N+1 SELECTs back-to-back). Preset/experimental fields are
+            // unused here — pipeline::download_phase already consumed those.
+            let video_settings = if let Some(ref storage) = shared_storage_clone {
                 storage
-                    .get_user_send_as_document(chat_id.0)
+                    .get_user_video_download_settings(chat_id.0)
                     .await
-                    .map(|value| value == 1)
-                    .unwrap_or(false)
+                    .unwrap_or_default()
             } else {
-                false
+                doracore::storage::shared::VideoDownloadSettings::default()
             };
             // High-res videos are re-encoded to H.264 mp4 by yt-dlp, so they
             // play inline in Telegram. Honor the user's send-mode preference
             // (default = video) instead of forcing document mode.
-            let send_as_document = user_send_as_document;
+            let send_as_document = video_settings.send_as_document;
 
             // Get user preference: suppress caption on sent video (inline, clean for forwarding)
-            let suppress_caption = if let Some(ref storage) = shared_storage_clone {
-                storage.get_user_video_no_caption(chat_id.0).await.unwrap_or(false)
-            } else {
-                false
-            };
+            let suppress_caption = video_settings.video_no_caption;
 
             // Split video if Local Bot API is used and file exceeds 1.9GB
             let final_file_size = fs::metadata(&actual_file_path).map(|m| m.len()).unwrap_or(0);
@@ -846,10 +844,9 @@ async fn maybe_burn_subtitles(
         let Some(storage) = shared_storage else {
             return file_path.to_string();
         };
-        let download_subs = storage.get_user_download_subtitles(chat_id.0).await.unwrap_or(false);
-        let burn_subs = storage.get_user_burn_subtitles(chat_id.0).await.unwrap_or(false);
+        let flags = storage.get_user_subtitle_flags(chat_id.0).await.unwrap_or_default();
 
-        if !(download_subs && burn_subs) {
+        if !(flags.download_subs && flags.burn_subs) {
             return file_path.to_string();
         }
 

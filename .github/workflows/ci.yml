@@ -73,3 +73,23 @@ jobs:
         # Prevents "bot panics at runtime because new env var missing".
         # Pure grep, no external deps — keeps CI job cheap.
         run: ./scripts/check-env-drift.sh
+
+  audit:
+    name: Security audit (cargo-audit)
+    runs-on: ubuntu-latest
+    # Informational — surfaces CVEs in PR checks without blocking merges
+    # on every transitive-dep advisory. Fix as separate prioritised tasks.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit || cargo install cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit

@@ -1520,6 +1520,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn encode_params_master_is_top_tier() {
+        let p = EncodeParams::for_preset(VideoQualityPreset::Master, false);
+        assert_eq!(p.x264_preset, "slow");
+        assert_eq!(p.crf, 14);
+        assert_eq!(p.audio_bitrate, "320k");
+        assert!(!p.apply_fast_tuning);
+    }
+
+    #[test]
+    fn encode_params_transparent_is_distinct_from_master() {
+        // Regression for v0.50.5: pre-fix, Master and Transparent both
+        // produced slow/CRF14 — the preset cycle button was a UX fiction.
+        let master = EncodeParams::for_preset(VideoQualityPreset::Master, false);
+        let transparent = EncodeParams::for_preset(VideoQualityPreset::Transparent, false);
+        assert_ne!(master.crf, transparent.crf);
+        assert_ne!(master.audio_bitrate, transparent.audio_bitrate);
+        assert_eq!(transparent.crf, 16);
+        assert_eq!(transparent.audio_bitrate, "256k");
+    }
+
+    #[test]
+    fn encode_params_balanced_is_fastest() {
+        let p = EncodeParams::for_preset(VideoQualityPreset::Balanced, false);
+        assert_eq!(p.x264_preset, "medium");
+        assert_eq!(p.crf, 17);
+        assert_eq!(p.audio_bitrate, "192k");
+    }
+
+    #[test]
+    fn encode_params_lossless_falls_back_to_master() {
+        // The codec-aware "ship the mkv as document for AV1" path was
+        // explicitly rejected — Lossless re-encodes through Master quality.
+        let lossless = EncodeParams::for_preset(VideoQualityPreset::Lossless, false);
+        let master = EncodeParams::for_preset(VideoQualityPreset::Master, false);
+        assert_eq!(lossless.crf, master.crf);
+        assert_eq!(lossless.x264_preset, master.x264_preset);
+        assert_eq!(lossless.audio_bitrate, master.audio_bitrate);
+    }
+
+    #[test]
+    fn encode_params_fast_tuning_flag_is_threaded() {
+        let p = EncodeParams::for_preset(VideoQualityPreset::Master, true);
+        assert!(p.apply_fast_tuning);
+    }
+
+    #[test]
     fn test_supports_url_youtube() {
         let source = YtDlpSource::new();
         let url = Url::parse("https://www.youtube.com/watch?v=abc123").unwrap();

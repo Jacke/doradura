@@ -17,7 +17,8 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
   - Effort: 30 min · Caveman finding · ✅ done
 - [x] **N+1 query batch — `get_user_video_download_settings()`** — collapses preset + experimental + send_as_document + video_no_caption into one SELECT. Used in `download_phase` builder + `execute` post-download path. Saves ~2 round-trips per video request.
   - Sites: `pipeline.rs:560,990` (was lines 572 + 998 + 1011 — 3 calls → 1)
-  - `video.rs:72,238,849,850,862` left as follow-up (less hot, conditional paths)
+  - `video.rs:236-255` (send_as_document + video_no_caption) and `video.rs:847-848` (download_subs + burn_subs) batched in v0.50.7 via `VideoDownloadSettings` + new `SubtitleFlags` bundle.
+  - `video.rs:72,862` (progress_bar_style + subtitle_style composite) left — already single queries
   - Effort: 1.5–2 h · Win: −50 to −100 ms latency per download · ✅ done
 - [~] **`Arc<str>` for hot-path strings** — `display_title` already `Arc<str>`. Converting `file_format_str` / `artist` would cascade into `DownloadStatus` enum (8 variants, 30+ call sites). YAGNI for ~80 allocs/30s download — **deferred**.
 - [x] **Sync I/O in async fn** — `read_log_tail` blocking call in `admin/system.rs:372` (handle_botapi_speed_command) wrapped in `spawn_blocking`. send.rs:634 was already in spawn_blocking.
@@ -40,8 +41,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
   - Effort: 1.5 h
 - [ ] **GH #4 file info on uploads** — show metadata when user picks an upload.
   - Effort: 1 h
-- [ ] **GH #14 queue depth + wait time metrics** — expose in `/admin metrics`.
-  - Effort: 2 h
+- [x] **GH #14 queue depth + wait time metrics** — queue depth (high/medium/low) was already in `generate_health_report`; added avg-wait line via new `get_histogram_average(QUEUE_WAIT_TIME_SECONDS)` helper. ✅ done
 - [ ] **GH #10 rate limiting for conversions** — per-user / per-feature throttling.
   - Effort: 2 h
 - [ ] **GH #12 log rotation** — Railway already rotates, low priority.
@@ -51,8 +51,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 - [ ] **Box<dyn DownloadSource> → enum_dispatch** — 3 impls (YtDlp, Http, Instagram). Inline dispatch, removes one heap alloc per call.
   - Effort: 1 h
 - [x] **Disk-pressure-aware cleanup** — `crates/dorabot/src/background_tasks.rs::cleanup_oldest_until_threshold` deletes LRU-by-mtime until disk usage <= 75%, runs after each TTL pass when usage > 80%. Skips files <1h old (in-flight). ✅ done
-- [ ] **Health check refusing new tasks at <2 GB free** — bot replies "server busy" instead of accepting work it can't finish.
-  - Effort: 30 min
+- [~] **Health check refusing new tasks at <2 GB free** — already covered: `pipeline.rs:387-407` enforces 2 GB min for highres (env-configurable `HIGHRES_MIN_DISK_GB`), 500 MB min for everything else (audio + sub-1080p video files are well under 500 MB). User-friendly error already shown. **Effectively complete** — closing.
 - [ ] **Multi-instance Postgres advisory lock** for high-res semaphore — current `LazyLock<Arc<Semaphore>>` is process-local; orphan-kill on startup partially closes the gap.
   - Effort: 1.5 h
 
@@ -74,20 +73,18 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 
 ## 🛠️ Tooling / build / hygiene
 
-- [ ] **`.cargo/config.toml` linker speedup** — `lld` on macOS, `mold` on Linux (Railway Dockerfile). Currently using default linker.
-  - Effort: 5 min config + 30 min Dockerfile changes for mold
+- [ ] **`.cargo/config.toml` linker speedup** — `lld` on macOS (need `brew install lld` first), `mold` on Linux (Alpine `mold` exists in `main` repo, but production Dockerfile change requires staging build to verify musl/static-link compatibility — too risky to ship blind).
+  - Effort: 5 min config + 30 min Dockerfile changes for mold + staging test
 - [ ] **`cargo-sweep` weekly cron** — clean target/incremental files older than 14 days. Currently grows to 40+ GB unmonitored.
   - Effort: 5 min setup
 - [ ] **`cargo-deny` in pre-commit** — license check, security advisories, banned/duplicate deps.
   - Effort: 1 h
-- [ ] **`cargo-audit` in CI** — CVE detection.
-  - Effort: 30 min
+- [x] **`cargo-audit` in CI** — added new `audit` job in `.github/workflows/ci.yml`. `continue-on-error: true` so transitive-dep advisories surface in PR checks without blocking merges. ✅ done
 - [ ] **`cargo-llvm-cov` for coverage** — currently no coverage reporting.
   - Effort: 1 h
 - [ ] **`cargo-machete`** — find unused dependencies.
   - Effort: 30 min one-shot
-- [ ] **`rustfmt.toml`** with team conventions — currently default.
-  - Effort: 1 h discussion + 5 min file
+- [x] **`rustfmt.toml`** — already exists at repo root with team conventions (max_width=120, edition=2024, reorder_imports, merge_derives, etc.). ✅ done (pre-existing)
 
 ---
 
