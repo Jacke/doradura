@@ -82,8 +82,11 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 - [x] **`cargo-audit` in CI** — added new `audit` job in `.github/workflows/ci.yml`. `continue-on-error: true` so transitive-dep advisories surface in PR checks without blocking merges. ✅ done
 - [ ] **`cargo-llvm-cov` for coverage** — currently no coverage reporting.
   - Effort: 1 h
-- [ ] **`cargo-machete`** — find unused dependencies.
-  - Effort: 30 min one-shot
+- [~] **`cargo-machete`** — ran 2026-05-01, found unused deps to drop:
+  - `crates/doratui/Cargo.toml`: `r2d2`, `r2d2_sqlite`, `rusqlite`, `uuid`
+  - `crates/doracore/Cargo.toml`: `dashmap`, `figment`, `regex` (only `lazy-regex` is used directly), `tower`
+  - `crates/dorabot/Cargo.toml`: `bytes`, `fluent-templates`, `hex`, `hmac`, `r2d2`, `r2d2_sqlite`, `refinery`, `select`, `sha2`, `tower`
+  - Effort: 15 min — drop one PR, verify `cargo check --workspace` + `cargo test` clean.
 - [x] **`rustfmt.toml`** — already exists at repo root with team conventions (max_width=120, edition=2024, reorder_imports, merge_derives, etc.). ✅ done (pre-existing)
 
 ---
@@ -146,6 +149,33 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 - [ ] **WASM compilation of doracore** — pure-Rust core could run in browser. Speculative.
 
 ---
+
+## 🦀 Crate research (2026-05-01)
+
+Synthesized from Reddit r/rust 2024 thread + freestyle.sh 2025 list + Pragmatic Programmers "Ten Favorite Rust Crates". Filtered to crates NOT already in our stack (we have: tokio, anyhow, thiserror, serde, sqlx, reqwest, teloxide, prometheus, tracing, lazy-regex, dashmap, regex, mimalloc, chrono).
+
+### Top 3 — add next sprint
+- [ ] **`bon`** — typed builder macro. Cleaner than `derive_builder`, especially for callback-state construction (`ringtone:select:*`, menu kinds). Effort: 30 min POC on one builder.
+- [ ] **`strum`** — `EnumString` + `EnumIter` + `Display` derive macros. Perfect for our callback-kind enums and locale keys. Removes 4-arm `match` boilerplate. Effort: 1h to migrate `CallbackKind` + `Platform`.
+- [ ] **`insta`** — snapshot tests for menu rendering, locale output, callback parsing. Locks regressions on `format_duration`, `escape_markdown`, FTL output. Effort: 1h initial setup + write 5 anchor snapshots.
+
+### Probable value — evaluate during related work
+- [ ] **`pretty_assertions`** — drop-in replacement for `assert_eq!` with diff-style failure output. Trivial 5-min add to dev-deps.
+- [ ] **`bytes`** — `Bytes`/`BytesMut` for `HttpSource` chunked download buffer. Already noted in main TODO under "perf/innovation". Re-list with concrete site: `crates/doracore/src/download/source/http.rs`.
+- [ ] **`camino`** — UTF-8 `Path` instead of `OsString`. Cleans up yt-dlp temp-path handling; rules out `to_string_lossy()` clutter. Effort: 1h to migrate `download_output.file_path`-touching code.
+- [ ] **`mockall`** — mock the `DownloadSource` trait for unit tests of pipeline branches without invoking yt-dlp. Pairs with proptest for builder/parser tests.
+- [ ] **`proptest`** — already on the testing list above; pairs naturally here.
+- [ ] **`testcontainers`** — Postgres-in-Docker for sqlx integration tests instead of relying on a live local Postgres. Already on the testing list above.
+- [ ] **`serde_with`** — DRY for `Option<DateTime>`, `#[serde(default)]`-heavy structs in queue payloads / preview cache.
+- [ ] **`dotenvy`** — drop-in replacement for unmaintained `dotenv`. We use `dotenvy::dotenv()` already? Verify; if `dotenv` is in deps, swap to `dotenvy` (it is — fine).
+
+### Skip — not a fit
+- `compact_str`, `smallvec`, `smallstr` — CLAUDE memo `feedback_no_hot_path_micro_opts` says skip until flamegraph proves a bottleneck.
+- `actix-web`, `hyper`, `diesel` — duplicate teloxide/reqwest/sqlx coverage.
+- `embassy`, `defmt`, `heapless`, `modular-bitfield` — embedded-only.
+- `wgpu`, `mlua`, `v8`, `rppal` — graphics/scripting/Pi GPIO, irrelevant.
+- `tarpc`, `utoipa`, `hickory`, `schemars` — no RPC/OpenAPI/DNS-server need (we're a Telegram bot, not a public REST API).
+- `rand` — std + getrandom is enough; pull in only when needed.
 
 ## How to use this list
 
