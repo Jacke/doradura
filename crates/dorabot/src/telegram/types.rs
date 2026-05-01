@@ -29,6 +29,41 @@ pub struct PreviewMetadata {
     pub audio_tracks: Option<Vec<AudioTrackInfo>>,   // available audio tracks (multi-language)
 }
 
+/// Extended metadata captured from `yt-dlp --dump-json` for the Info feature
+/// (geo-availability card, full-metadata card, max-resolution thumbnail).
+///
+/// Populated alongside `PreviewMetadata` and stashed in `PREVIEW_CACHE` so the
+/// info actions can read it without re-invoking yt-dlp.
+#[derive(Debug, Clone, Default)]
+pub struct ExtendedMetadata {
+    /// Widest thumbnail URL from `thumbnails[]` (max-resolution variant —
+    /// up to 1920x1080 for YouTube `maxresdefault.jpg`).
+    pub thumbnail_max_url: Option<String>,
+    /// `YYYYMMDD` from yt-dlp `upload_date` field.
+    pub upload_date: Option<String>,
+    pub view_count: Option<u64>,
+    pub like_count: Option<u64>,
+    pub comment_count: Option<u64>,
+    /// Channel page URL (`channel_url` or `uploader_url`, fallback chain).
+    pub channel_url: Option<String>,
+    /// User-facing tags. Empty when source has none.
+    pub tags: Vec<String>,
+    /// User-facing categories. Empty when source has none.
+    pub categories: Vec<String>,
+    /// Full description (NOT truncated to 200 chars like `PreviewMetadata.description`).
+    pub description_full: Option<String>,
+    /// `availability` field — `"public"`, `"unlisted"`, `"premium_only"`,
+    /// `"subscriber_only"`, `"needs_auth"`, `"public"`, etc. yt-dlp also uses
+    /// `"public"` to mean "available", so callers should also check
+    /// `geo_block` separately.
+    pub availability: Option<String>,
+    /// `true` when yt-dlp reports geo-blocking on this video.
+    pub geo_block: bool,
+    /// ISO-3166-1 alpha-2 codes the video is blocked in. Empty when no
+    /// per-country block list is exposed by the source.
+    pub blocked_countries: Vec<String>,
+}
+
 impl PreviewMetadata {
     /// Formats duration into human-readable format (MM:SS or H:MM:SS).
     pub fn format_duration(&self) -> String {

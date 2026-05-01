@@ -3,6 +3,7 @@
 pub mod categorizer;
 pub mod config;
 pub mod copyright;
+pub mod country;
 pub mod disk;
 pub mod error;
 pub mod error_logger;

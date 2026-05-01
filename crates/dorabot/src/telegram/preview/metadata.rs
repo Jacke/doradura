@@ -8,7 +8,7 @@ use crate::download::metadata::{
 use crate::download::ytdlp_errors::{YtDlpErrorType, analyze_ytdlp_error, get_error_message};
 use crate::storage::cache;
 use crate::telegram::cache::PREVIEW_CACHE;
-use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
+use crate::telegram::types::{ExtendedMetadata, PreviewMetadata, VideoFormatInfo};
 use crate::timestamps::extract_all_timestamps;
 use serde_json::Value;
 use tokio::process::Command as TokioCommand;
@@ -244,6 +244,90 @@ pub(super) fn get_json_value(json: &Value, key: &str) -> Option<String> {
         })
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty() && s != "NA")
+}
+
+/// Parses the rich subset of `yt-dlp --dump-json` used by the Info feature
+/// (geo-availability card, full-metadata card, max-resolution thumbnail).
+///
+/// Read-only — does NOT re-invoke yt-dlp. Caller must already have the JSON
+/// `Value` in hand (e.g. from `get_metadata_from_json`). Returns
+/// `ExtendedMetadata::default()`-shape with all `Option`s as `None` if
+/// fields are missing — never errors.
+///
+/// Geo-block handling: yt-dlp surfaces region blocks via:
+///   - `availability == "geo_blocked"` (newer extractors)
+///   - top-level `_geo_block: true` (legacy / non-YouTube)
+///   - per-format `manifest_url` rejections (out of scope here — we
+///     report based on the metadata phase, not the download phase).
+///
+/// Country list comes from `_blocked_countries` array (YouTube-specific).
+#[allow(dead_code)] // wired into Info-feature handler in a follow-up step
+pub(super) fn parse_extended_metadata(json: &Value) -> ExtendedMetadata {
+    let thumbnail_max_url = json
+        .get("thumbnails")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    t.get("url").and_then(|u| u.as_str()).map(|u| {
+                        let w = t.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let h = t.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+                        // Rank by area so non-square thumbnails sort sensibly.
+                        (u.to_string(), w * h)
+                    })
+                })
+                .max_by_key(|(_, score)| *score)
+                .map(|(u, _)| u)
+        })
+        .or_else(|| get_json_value(json, "thumbnail"));
+
+    let upload_date = get_json_value(json, "upload_date");
+
+    let view_count = json.get("view_count").and_then(|v| v.as_u64());
+    let like_count = json.get("like_count").and_then(|v| v.as_u64());
+    let comment_count = json.get("comment_count").and_then(|v| v.as_u64());
+
+    let channel_url = get_json_value(json, "channel_url").or_else(|| get_json_value(json, "uploader_url"));
+
+    let tags = json
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|t| t.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    let categories = json
+        .get("categories")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|t| t.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    let description_full = get_json_value(json, "description");
+
+    let availability = get_json_value(json, "availability");
+
+    let geo_block = json.get("_geo_block").and_then(|v| v.as_bool()).unwrap_or(false)
+        || availability.as_deref() == Some("geo_blocked");
+
+    let blocked_countries = json
+        .get("_blocked_countries")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|c| c.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    ExtendedMetadata {
+        thumbnail_max_url,
+        upload_date,
+        view_count,
+        like_count,
+        comment_count,
+        channel_url,
+        tags,
+        categories,
+        description_full,
+        availability,
+        geo_block,
+        blocked_countries,
+    }
 }
 
 /// Tries to get the file size for a specific video quality from JSON
@@ -808,6 +892,110 @@ mod tests {
     fn test_get_json_value_string() {
         let json: Value = serde_json::json!({"title": "Test Video"});
         assert_eq!(get_json_value(&json, "title"), Some("Test Video".to_string()));
+    }
+
+    // ==================== parse_extended_metadata tests ====================
+
+    #[test]
+    fn extended_metadata_picks_widest_thumbnail() {
+        let json = serde_json::json!({
+            "thumbnails": [
+                {"url": "small.jpg",  "width": 320, "height": 180},
+                {"url": "medium.jpg", "width": 640, "height": 360},
+                {"url": "max.jpg",    "width": 1920, "height": 1080},
+            ]
+        });
+        let ext = parse_extended_metadata(&json);
+        assert_eq!(ext.thumbnail_max_url.as_deref(), Some("max.jpg"));
+    }
+
+    #[test]
+    fn extended_metadata_falls_back_to_thumbnail_field() {
+        let json = serde_json::json!({"thumbnail": "fallback.jpg"});
+        let ext = parse_extended_metadata(&json);
+        assert_eq!(ext.thumbnail_max_url.as_deref(), Some("fallback.jpg"));
+    }
+
+    #[test]
+    fn extended_metadata_extracts_counts_and_tags() {
+        let json = serde_json::json!({
+            "view_count": 12_345_u64,
+            "like_count": 678_u64,
+            "comment_count": 42_u64,
+            "tags": ["music", "live", "2024"],
+            "categories": ["Music"],
+            "upload_date": "20240315",
+        });
+        let ext = parse_extended_metadata(&json);
+        assert_eq!(ext.view_count, Some(12_345));
+        assert_eq!(ext.like_count, Some(678));
+        assert_eq!(ext.comment_count, Some(42));
+        assert_eq!(ext.tags, vec!["music", "live", "2024"]);
+        assert_eq!(ext.categories, vec!["Music"]);
+        assert_eq!(ext.upload_date.as_deref(), Some("20240315"));
+    }
+
+    #[test]
+    fn extended_metadata_geo_block_via_availability() {
+        let json = serde_json::json!({
+            "availability": "geo_blocked",
+            "_blocked_countries": ["RU", "BY", "KZ"],
+        });
+        let ext = parse_extended_metadata(&json);
+        assert!(ext.geo_block);
+        assert_eq!(ext.blocked_countries, vec!["RU", "BY", "KZ"]);
+        assert_eq!(ext.availability.as_deref(), Some("geo_blocked"));
+    }
+
+    #[test]
+    fn extended_metadata_geo_block_via_legacy_field() {
+        let json = serde_json::json!({"_geo_block": true});
+        let ext = parse_extended_metadata(&json);
+        assert!(ext.geo_block);
+        assert!(ext.blocked_countries.is_empty());
+    }
+
+    #[test]
+    fn extended_metadata_public_video_no_geo_block() {
+        let json = serde_json::json!({"availability": "public"});
+        let ext = parse_extended_metadata(&json);
+        assert!(!ext.geo_block);
+        assert!(ext.blocked_countries.is_empty());
+        assert_eq!(ext.availability.as_deref(), Some("public"));
+    }
+
+    #[test]
+    fn extended_metadata_channel_url_fallback_chain() {
+        // channel_url present → use it
+        let with_channel = serde_json::json!({
+            "channel_url": "https://youtube.com/@artist",
+            "uploader_url": "https://youtube.com/u/artist",
+        });
+        assert_eq!(
+            parse_extended_metadata(&with_channel).channel_url.as_deref(),
+            Some("https://youtube.com/@artist")
+        );
+
+        // only uploader_url → fallback
+        let with_uploader = serde_json::json!({"uploader_url": "https://soundcloud.com/artist"});
+        assert_eq!(
+            parse_extended_metadata(&with_uploader).channel_url.as_deref(),
+            Some("https://soundcloud.com/artist")
+        );
+
+        // neither → None
+        assert!(parse_extended_metadata(&serde_json::json!({})).channel_url.is_none());
+    }
+
+    #[test]
+    fn extended_metadata_empty_json_is_default() {
+        let ext = parse_extended_metadata(&serde_json::json!({}));
+        assert!(ext.thumbnail_max_url.is_none());
+        assert!(ext.upload_date.is_none());
+        assert!(ext.view_count.is_none());
+        assert!(ext.tags.is_empty());
+        assert!(!ext.geo_block);
+        assert!(ext.blocked_countries.is_empty());
     }
 
     #[test]
