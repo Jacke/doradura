@@ -114,6 +114,8 @@ pub(crate) enum CallbackKind {
     CutConfirm,
     #[strum(serialize = "dl_cancel")]
     DlCancel,
+    #[strum(serialize = "info")]
+    Info,
 }
 
 impl CallbackKind {

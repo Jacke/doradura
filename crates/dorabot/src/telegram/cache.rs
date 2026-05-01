@@ -1,4 +1,4 @@
-use crate::telegram::types::PreviewMetadata;
+use crate::telegram::types::{ExtendedMetadata, PreviewMetadata};
 use moka::future::Cache;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -38,6 +38,34 @@ impl PreviewCache {
 
 /// Global preview cache instance (singleton). TTL = 1 hour.
 pub static PREVIEW_CACHE: LazyLock<PreviewCache> = LazyLock::new(|| PreviewCache::new(Duration::from_secs(3600)));
+
+/// Cache for `ExtendedMetadata` (rich subset of yt-dlp `--dump-json` used by
+/// the Info feature). Same TTL as `PREVIEW_CACHE`, populated alongside it
+/// during preview fetch so Info actions don't re-invoke yt-dlp.
+pub struct ExtendedMetadataCache {
+    cache: Cache<String, ExtendedMetadata>,
+}
+
+impl ExtendedMetadataCache {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            cache: Cache::builder().max_capacity(5_000).time_to_live(ttl).build(),
+        }
+    }
+
+    pub async fn get(&self, key: &str) -> Option<ExtendedMetadata> {
+        self.cache.get(key).await
+    }
+
+    pub async fn set(&self, key: String, data: ExtendedMetadata) {
+        self.cache.insert(key, data).await;
+    }
+}
+
+/// Global extended-metadata cache instance (singleton). TTL = 1 hour,
+/// matched to `PREVIEW_CACHE` for predictable joint eviction.
+pub static EXTENDED_METADATA_CACHE: LazyLock<ExtendedMetadataCache> =
+    LazyLock::new(|| ExtendedMetadataCache::new(Duration::from_secs(3600)));
 
 /// Cache of Telegram `message_id`s keyed by the originating URL.
 pub struct LinkMessageCache {

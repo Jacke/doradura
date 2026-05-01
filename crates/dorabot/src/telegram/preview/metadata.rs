@@ -261,7 +261,6 @@ pub(super) fn get_json_value(json: &Value, key: &str) -> Option<String> {
 ///     report based on the metadata phase, not the download phase).
 ///
 /// Country list comes from `_blocked_countries` array (YouTube-specific).
-#[allow(dead_code)] // wired into Info-feature handler in a follow-up step
 pub(super) fn parse_extended_metadata(json: &Value) -> ExtendedMetadata {
     let thumbnail_max_url = json
         .get("thumbnails")
@@ -825,6 +824,14 @@ async fn get_preview_metadata_inner(
 
         // Store in the new preview cache
         PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
+
+        // Populate the Info-feature extended-metadata cache from the same
+        // yt-dlp JSON we already fetched — saves a second `--dump-json`
+        // call when the user opens the 📋 Инфо submenu.
+        let extended = parse_extended_metadata(&json_metadata);
+        crate::telegram::cache::EXTENDED_METADATA_CACHE
+            .set(url.as_str().to_string(), extended)
+            .await;
     } else {
         log::warn!("Not caching metadata with invalid title: '{}'", title);
     }

@@ -526,6 +526,19 @@ pub async fn handle_menu_callback(
                     }
                 }
 
+                CallbackKind::Info => {
+                    super::info::handle_info_callback(
+                        &bot,
+                        callback_id.clone(),
+                        chat_id,
+                        message_id,
+                        &data,
+                        Arc::clone(&db_pool),
+                        Arc::clone(&shared_storage),
+                    )
+                    .await?;
+                }
+
                 CallbackKind::DlCancel => {
                     let signalled = crate::download::cancel_registry::cancel(chat_id.0);
                     let answer_text = if signalled {

@@ -7,6 +7,7 @@ mod callback_preview;
 mod callback_router;
 mod callback_settings;
 pub(crate) mod helpers;
+mod info;
 pub(crate) mod lyrics;
 mod main_menu;
 pub mod player;

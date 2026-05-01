@@ -97,6 +97,12 @@ pub fn create_fallback_keyboard(
         }
     }
 
+    // Info submenu (v0.51.0): non-download actions on this URL —
+    // max-resolution thumbnail, geo-availability check, full metadata.
+    rows.push(vec![crate::telegram::cb(
+        "📋 Инфо".to_string(),
+        format!("info:menu:{}", url_id),
+    )]);
     rows.push(vec![crate::telegram::cb(
         "⚙️ Settings".to_string(),
         format!("pv:set:{}", url_id),
@@ -280,6 +286,13 @@ pub fn create_video_format_keyboard(
             buttons.push(feature_row);
         }
     }
+
+    // Info submenu (v0.51.0): non-download actions on this URL —
+    // max-resolution thumbnail, geo-availability check, full metadata.
+    buttons.push(vec![crate::telegram::cb(
+        "📋 Инфо".to_string(),
+        format!("info:menu:{}", url_id),
+    )]);
 
     // Settings button
     buttons.push(vec![crate::telegram::cb(
