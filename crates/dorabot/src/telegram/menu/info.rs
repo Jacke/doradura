@@ -91,6 +91,24 @@ async fn fetch_extended(url: &str) -> Option<ExtendedMetadata> {
     EXTENDED_METADATA_CACHE.get(url).await
 }
 
+/// Three mutually-exclusive geo states the source can expose.
+///
+/// YouTube `regionRestriction` is **either** a `blocked` blacklist **or** an
+/// `allowed` whitelist — never both, never partial. Most videos use the
+/// blocklist; whitelisted content tends to be region-locked premieres or
+/// country-restricted licensing.
+enum GeoState<'a> {
+    /// `_allowed_countries` populated → video plays only in this list.
+    Allowlist(&'a [String]),
+    /// `_blocked_countries` populated → video plays everywhere except this list.
+    Blocklist(&'a [String]),
+    /// `availability == "geo_blocked"` or legacy `_geo_block: true` but no
+    /// per-country list → we know it's blocked but not where.
+    OpaqueBlock,
+    /// No restriction surfaced.
+    Open,
+}
+
 /// Render and send the geo-availability card. Reads from
 /// `EXTENDED_METADATA_CACHE`; if the entry is gone (TTL eviction), falls
 /// back to a friendly "preview expired" reply rather than re-running
@@ -110,24 +128,48 @@ async fn send_geo_card(bot: &Bot, chat_id: ChatId, url_id: &str, db_pool: &DbPoo
         return;
     };
 
-    let availability = ext.availability.as_deref().unwrap_or("public");
-    let geo_block_line = if ext.geo_block {
-        "✅ Да".to_string()
+    // Allowlist (whitelist mode) wins over blocklist in display priority —
+    // when YouTube returns `_allowed_countries` we know exactly where it
+    // plays and want to show that explicitly. Blocklist mode (the common
+    // 90% case) shows what's restricted with "available everywhere else"
+    // implied. Both arrays empty = no restriction.
+    let geo_state = if !ext.allowed_countries.is_empty() {
+        GeoState::Allowlist(&ext.allowed_countries)
+    } else if !ext.blocked_countries.is_empty() {
+        GeoState::Blocklist(&ext.blocked_countries)
+    } else if ext.geo_block {
+        GeoState::OpaqueBlock
     } else {
-        "❌ Нет".to_string()
+        GeoState::Open
     };
+
+    let availability = ext.availability.as_deref().unwrap_or("public");
+    let geo_block_line = if ext.geo_block { "✅ Да" } else { "❌ Нет" };
 
     let mut card = String::new();
     card.push_str("🌍 *Доступность*\n\n");
     card.push_str(&format!("Статус: `{}`\n", escape_markdown_v2(availability)));
-    card.push_str(&format!("Гео\\-блокировка: {}\n", escape_markdown_v2(&geo_block_line)));
-    if !ext.blocked_countries.is_empty() {
-        card.push_str(&format!(
-            "Заблокировано в: {}\n",
-            escape_markdown_v2(&format_country_list(&ext.blocked_countries))
-        ));
-    } else if !ext.geo_block {
-        card.push_str("Доступно везде ✅\n");
+    card.push_str(&format!("Гео\\-блокировка: {}\n", escape_markdown_v2(geo_block_line)));
+    match geo_state {
+        GeoState::Allowlist(codes) => {
+            card.push_str(&format!(
+                "Доступно ТОЛЬКО в: {}\n",
+                escape_markdown_v2(&format_country_list(codes))
+            ));
+        }
+        GeoState::Blocklist(codes) => {
+            card.push_str(&format!(
+                "Заблокировано в: {}\n",
+                escape_markdown_v2(&format_country_list(codes))
+            ));
+            card.push_str("Доступно везде ещё ✅\n");
+        }
+        GeoState::OpaqueBlock => {
+            card.push_str("Источник не сообщает список стран\n");
+        }
+        GeoState::Open => {
+            card.push_str("Доступно везде ✅\n");
+        }
     }
 
     if let Err(e) = bot.send_message(chat_id, card).parse_mode(ParseMode::MarkdownV2).await {

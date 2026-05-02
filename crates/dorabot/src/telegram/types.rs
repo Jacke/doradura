@@ -59,9 +59,15 @@ pub struct ExtendedMetadata {
     pub availability: Option<String>,
     /// `true` when yt-dlp reports geo-blocking on this video.
     pub geo_block: bool,
-    /// ISO-3166-1 alpha-2 codes the video is blocked in. Empty when no
-    /// per-country block list is exposed by the source.
+    /// ISO-3166-1 alpha-2 codes the video is **blocked** in. Populated when
+    /// the source exposes a blocklist (most YouTube videos). Mutually
+    /// exclusive with `allowed_countries` — YouTube returns one OR the other,
+    /// never both.
     pub blocked_countries: Vec<String>,
+    /// ISO-3166-1 alpha-2 codes the video is **only available in**. Populated
+    /// when the source exposes an allowlist (rarer, ~5% of videos —
+    /// region-locked premieres, country-restricted licensing).
+    pub allowed_countries: Vec<String>,
 }
 
 impl PreviewMetadata {

@@ -313,6 +313,15 @@ pub(super) fn parse_extended_metadata(json: &Value) -> ExtendedMetadata {
         .map(|arr| arr.iter().filter_map(|c| c.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
 
+    // Allowlist counterpart — YouTube returns `_allowed_countries` for
+    // region-locked premieres and country-restricted licensed content
+    // (rarer, ~5% of videos). Mutually exclusive with `_blocked_countries`.
+    let allowed_countries = json
+        .get("_allowed_countries")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|c| c.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
     ExtendedMetadata {
         thumbnail_max_url,
         upload_date,
@@ -326,6 +335,7 @@ pub(super) fn parse_extended_metadata(json: &Value) -> ExtendedMetadata {
         availability,
         geo_block,
         blocked_countries,
+        allowed_countries,
     }
 }
 
@@ -960,6 +970,30 @@ mod tests {
         let ext = parse_extended_metadata(&json);
         assert!(ext.geo_block);
         assert!(ext.blocked_countries.is_empty());
+        assert!(ext.allowed_countries.is_empty());
+    }
+
+    #[test]
+    fn extended_metadata_allowlist_mode() {
+        // Region-locked premiere — YouTube returns the *positive* list of
+        // countries where the video plays. Mutually exclusive with
+        // `_blocked_countries`.
+        let json = serde_json::json!({
+            "availability": "needs_auth",
+            "_allowed_countries": ["US", "CA", "GB"],
+        });
+        let ext = parse_extended_metadata(&json);
+        assert_eq!(ext.allowed_countries, vec!["US", "CA", "GB"]);
+        assert!(ext.blocked_countries.is_empty());
+    }
+
+    #[test]
+    fn extended_metadata_no_restrictions_both_lists_empty() {
+        let json = serde_json::json!({"availability": "public"});
+        let ext = parse_extended_metadata(&json);
+        assert!(ext.blocked_countries.is_empty());
+        assert!(ext.allowed_countries.is_empty());
+        assert!(!ext.geo_block);
     }
 
     #[test]
