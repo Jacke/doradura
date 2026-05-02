@@ -9,8 +9,14 @@ pub enum YtDlpErrorType {
     InvalidCookies,
     /// YouTube detected a bot
     BotDetection,
-    /// Video is unavailable (private, deleted, regional restrictions)
+    /// Video is unavailable (private, deleted, removed). Distinct from
+    /// `GeoBlocked` so the user-facing message can give a useful next step.
     VideoUnavailable,
+    /// Source region-blocks the video (copyright grounds, "not available in
+    /// your country", "geo-blocked"). The bot can't bypass this — the
+    /// uploader/rights-holder restricted it. User-facing message tells them
+    /// the server's region is blocked, not that the bot is broken.
+    GeoBlocked,
     /// Network issues (timeouts, connection)
     NetworkError,
     /// Errors while downloading video fragments (usually temporary)
@@ -77,7 +83,24 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::BotDetection;
     }
 
-    // Check for unavailable video (private, deleted, geo-restricted)
+    // Geo / copyright block — checked BEFORE generic "video unavailable" so
+    // we can give the user a region-specific explanation. Order matters
+    // here: e.g. "video is not available in your country" matches both
+    // patterns; the geo path is the more specific one.
+    if stderr_lower.contains("not made this video available")
+        || stderr_lower.contains("not available in your country")
+        || stderr_lower.contains("not available in your region")
+        || stderr_lower.contains("geographical restriction")
+        || stderr_lower.contains("geo-blocked")
+        || stderr_lower.contains("geoblocked")
+        || stderr_lower.contains("blocked in your country")
+        || stderr_lower.contains("blocked it in your country")
+        || stderr_lower.contains("on copyright grounds")
+    {
+        return YtDlpErrorType::GeoBlocked;
+    }
+
+    // Check for unavailable video (private, deleted)
     if stderr_lower.contains("private video")
         || stderr_lower.contains("video unavailable")
         || stderr_lower.contains("this video is not available")
@@ -85,13 +108,6 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         || stderr_lower.contains("video has been removed")
         || stderr_lower.contains("this video does not exist")
         || stderr_lower.contains("video is not available")
-        || stderr_lower.contains("not made this video available")
-        || stderr_lower.contains("not available in your country")
-        || stderr_lower.contains("not available in your region")
-        || stderr_lower.contains("geographical restriction")
-        || stderr_lower.contains("geo-blocked")
-        || stderr_lower.contains("geoblocked")
-        || stderr_lower.contains("blocked in your country")
     {
         return YtDlpErrorType::VideoUnavailable;
     }
@@ -150,7 +166,10 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
             "❌ YouTube blocked the request.\n\nTry a different video or retry later.".to_string()
         }
         YtDlpErrorType::VideoUnavailable => {
-            "❌ Video unavailable.\n\nIt may be private, deleted, or geo-restricted (not available in the server's region).".to_string()
+            "❌ Video unavailable.\n\nLooks like it was deleted, made private, or removed by the uploader. Try a different link.".to_string()
+        }
+        YtDlpErrorType::GeoBlocked => {
+            "🌍 The rights-holder blocked this video in the server's region.\n\nThis isn't a bot bug — even with a proxy, YouTube enforces the uploader's country block. Try a different upload of the same track, or a re-upload from another channel.".to_string()
         }
         YtDlpErrorType::NetworkError => "❌ Network problem.\n\nTry again in a minute.".to_string(),
         YtDlpErrorType::FragmentError => "❌ Temporary issue while downloading video.\n\nPlease retry.".to_string(),
@@ -175,6 +194,7 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
         YtDlpErrorType::InvalidCookies => true,
         YtDlpErrorType::BotDetection => true,
         YtDlpErrorType::VideoUnavailable => false,
+        YtDlpErrorType::GeoBlocked => false, // user's content choice, not a service failure
         YtDlpErrorType::NetworkError => false,
         YtDlpErrorType::FragmentError => false, // Temporary fragment errors - no action needed
         YtDlpErrorType::PostprocessingError => false, // Retried with --fixup never
@@ -256,6 +276,9 @@ pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
             .to_string(),
         YtDlpErrorType::VideoUnavailable => {
             "ℹ️  Video unavailable - this is a normal situation, no action required".to_string()
+        }
+        YtDlpErrorType::GeoBlocked => {
+            "ℹ️  Geo-block by uploader/rights-holder - cannot bypass, no action required".to_string()
         }
         YtDlpErrorType::NetworkError => "🔧 FIX RECOMMENDATIONS:\n\
             • Check your internet connection\n\
@@ -346,21 +369,14 @@ mod tests {
 
     #[test]
     fn test_analyze_video_unavailable_error() {
+        // Note: geo-block patterns are now classified as GeoBlocked (separate test).
         let cases = vec![
             "Private video",
             "Video unavailable",
-            "This video is not available in your country",
             "Video is private",
             "Video has been removed",
             "This video does not exist",
             "Video is not available",
-            // Geo-restriction patterns
-            "ERROR: [youtube] ekr2nIex040: The uploader has not made this video available in your country",
-            "not available in your country",
-            "not available in your region",
-            "geographical restriction",
-            "geo-blocked",
-            "blocked in your country",
         ];
 
         for case in cases {
@@ -371,6 +387,48 @@ mod tests {
                 case
             );
         }
+    }
+
+    #[test]
+    fn test_analyze_geo_blocked_error() {
+        // Real-world stderr lines we've observed from yt-dlp on geo-restricted
+        // / copyright-blocked content. Distinct from VideoUnavailable so the
+        // user-facing message can give a region-specific explanation.
+        let cases = vec![
+            "ERROR: [youtube] EwzmQhhJoGY: Video unavailable. This video contains content from UMG, who has blocked it in your country on copyright grounds",
+            "ERROR: [youtube] oaSvxdwaJdg: The uploader has not made this video available in your country",
+            "not available in your country",
+            "not available in your region",
+            "geographical restriction",
+            "geo-blocked",
+            "geoblocked",
+            "blocked in your country",
+            "on copyright grounds",
+        ];
+
+        for case in cases {
+            assert_eq!(
+                analyze_ytdlp_error(case),
+                YtDlpErrorType::GeoBlocked,
+                "Failed for: {}",
+                case
+            );
+        }
+    }
+
+    #[test]
+    fn test_geo_blocked_error_message_explains_uploader_block() {
+        let msg = get_error_message(&YtDlpErrorType::GeoBlocked);
+        // Surface the key fact that this isn't a service failure.
+        assert!(msg.contains("rights-holder") || msg.contains("rights\u{2010}holder"));
+        assert!(msg.contains("region"));
+    }
+
+    #[test]
+    fn test_geo_blocked_does_not_notify_admin() {
+        // User's content choice — uploader-imposed geo-block is not
+        // actionable for the bot operator.
+        assert!(!should_notify_admin(&YtDlpErrorType::GeoBlocked));
     }
 
     #[test]

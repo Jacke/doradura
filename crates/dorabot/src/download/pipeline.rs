@@ -1414,6 +1414,7 @@ pub async fn handle_pipeline_error(
             ytdlp_errors::YtDlpErrorType::InvalidCookies => ("🍪", "COOKIES EXPIRED"),
             ytdlp_errors::YtDlpErrorType::BotDetection => ("🤖", "BOT DETECTION / 403"),
             ytdlp_errors::YtDlpErrorType::VideoUnavailable => ("🚫", "VIDEO UNAVAILABLE"),
+            ytdlp_errors::YtDlpErrorType::GeoBlocked => ("🌍", "GEO-BLOCKED BY UPLOADER"),
             ytdlp_errors::YtDlpErrorType::NetworkError => ("🌐", "NETWORK ERROR"),
             ytdlp_errors::YtDlpErrorType::FragmentError => ("📦", "FRAGMENT ERROR"),
             ytdlp_errors::YtDlpErrorType::PostprocessingError => ("🎬", "FFMPEG / POSTPROCESS"),

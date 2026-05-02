@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.51.0-alpha.3"
+version = "0.51.0-alpha.4"
 edition = "2024"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"

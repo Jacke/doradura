@@ -1122,6 +1122,7 @@ where
                     YtDlpErrorType::InvalidCookies => "invalid_cookies",
                     YtDlpErrorType::BotDetection => "bot_detection",
                     YtDlpErrorType::VideoUnavailable => "video_unavailable",
+                    YtDlpErrorType::GeoBlocked => "geo_blocked",
                     YtDlpErrorType::NetworkError => "network",
                     YtDlpErrorType::FragmentError => "fragment_error",
                     YtDlpErrorType::PostprocessingError => "postprocessing_error",
