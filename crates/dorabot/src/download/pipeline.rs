@@ -774,6 +774,41 @@ pub async fn execute(
     let file_format_str = format.label().to_string();
     let canonical_url = doracore::download::url_canonical::canonicalize_url(url.as_str());
 
+    // Re-hydrate title/artist for cache-hit branches.
+    //
+    // Cache hits short-circuit the yt-dlp metadata fetch, but downstream
+    // features (lyrics fetcher in `audio.rs`, share-page builder, history
+    // logger) need real `(title, artist)` to function. Empty strings made
+    // the lyrics handler silently no-op when the user clicked "📝 Lyrics
+    // ON" on a previously-downloaded URL — the toggle worked but the
+    // picker never showed because `show_lyrics_picker_for_audio` bails on
+    // empty title.
+    //
+    // Lookup chain (cheapest → most authoritative):
+    //   1. PREVIEW_CACHE — populated when user previewed in the last hour.
+    //   2. download_history record (find_cached_file_id_with_meta) — set
+    //      at original cache time, persists for the lifetime of the row.
+    let cached_title_artist = || async {
+        if let Some(p) = crate::telegram::cache::PREVIEW_CACHE.get(url.as_str()).await
+            && !p.title.trim().is_empty()
+        {
+            return (p.title, p.artist);
+        }
+        if let Some(storage) = shared_storage {
+            let (vq, ab) = match format {
+                PipelineFormat::Audio { bitrate, .. } => (None, bitrate.as_deref()),
+                PipelineFormat::Video { quality, .. } => (quality.as_deref(), None),
+            };
+            if let Ok(Some((_fid, title, artist))) = storage
+                .find_cached_file_id_with_meta(&canonical_url, format.label(), vq, ab)
+                .await
+            {
+                return (title, artist);
+            }
+        }
+        (String::new(), String::new())
+    };
+
     // ── Vault cache lookup (audio only) ──
     if matches!(format, PipelineFormat::Audio { .. })
         && let Some(shared_storage) = shared_storage
@@ -793,13 +828,21 @@ pub async fn execute(
                     .inc();
                 let file_size = sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64;
                 let duration = sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0);
+                let (cached_title, cached_artist) = cached_title_artist().await;
+                let display_title: Arc<str> = if cached_title.is_empty() {
+                    Arc::from("(cached)")
+                } else if cached_artist.trim().is_empty() {
+                    Arc::from(cached_title.as_str())
+                } else {
+                    Arc::from(format!("{} - {}", cached_artist, cached_title))
+                };
                 return Ok(PipelineResult {
                     sent_message,
                     file_size,
                     duration,
-                    title: String::new(),
-                    artist: String::new(),
-                    display_title: Arc::from("(cached)"),
+                    title: cached_title,
+                    artist: cached_artist,
+                    display_title,
                     download_path: String::new(),
                     output: DownloadOutput {
                         file_path: String::new(),
@@ -868,13 +911,21 @@ pub async fn execute(
                             sent_message.video().map(|v| v.duration.seconds()).unwrap_or(0),
                         ),
                     };
+                    let (cached_title, cached_artist) = cached_title_artist().await;
+                    let display_title: Arc<str> = if cached_title.is_empty() {
+                        Arc::from("(cached)")
+                    } else if cached_artist.trim().is_empty() {
+                        Arc::from(cached_title.as_str())
+                    } else {
+                        Arc::from(format!("{} - {}", cached_artist, cached_title))
+                    };
                     return Ok(PipelineResult {
                         sent_message,
                         file_size,
                         duration,
-                        title: String::new(),
-                        artist: String::new(),
-                        display_title: Arc::from("(cached)"),
+                        title: cached_title,
+                        artist: cached_artist,
+                        display_title,
                         download_path: String::new(),
                         output: DownloadOutput {
                             file_path: String::new(),

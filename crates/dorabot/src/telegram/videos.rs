@@ -343,34 +343,107 @@ fn build_convert_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup 
     InlineKeyboardMarkup::new(rows)
 }
 
-/// Build upload info text for Level 1 display
+/// Build upload info text for Level 1 display.
+///
+/// Shows the full metadata available from `UploadEntry` (DB-stored at upload
+/// time) — type, dimensions, duration, file size, format, MIME, original
+/// filename, upload date. Codec / bitrate / fps / sample_rate are NOT
+/// surfaced here because they require an `ffprobe` pass on the file bytes,
+/// which would add a round-trip per click; that's tracked separately in
+/// TODO as the V2 ffprobe-rich-metadata enrichment.
 fn build_upload_info_text(upload: &UploadEntry) -> String {
     let icon = get_media_icon(&upload.media_type);
 
-    let mut info_parts = Vec::new();
-    if let Some(size) = upload.file_size {
-        info_parts.push(format_file_size(size));
-    }
-    if let Some(dur) = upload.duration {
-        info_parts.push(format_duration(dur));
-    }
-    if let Some(w) = upload.width
-        && let Some(h) = upload.height
-    {
-        info_parts.push(format!("{}x{}", w, h));
+    // Primary metric line: the headline values relevant to the media type.
+    // Order chosen so the most-asked-for value comes first.
+    let mut primary = Vec::new();
+    match upload.media_type.as_str() {
+        "video" => {
+            if let Some(w) = upload.width
+                && let Some(h) = upload.height
+            {
+                primary.push(format!("{}×{}", w, h));
+            }
+            if let Some(d) = upload.duration {
+                primary.push(format_duration(d));
+            }
+            if let Some(s) = upload.file_size {
+                primary.push(format_file_size(s));
+            }
+        }
+        "audio" => {
+            if let Some(d) = upload.duration {
+                primary.push(format_duration(d));
+            }
+            if let Some(s) = upload.file_size {
+                primary.push(format_file_size(s));
+            }
+        }
+        "photo" => {
+            if let Some(w) = upload.width
+                && let Some(h) = upload.height
+            {
+                primary.push(format!("{}×{}", w, h));
+            }
+            if let Some(s) = upload.file_size {
+                primary.push(format_file_size(s));
+            }
+        }
+        // document / unknown fall through to size-only.
+        _ => {
+            if let Some(s) = upload.file_size {
+                primary.push(format_file_size(s));
+            }
+        }
     }
 
-    let info_str = if info_parts.is_empty() {
+    // Secondary metadata — format / MIME type / original filename / upload date.
+    // Shown on a second line so the headline stays scannable.
+    let mut secondary = Vec::new();
+    if let Some(fmt) = upload.file_format.as_deref().filter(|s| !s.is_empty()) {
+        secondary.push(format!("📦 {}", fmt.to_uppercase()));
+    }
+    if let Some(mime) = upload.mime_type.as_deref().filter(|s| !s.is_empty()) {
+        secondary.push(mime.to_string());
+    }
+    if let Some(orig) = upload
+        .original_filename
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != upload.title)
+    {
+        secondary.push(format!("📄 {}", orig));
+    }
+    // Upload date — show YYYY-MM-DD HH:MM (drop seconds + TZ tail) for compactness.
+    if !upload.uploaded_at.is_empty() {
+        let trimmed = upload
+            .uploaded_at
+            .split('.')
+            .next()
+            .unwrap_or(&upload.uploaded_at)
+            .replace('T', " ");
+        let trimmed: String = trimmed.chars().take(16).collect();
+        if !trimmed.is_empty() {
+            secondary.push(format!("📅 {}", trimmed));
+        }
+    }
+
+    let primary_str = if primary.is_empty() {
         String::new()
     } else {
-        format!("\n└ {}", escape_markdown(&info_parts.join(" · ")))
+        format!("\n└ {}", escape_markdown(&primary.join(" · ")))
+    };
+    let secondary_str = if secondary.is_empty() {
+        String::new()
+    } else {
+        format!("\n  {}", escape_markdown(&secondary.join(" · ")))
     };
 
     format!(
-        "{} *File:* {}{}\n\nWhat to do?",
+        "{} *File:* {}{}{}\n\nWhat to do?",
         icon,
         escape_markdown(&upload.title),
-        info_str
+        primary_str,
+        secondary_str
     )
 }
 
@@ -1580,5 +1653,64 @@ mod tests {
         assert!(text.contains("🎬"), "Should have video icon");
         assert!(text.contains("Test Video"), "Should contain title");
         assert!(text.contains("What to do"), "Should ask what to do");
+    }
+
+    #[test]
+    fn test_build_upload_info_text_video_includes_rich_metadata() {
+        // Resolution-first ordering (video) + secondary metadata line.
+        let upload = make_upload(42, "video", "Test Video");
+        let text = build_upload_info_text(&upload);
+
+        // Headline metrics: WxH, duration, size — in that order for video.
+        assert!(text.contains("1920×1080"), "video should list resolution: {text}");
+        assert!(
+            text.contains("MP4"),
+            "should surface uppercased format on secondary line: {text}"
+        );
+        // Original filename is included only if it differs from title; in
+        // make_upload it's "Test Video.test", so it should appear (the dot
+        // gets MarkdownV2-escaped to `\.` in the rendered output).
+        assert!(
+            text.contains("Test Video") && text.contains("test"),
+            "should show original filename when distinct: {text}"
+        );
+        assert!(text.contains("📅"), "should show upload date emoji: {text}");
+    }
+
+    #[test]
+    fn test_build_upload_info_text_audio_omits_dimensions() {
+        let mut upload = make_upload(7, "audio", "Track");
+        upload.width = None;
+        upload.height = None;
+        let text = build_upload_info_text(&upload);
+
+        assert!(text.contains("🎵"), "audio icon: {text}");
+        // Audio shouldn't render a "×" because there are no dimensions.
+        assert!(!text.contains('×'), "audio info must not contain '×': {text}");
+    }
+
+    #[test]
+    fn test_build_upload_info_text_photo_shows_dimensions_and_size() {
+        let upload = make_upload(9, "photo", "Selfie");
+        let text = build_upload_info_text(&upload);
+
+        assert!(text.contains("📷"), "photo icon: {text}");
+        assert!(text.contains("1920×1080"), "photo headline includes WxH: {text}");
+    }
+
+    #[test]
+    fn test_build_upload_info_text_skips_original_filename_when_same_as_title() {
+        let mut upload = make_upload(11, "video", "Cinematic");
+        upload.original_filename = Some("Cinematic".to_string());
+        let text = build_upload_info_text(&upload);
+
+        // When original filename == title, secondary line should NOT
+        // duplicate it. Counts of "Cinematic" should be exactly 1
+        // (the headline), not 2.
+        assert_eq!(
+            text.matches("Cinematic").count(),
+            1,
+            "should show title once, not duplicate via original_filename: {text}"
+        );
     }
 }

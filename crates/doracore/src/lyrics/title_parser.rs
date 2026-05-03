@@ -133,6 +133,9 @@ pub fn extract_artist_track_candidates(title: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Diff-friendly assertions for the string-heavy tests below — Vec<(String, String)>
+    // mismatches print like a unified diff instead of a multi-line debug dump.
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn clean_strips_official_brackets() {

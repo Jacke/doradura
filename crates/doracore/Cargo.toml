@@ -29,16 +29,13 @@ tracing-subscriber = { workspace = true }
 tracing-log = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
-regex = { workspace = true }
 lazy-regex = { workspace = true }
 indoc = { workspace = true }
 secrecy = { workspace = true }
 moka = { workspace = true }
-dashmap = { workspace = true }
 fs-err = { workspace = true }
 itertools = { workspace = true }
 tokio-util = { workspace = true }
-figment = { workspace = true }
 strum = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
@@ -59,7 +56,6 @@ urlencoding = "2.1"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
-tower = "0.4"
 axum = { workspace = true }
 
 [build-dependencies]

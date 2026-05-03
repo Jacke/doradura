@@ -39,8 +39,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
   - Effort: 1.5–2 h
 - [ ] **GH #5 speed mod for uploaded files** — apply `apply_speed_to_file` to user uploads (currently downloads only).
   - Effort: 1.5 h
-- [ ] **GH #4 file info on uploads** — show metadata when user picks an upload.
-  - Effort: 1 h
+- [x] ~~**GH #4 file info on uploads**~~ V1 done in v0.51.0-alpha.10 — `crates/dorabot/src/telegram/videos.rs::build_upload_info_text` now renders rich metadata available from `UploadEntry`: media-type-specific headline (video: WxH · duration · size; audio: duration · size; photo: WxH · size), plus secondary line with format / MIME / original-filename / upload-date. 4 new test cases. **V2 — ffprobe-rich (codec/bitrate/fps/sample_rate)** — separate task: needs DB migration (add columns) + ffprobe-on-upload pipeline + backfill. Issue #4 stays open until V2 lands.
 - [x] **GH #14 queue depth + wait time metrics** — queue depth (high/medium/low) was already in `generate_health_report`; added avg-wait line via new `get_histogram_average(QUEUE_WAIT_TIME_SECONDS)` helper. ✅ done
 - [ ] **GH #10 rate limiting for conversions** — per-user / per-feature throttling.
   - Effort: 2 h
@@ -75,18 +74,13 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 
 - [ ] **`.cargo/config.toml` linker speedup** — `lld` on macOS (need `brew install lld` first), `mold` on Linux (Alpine `mold` exists in `main` repo, but production Dockerfile change requires staging build to verify musl/static-link compatibility — too risky to ship blind).
   - Effort: 5 min config + 30 min Dockerfile changes for mold + staging test
-- [ ] **`cargo-sweep` weekly cron** — clean target/incremental files older than 14 days. Currently grows to 40+ GB unmonitored.
-  - Effort: 5 min setup
+- [x] ~~**`cargo-sweep` weekly cron**~~ — `scripts/cargo-sweep.sh` (executable) wraps `cargo-sweep --time 14` with size before/after reporting. Crontab one-liner documented in script header (`0 4 * * 0` weekly). Production-safe — dev-only, Railway doesn't keep `target/` between builds. Install: `cargo install cargo-sweep`. ✅ done
 - [ ] **`cargo-deny` in pre-commit** — license check, security advisories, banned/duplicate deps.
   - Effort: 1 h
 - [x] **`cargo-audit` in CI** — added new `audit` job in `.github/workflows/ci.yml`. `continue-on-error: true` so transitive-dep advisories surface in PR checks without blocking merges. ✅ done
 - [ ] **`cargo-llvm-cov` for coverage** — currently no coverage reporting.
   - Effort: 1 h
-- [~] **`cargo-machete`** — ran 2026-05-01, found unused deps to drop:
-  - `crates/doratui/Cargo.toml`: `r2d2`, `r2d2_sqlite`, `rusqlite`, `uuid`
-  - `crates/doracore/Cargo.toml`: `dashmap`, `figment`, `regex` (only `lazy-regex` is used directly), `tower`
-  - `crates/dorabot/Cargo.toml`: `bytes`, `fluent-templates`, `hex`, `hmac`, `r2d2`, `r2d2_sqlite`, `refinery`, `select`, `sha2`, `tower`
-  - Effort: 15 min — drop one PR, verify `cargo check --workspace` + `cargo test` clean.
+- [x] ~~**`cargo-machete`** — ran 2026-05-01, found unused deps to drop~~ ✅ done in v0.51.0-alpha.10. All 17 unused workspace deps removed across doratui (4), doracore (3 — `regex` kept transitively via `lazy-regex`, removed direct entry), dorabot (10). `cargo machete` now reports `Good job!` (zero unused). `cargo check --workspace --all-targets` clean.
 - [x] **`rustfmt.toml`** — already exists at repo root with team conventions (max_width=120, edition=2024, reorder_imports, merge_derives, etc.). ✅ done (pre-existing)
 
 ---
@@ -166,7 +160,7 @@ Synthesized from Reddit r/rust 2024 thread + freestyle.sh 2025 list + Pragmatic 
 
 | Crate | Why | Where to apply | Activation trigger | ROI |
 |---|---|---|---|---|
-| **`pretty_assertions`** | Diff-style assert failure output | All `tests/*.rs` and `#[cfg(test)]` modules | Add now — drop-in dev-dep, no code change | 🟢 5-min payoff |
+| ~~**`pretty_assertions`**~~ ✅ wired in workspace deps + `lyrics::title_parser` and `core::country` test mods (v0.51.0-alpha.9). Add `use pretty_assertions::assert_eq;` to new test modules where struct/Vec equality is checked — gives unified-diff failure output. | | | |
 | **`bytes`** | `Bytes` / `BytesMut` zero-copy buffers for HTTP/file paths | `crates/doracore/src/download/source/http.rs` chunked download body, `send.rs` upload buffers | When we touch HTTP source for any reason | 🟡 Medium — already on main TODO `bytes::Bytes for zero-copy buffers` |
 | **`camino`** | `Utf8Path` / `Utf8PathBuf` — UTF-8-guaranteed paths | yt-dlp temp paths in `download_output.file_path`, `actual_file_path` chains in `video.rs` | Next time we audit path handling | 🟡 Medium — eliminates `.to_string_lossy()` clutter |
 | **`mockall`** | Mock traits at compile time | Mock `DownloadSource` for unit tests covering pipeline branches without invoking real yt-dlp | When we add the next round of pipeline tests | 🟡 Medium — pairs with proptest |

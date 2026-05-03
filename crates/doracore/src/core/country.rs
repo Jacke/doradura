@@ -69,6 +69,7 @@ pub fn format_country_list(codes: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn flag_for_known_codes() {
