@@ -118,7 +118,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 backon = "1.5"
 figment = { version = "0.10", features = ["env", "toml", "yaml"] }
 uuid = "1.1"
-rand = "0.8"
+rand = "0.10"
 base64 = "0.22.1"
 async-trait = "0.1.50"
 
