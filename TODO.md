@@ -58,8 +58,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 
 ## 🔵 Big refactors (own session each)
 
-- [ ] **Split `crates/dorabot/src/telegram/commands/circle.rs` (2572 LOC)** into `circle/{parser,video_clip,audio_cut,gif,ringtone}.rs`.
-  - Effort: 2 h · Win: faster compile, easier maintenance, easier to test pieces
+- [~] **Split `circle.rs` (2572 LOC)** Phase 1 done in v0.51.0-alpha.12: extracted `circle/parser.rs` (314 LOC, self-contained — `CutSegment`, `parse_*` family, `format_timestamp`, `parse_audio_command_segment`). `circle/mod.rs` keeps the ffmpeg/Telegram orchestration (~2274 LOC). Phase 2 (split mod.rs further into `filter.rs` + `audio_cut.rs` + `video_clip.rs`) — TBD; current state is testable and the parsers are now isolated.
 - [ ] **`.unwrap()` audit (812 calls)** — gradually replace with `?`, `.expect("INVARIANT: …")`, `.unwrap_or_default()`. Remove `#![allow(clippy::unwrap_used)]` per file as cleanup progresses.
   - Effort: 2–3 h initial, ongoing
 - [ ] **anyhow → thiserror migration in `dorabot`** — 211 `anyhow::*` usages = heap-allocated errors + dyn dispatch. Define typed errors per module.
@@ -104,7 +103,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 - [ ] **`tokio_util::sync::CancellationToken`** — replace our custom `Arc<AtomicBool>` cancel signal with hierarchical/structured cancellation. Solves edge cases bare bool can't.
   - Effort: 2 h
 - [ ] **Newtypes for IDs** — `ChatId(i64)`, `UserId(i64)`, `MessageId(i32)` instead of bare `i64`. Compile-time prevents id-swap bugs.
-  - Effort: 4–6 h (touches many sites)
+  - **Reality check (2026-05-03 scan):** 388 sites with `chat_id: i64` / `user_id: i64` / `telegram_id: i64` / `message_id: i32`. teloxide already provides `ChatId(i64)` (we use it at the bot boundary), so the missing newtypes are our own `UserId`/`TelegramId` and database-side `MessageId`. The refactor needs `sqlx::Type` + `Encode` + `Decode` impls for sqlx bindings, serde derives for cache/queue payloads, `From<teloxide::types::ChatId>` impl, and 388 call-site touches. Realistic effort: **1–2 days** with phased migration (one module at a time + integration tests at each phase). NOT a 4-6 h refactor as originally listed. **Defer until either a real id-swap bug bites in prod, or we tackle it as a dedicated multi-day effort.**
 - [ ] **`arc-swap` for read-heavy shared state** — config reads, source registry. Faster than `RwLock<Arc<T>>`.
   - Effort: 1 h
 - [ ] **`bytes::Bytes` for zero-copy buffers** in HTTP / file I/O paths.
