@@ -35,8 +35,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 ## 🟡 Medium-impact features / cleanups
 
 - [ ] **AV1 Lossless mode** — true byte-1:1 for AV1 sources, sent as `.mkv` document. **User explicitly rejected this — skip.**
-- [ ] **GH #8 progress for remaining ffmpeg sites** — `apply_speed_to_file`, `voice_effects`, retry paths in `circle.rs`.
-  - Effort: 1.5–2 h
+- [~] **GH #8 progress for remaining ffmpeg sites** — Phase 1 done in v0.51.0-alpha.13: `apply_speed_to_file_with_pulses` + wired into `video.rs:218` (download-time speed change). User now sees `⚡ Applying 1.5× speed… Ns` instead of silence on long sources. Channel pattern: ffmpeg `on_pulse(elapsed)` → unbounded mpsc → watcher task edits the existing progress message. Phase 2: wire `voice_effects` (audio voice morphing) + retry paths in `circle/mod.rs` (when first ffmpeg attempt fails) — TBD.
 - [ ] **GH #5 speed mod for uploaded files** — apply `apply_speed_to_file` to user uploads (currently downloads only).
   - Effort: 1.5 h
 - [x] ~~**GH #4 file info on uploads**~~ V1 done in v0.51.0-alpha.10 — `crates/dorabot/src/telegram/videos.rs::build_upload_info_text` now renders rich metadata available from `UploadEntry`: media-type-specific headline (video: WxH · duration · size; audio: duration · size; photo: WxH · size), plus secondary line with format / MIME / original-filename / upload-date. 4 new test cases. **V2 — ffprobe-rich (codec/bitrate/fps/sample_rate)** — separate task: needs DB migration (add columns) + ffprobe-on-upload pipeline + backfill. Issue #4 stays open until V2 lands.
@@ -74,8 +73,7 @@ Compiled from session brainstorms, code reviews, and Rust audit. Organized by im
 - [ ] **`.cargo/config.toml` linker speedup** — `lld` on macOS (need `brew install lld` first), `mold` on Linux (Alpine `mold` exists in `main` repo, but production Dockerfile change requires staging build to verify musl/static-link compatibility — too risky to ship blind).
   - Effort: 5 min config + 30 min Dockerfile changes for mold + staging test
 - [x] ~~**`cargo-sweep` weekly cron**~~ — `scripts/cargo-sweep.sh` (executable) wraps `cargo-sweep --time 14` with size before/after reporting. Crontab one-liner documented in script header (`0 4 * * 0` weekly). Production-safe — dev-only, Railway doesn't keep `target/` between builds. Install: `cargo install cargo-sweep`. ✅ done
-- [ ] **`cargo-deny` in pre-commit** — license check, security advisories, banned/duplicate deps.
-  - Effort: 1 h
+- [x] ~~**`cargo-deny` in pre-commit + CI**~~ done in v0.51.0-alpha.13. `deny.toml` configures advisories (RUSTSEC), license allowlist (MIT/Apache-2/BSD/MPL-2/Zlib/Unicode/NCSA/CDLA-Permissive-2.0), and bans (`openssl`/`openssl-sys` rejected — we use rustls). Pre-commit runs `cargo deny check advisories licenses` when binary is installed (silently skipped otherwise). CI `audit` job adds the same check (`bans` too) — informational, non-blocking. Three transitive `unmaintained`/yanked advisories explicitly ignored with rationale (paste, dotenv, core2 — all out-of-our-control via image/rav1e). `health-monitor` Cargo.toml gained the missing `license = "MIT"` field. ✅ done
 - [x] **`cargo-audit` in CI** — added new `audit` job in `.github/workflows/ci.yml`. `continue-on-error: true` so transitive-dep advisories surface in PR checks without blocking merges. ✅ done
 - [ ] **`cargo-llvm-cov` for coverage** — currently no coverage reporting.
   - Effort: 1 h

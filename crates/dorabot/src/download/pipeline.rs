@@ -99,7 +99,31 @@ fn pipeline_video_quality(format: &PipelineFormat) -> Option<&str> {
 
 /// Apply speed modification to a downloaded media file using ffmpeg.
 /// Replaces the original file in-place.
+///
+/// Backwards-compatible wrapper around [`apply_speed_to_file_with_pulses`]
+/// for callers that don't want progress updates (tests, batch jobs, code
+/// paths without a Telegram status message in scope).
 pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> anyhow::Result<String> {
+    apply_speed_to_file_with_pulses::<fn(std::time::Duration)>(file_path, speed, None).await
+}
+
+/// Same as [`apply_speed_to_file`] but with an optional progress-pulse
+/// callback (GH #8). When `Some`, the closure is invoked every 3 seconds
+/// with the elapsed wall-clock duration since ffmpeg started so callers
+/// can edit a Telegram status message ("⚡ Applying 1.5× speed… 12s").
+///
+/// The previous silent `cmd.output().await` made the bot look frozen on
+/// long source files (a 60-min video at 0.5× takes ~30s on Railway shared
+/// infra). Pass `None` to fall through to the original code path with
+/// zero interval-tick overhead.
+pub(crate) async fn apply_speed_to_file_with_pulses<F>(
+    file_path: &str,
+    speed: f32,
+    on_pulse: Option<F>,
+) -> anyhow::Result<String>
+where
+    F: FnMut(std::time::Duration) + Send + 'static,
+{
     if (speed - 1.0).abs() < 0.01 {
         return Ok(file_path.to_string());
     }
@@ -144,7 +168,35 @@ pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> anyhow::
     }
     cmd.arg(&tmp_path);
 
-    let output = cmd.output().await.with_context(|| "ffmpeg speed failed")?;
+    // 10-min hard cap on a speed pass (atempo is fast; this is a sanity
+    // backstop in case ffmpeg deadlocks on a corrupt source).
+    let timeout = std::time::Duration::from_secs(10 * 60);
+    let outcome = match on_pulse {
+        Some(cb) => {
+            doracore::core::process::run_with_pulses(&mut cmd, timeout, std::time::Duration::from_secs(3), cb).await
+        }
+        None => {
+            cmd.kill_on_drop(true);
+            match tokio::time::timeout(timeout, cmd.output()).await {
+                Ok(Ok(o)) => doracore::core::process::PulseOutcome::Done(o),
+                Ok(Err(e)) => doracore::core::process::PulseOutcome::Io(e),
+                Err(_) => doracore::core::process::PulseOutcome::Timeout,
+            }
+        }
+    };
+
+    let output = match outcome {
+        doracore::core::process::PulseOutcome::Done(o) => o,
+        doracore::core::process::PulseOutcome::Io(e) => {
+            let _ = fs_err::tokio::remove_file(&tmp_path).await;
+            return Err(anyhow::anyhow!("ffmpeg speed failed: {}", e));
+        }
+        doracore::core::process::PulseOutcome::Timeout => {
+            let _ = fs_err::tokio::remove_file(&tmp_path).await;
+            anyhow::bail!("ffmpeg speed timed out after {}s", timeout.as_secs());
+        }
+    };
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("ffmpeg speed error: {}", stderr);

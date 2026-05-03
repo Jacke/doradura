@@ -215,7 +215,33 @@ pub async fn download_and_send_video(
             }
 
             let actual_file_path = if let Some(spd) = speed {
-                match pipeline::apply_speed_to_file(&actual_file_path, spd).await {
+                // GH #8: surface a "still working" pulse to the user. atempo+
+                // setpts on a long source can take 30-60s on Railway shared
+                // infra; without progress edits the bot looks frozen. Channel
+                // pattern: ffmpeg subprocess fires `on_pulse(elapsed)` every 3s
+                // → unbounded mpsc → watcher task edits the existing progress
+                // message in-place. Watcher exits when the channel closes
+                // (after the speed pass returns).
+                let bot_pulse = bot_clone.clone();
+                let pulse_msg_id = progress_msg.message_id;
+                let pulse_chat = chat_id;
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<std::time::Duration>();
+                let watcher = tokio::spawn(async move {
+                    if let Some(mid) = pulse_msg_id {
+                        while let Some(elapsed) = rx.recv().await {
+                            let text = format!("⚡ Applying {spd}× speed… {}s", elapsed.as_secs());
+                            let _ = bot_pulse.edit_message_text(pulse_chat, mid, text).await;
+                        }
+                    }
+                });
+                let on_pulse = move |elapsed: std::time::Duration| {
+                    let _ = tx.send(elapsed);
+                };
+                let result = pipeline::apply_speed_to_file_with_pulses(&actual_file_path, spd, Some(on_pulse)).await;
+                // Drop the sender by letting `tx` go out of scope via the
+                // closure dying — the mpsc closes and the watcher exits.
+                let _ = watcher.await;
+                match result {
                     Ok(path) => path,
                     Err(e) => {
                         log::warn!("Speed filter failed, sending at original speed: {}", e);

@@ -2,6 +2,8 @@
 name = "health-monitor"
 version = "0.25.3"
 edition = "2024"
+license = "MIT"
+description = "External health monitor for doradura — pings the bot's /health endpoint and toggles the Telegram avatar/name on liveness transitions."
 
 [dependencies]
 reqwest = { workspace = true }

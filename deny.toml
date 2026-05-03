@@ -1,0 +1,93 @@
+# cargo-deny config for doradura — supply-chain & license guardrails.
+#
+# Run locally: `cargo deny check`
+# CI:          `.github/workflows/ci.yml` `audit` job (informational, non-blocking)
+# Pre-commit:  `.git/hooks/pre-commit` invokes `cargo deny check advisories licenses`
+#              if cargo-deny is installed; missing binary is silently skipped so
+#              the gate doesn't break for contributors who haven't installed it.
+#
+# Goal: catch (a) known CVEs, (b) license violations, (c) banned crates BEFORE
+# they reach origin/main. Less reactive than Dependabot — Dependabot only fires
+# AFTER a vulnerable version is committed.
+
+[graph]
+all-features = false
+
+# ─────────────────────────────────────────────────────────────────────
+# Advisories — RUSTSEC CVE database
+# ─────────────────────────────────────────────────────────────────────
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# `vulnerability` and `unmaintained` removed from this section since
+# cargo-deny 0.16+; severity comes through the `severity-threshold`
+# field below or per-advisory `ignore` list.
+yanked = "warn"
+ignore = [
+    # Transitive deps we can't easily upgrade — pulled in by image/rav1e
+    # (`paste`, `core2`) and various crates with `dotenv` legacy. None of
+    # these are exploitable in our usage and removing them requires upstream
+    # ecosystem moves. Re-evaluate when image/rav1e bump.
+    { id = "RUSTSEC-2024-0436", reason = "paste — unmaintained, transitive via image→rav1e; not security-critical" },
+    { id = "RUSTSEC-2021-0141", reason = "dotenv — unmaintained; we use dotenvy directly, dotenv only via test/dev transitive" },
+    { id = "RUSTSEC-2026-0105", reason = "core2 yanked — transitive via image→rav1e→bitstream-io; no exploitable code path" },
+]
+
+# ─────────────────────────────────────────────────────────────────────
+# Licenses — allowlist policy
+# ─────────────────────────────────────────────────────────────────────
+[licenses]
+# Only crates with one of these SPDX expressions are accepted in the build.
+# Anything else → cargo-deny errors. AGPL/GPL/LGPL deliberately excluded —
+# a Telegram-bot binary is "distributed software" and copyleft would force
+# the entire codebase open under the same terms.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",       # weak copyleft — file-level only, OK for libs
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unlicense",
+    "OpenSSL",       # rustls indirect; modern equivalent of the OpenSSL terms
+    "0BSD",
+    "NCSA",                  # libfuzzer-sys — NCSA/BSD-like, OK
+    "CDLA-Permissive-2.0",   # webpki-roots — permissive data licence
+]
+confidence-threshold = 0.8
+exceptions = [
+    # Per-crate license overrides — empty until something requires it.
+]
+
+# ─────────────────────────────────────────────────────────────────────
+# Banned crates — supply-chain hygiene
+# ─────────────────────────────────────────────────────────────────────
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    # Known-deprecated / abandoned crates we never want pulled back in.
+    { name = "openssl-sys", reason = "we use rustls; openssl pulls in C deps and licensing complications" },
+    { name = "openssl",     reason = "see openssl-sys" },
+]
+skip = [
+    # Crates with multiple major versions in the tree are warned, not denied.
+    # Add specific (name, version) pairs here when a well-known dep needs to
+    # coexist with itself for the foreseeable future. Empty for now.
+]
+
+# ─────────────────────────────────────────────────────────────────────
+# Source registries — pin to crates.io + known-good git refs
+# ─────────────────────────────────────────────────────────────────────
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-git = [
+    # Permitted git deps — explicit allowlist so no random fork sneaks in.
+    "https://github.com/LasterAlex/teloxide_tests",
+]

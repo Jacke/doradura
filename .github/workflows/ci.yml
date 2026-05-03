@@ -93,3 +93,12 @@ jobs:
 
       - name: Run cargo audit
         run: cargo audit
+
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny || cargo install cargo-deny
+
+      - name: Run cargo deny (advisories + licenses + bans)
+        # Same hint as cargo-audit — informational; transitive policy
+        # violations surface in PR checks but don't block merges. Track
+        # via deny.toml ignore entries when intentional.
+        run: cargo deny check advisories licenses bans
