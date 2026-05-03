@@ -401,14 +401,50 @@ async fn show_lyrics_picker_for_audio(
     title: &str,
     shared_storage: &std::sync::Arc<crate::storage::SharedStorage>,
 ) {
-    if artist.trim().is_empty() || title.trim().is_empty() {
+    if title.trim().is_empty() {
         return;
     }
 
+    // Two-pass fetch: first with `artist - title` (best match for music
+    // uploads), fall back to title-only when Genius can't find the channel-
+    // as-artist combo. This catches re-upload channels like "musiko lyriko"
+    // where the displayed artist isn't the actual performer.
     let lyrics = match crate::lyrics::fetch_lyrics(artist, title, None).await {
         Some(lyr) => lyr,
+        None if !artist.trim().is_empty() => {
+            log::info!(
+                "with_lyrics: 1st pass no lyrics for '{} - {}', retrying title-only",
+                artist,
+                title
+            );
+            match crate::lyrics::fetch_lyrics("", title, None).await {
+                Some(lyr) => lyr,
+                None => {
+                    log::info!(
+                        "with_lyrics: no lyrics found for '{} - {}' (title-only also empty)",
+                        artist,
+                        title
+                    );
+                    let msg = format!(
+                        "📝 Не удалось найти текст для «{} – {}».\n\nGenius/AZLyrics не вернули совпадений. Попробуй другую ссылку с явным «исполнитель – трек» в названии.",
+                        artist, title
+                    );
+                    if let Err(e) = bot.send_message(chat_id, msg).await {
+                        log::warn!("Failed to send 'no lyrics found' notice: {}", e);
+                    }
+                    return;
+                }
+            }
+        }
         None => {
-            log::debug!("with_lyrics: no lyrics found for '{} - {}'", artist, title);
+            log::info!("with_lyrics: no lyrics found for title-only '{}'", title);
+            let msg = format!(
+                "📝 Не удалось найти текст для «{}».\n\nGenius/AZLyrics не вернули совпадений.",
+                title
+            );
+            if let Err(e) = bot.send_message(chat_id, msg).await {
+                log::warn!("Failed to send 'no lyrics found' notice: {}", e);
+            }
             return;
         }
     };
