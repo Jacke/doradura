@@ -405,42 +405,23 @@ async fn show_lyrics_picker_for_audio(
         return;
     }
 
-    // Two-pass fetch: first with `artist - title` (best match for music
-    // uploads), fall back to title-only when Genius can't find the channel-
-    // as-artist combo. This catches re-upload channels like "musiko lyriko"
-    // where the displayed artist isn't the actual performer.
-    let lyrics = match crate::lyrics::fetch_lyrics(artist, title, None).await {
+    // Smart cascade: title-parser produces multiple `(artist, track)`
+    // candidates from the raw video title (forward split, reverse split,
+    // feat-stripped, title-only). The first candidate that resolves wins;
+    // catches re-upload channels where the channel name isn't the actual
+    // performer (e.g. "musiko lyriko" → real artist comes from the title).
+    let lyrics = match crate::lyrics::fetch_lyrics_smart(artist, title, None).await {
         Some(lyr) => lyr,
-        None if !artist.trim().is_empty() => {
-            log::info!(
-                "with_lyrics: 1st pass no lyrics for '{} - {}', retrying title-only",
-                artist,
-                title
-            );
-            match crate::lyrics::fetch_lyrics("", title, None).await {
-                Some(lyr) => lyr,
-                None => {
-                    log::info!(
-                        "with_lyrics: no lyrics found for '{} - {}' (title-only also empty)",
-                        artist,
-                        title
-                    );
-                    let msg = format!(
-                        "📝 Не удалось найти текст для «{} – {}».\n\nGenius/AZLyrics не вернули совпадений. Попробуй другую ссылку с явным «исполнитель – трек» в названии.",
-                        artist, title
-                    );
-                    if let Err(e) = bot.send_message(chat_id, msg).await {
-                        log::warn!("Failed to send 'no lyrics found' notice: {}", e);
-                    }
-                    return;
-                }
-            }
-        }
         None => {
-            log::info!("with_lyrics: no lyrics found for title-only '{}'", title);
+            log::info!("with_lyrics: smart cascade exhausted for '{} - {}'", artist, title);
+            let display = if artist.trim().is_empty() {
+                title.to_string()
+            } else {
+                format!("{} – {}", artist, title)
+            };
             let msg = format!(
-                "📝 Не удалось найти текст для «{}».\n\nGenius/AZLyrics не вернули совпадений.",
-                title
+                "📝 Не удалось найти текст для «{}».\n\nGenius/LRCLIB не вернули совпадений. Попробуй другую ссылку с явным «исполнитель – трек» в названии.",
+                display
             );
             if let Err(e) = bot.send_message(chat_id, msg).await {
                 log::warn!("Failed to send 'no lyrics found' notice: {}", e);

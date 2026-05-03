@@ -7,6 +7,7 @@
 //! structure (especially for rap/hip-hop). Otherwise falls back to LRCLIB.
 
 pub mod highlights;
+pub mod title_parser;
 
 use lazy_regex::{Lazy, Regex, lazy_regex};
 use serde::{Deserialize, Serialize};
@@ -537,6 +538,73 @@ pub async fn fetch_lyrics(artist: &str, title: &str, token: Option<&str>) -> Opt
         }
     }
 
+    None
+}
+
+/// Smart wrapper around [`fetch_lyrics`] that walks several candidate
+/// `(artist, track)` pairs derived from the raw video title before giving up.
+///
+/// Recovery cascade — first hit wins, abort the rest:
+///
+/// 1. **Channel + cleaned title** — the original `(artist, title)` pair, but
+///    with bracket noise (`(Official Video)`, `[HD]`, …) and trailing
+///    `LYRICS` markers stripped. Catches the common case where the channel
+///    actually IS the artist (e.g. official VEVO uploads).
+/// 2. **Title-parsed candidates** — see
+///    [`title_parser::extract_artist_track_candidates`]. Both forward
+///    (`Artist - Track`) and reverse (`Track - Artist`) splits, plus the
+///    `feat./ft.`-stripped variant. This is the layer that fixes re-upload
+///    channels like `musiko lyriko - MRS OFFICER LIL WAYNE LYRICS`.
+/// 3. **Title-only** — last resort. LRCLIB tolerates empty `artist`; Genius
+///    skips this candidate internally.
+///
+/// Returns `None` only if every candidate fails. Logs each attempt at INFO
+/// so production can see the cascade in action.
+pub async fn fetch_lyrics_smart(channel: &str, title: &str, token: Option<&str>) -> Option<LyricsResult> {
+    let cleaned_title = title_parser::clean_title(title);
+
+    // Pass 1: channel + cleaned title (original behaviour, just denoised).
+    if !channel.trim().is_empty() && !cleaned_title.is_empty() {
+        log::info!("Lyrics: pass 1 — channel='{}', title='{}'", channel, cleaned_title);
+        if let Some(lyr) = fetch_lyrics(channel, &cleaned_title, token).await {
+            return Some(lyr);
+        }
+    }
+
+    // Pass 2: title-parsed candidates. Skip pairs whose artist matches the
+    // channel we already tried — no point re-running the same query.
+    for (cand_artist, cand_track) in title_parser::extract_artist_track_candidates(title) {
+        if cand_artist.trim().eq_ignore_ascii_case(channel.trim()) && cand_track.eq(&cleaned_title) {
+            continue;
+        }
+        // Title-only candidate handled separately as the explicit final pass.
+        if cand_artist.is_empty() {
+            continue;
+        }
+        log::info!(
+            "Lyrics: pass 2 — candidate artist='{}', track='{}'",
+            cand_artist,
+            cand_track
+        );
+        if let Some(lyr) = fetch_lyrics(&cand_artist, &cand_track, token).await {
+            return Some(lyr);
+        }
+    }
+
+    // Pass 3: title-only (LRCLIB-only effectively — Genius internally skips
+    // empty artist).
+    if !cleaned_title.is_empty() {
+        log::info!("Lyrics: pass 3 — title-only='{}'", cleaned_title);
+        if let Some(lyr) = fetch_lyrics("", &cleaned_title, token).await {
+            return Some(lyr);
+        }
+    }
+
+    log::info!(
+        "Lyrics: smart fetch exhausted all passes for channel='{}', title='{}'",
+        channel,
+        title
+    );
     None
 }
 
