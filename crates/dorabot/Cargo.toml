@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.51.0-alpha.7"
+version = "0.51.0-alpha.8"
 edition = "2024"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -87,7 +87,7 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 fake = { version = "2.9", features = ["derive"] }
 parking_lot = "0.12"
 sysinfo = "0.31"
-wiremock = "0.5"
+wiremock = "0.6"
 
 [[test]]
 name = "load_test"
