@@ -297,6 +297,7 @@ impl DownloadQueue {
                     time_range_start: task.time_range.as_ref().map(|(start, _)| start.as_str()),
                     time_range_end: task.time_range.as_ref().map(|(_, end)| end.as_str()),
                     carousel_mask: task.carousel_mask,
+                    with_lyrics: task.with_lyrics,
                     priority: priority_value,
                     idempotency_key: &idempotency_key,
                 })
@@ -686,6 +687,7 @@ impl DownloadQueue {
                 task.time_range.as_ref().map(|(start, _)| start.as_str()),
                 task.time_range.as_ref().map(|(_, end)| end.as_str()),
                 task.carousel_mask,
+                task.with_lyrics,
                 task.priority as i32,
                 &Self::idempotency_key(task),
             ) {
@@ -726,7 +728,7 @@ impl DownloadQueue {
             },
             queue_message_id: None,
             carousel_mask: entry.carousel_mask,
-            with_lyrics: false,
+            with_lyrics: entry.with_lyrics,
         }
     }
 }

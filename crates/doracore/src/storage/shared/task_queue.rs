@@ -30,6 +30,7 @@ impl SharedStorage {
                     input.time_range_start,
                     input.time_range_end,
                     input.carousel_mask,
+                    input.with_lyrics,
                     input.priority,
                     input.idempotency_key,
                 )
@@ -39,8 +40,8 @@ impl SharedStorage {
                 let rows = sqlx::query(
                     "INSERT INTO task_queue (
                         id, user_id, url, message_id, format, is_video, video_quality, audio_bitrate,
-                        time_range_start, time_range_end, carousel_mask, priority, status, retry_count, idempotency_key
-                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', 0, $13)
+                        time_range_start, time_range_end, carousel_mask, with_lyrics, priority, status, retry_count, idempotency_key
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending', 0, $14)
                      ON CONFLICT DO NOTHING",
                 )
                 .bind(input.task_id)
@@ -54,6 +55,7 @@ impl SharedStorage {
                 .bind(input.time_range_start)
                 .bind(input.time_range_end)
                 .bind(input.carousel_mask.map(|value| value as i32))
+                .bind(if input.with_lyrics { 1_i32 } else { 0_i32 })
                 .bind(input.priority)
                 .bind(input.idempotency_key)
                 .execute(pg_pool)
@@ -454,6 +456,7 @@ fn map_pg_task_queue_entry(row: sqlx::postgres::PgRow) -> Result<TaskQueueEntry>
         time_range_start: row.get("time_range_start"),
         time_range_end: row.get("time_range_end"),
         carousel_mask: row.get::<Option<i32>, _>("carousel_mask").map(|value| value as u32),
+        with_lyrics: row.try_get::<i32, _>("with_lyrics").map(|v| v == 1).unwrap_or(false),
         priority: row.get("priority"),
         status: row.get("status"),
         error_message: row.get("error_message"),

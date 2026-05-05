@@ -27,6 +27,12 @@ pub struct QueueTaskInput<'a> {
     pub time_range_start: Option<&'a str>,
     pub time_range_end: Option<&'a str>,
     pub carousel_mask: Option<u32>,
+    /// Whether the user toggled "📝 Lyrics ON" before queuing. Persisted via
+    /// the `task_queue.with_lyrics` column (V47); plumbed back to
+    /// `download_and_send_audio` so lyrics fetch fires even when the
+    /// download lands on a cache-hit path that doesn't go through the
+    /// in-memory `dl:mp3+lyr:` callback.
+    pub with_lyrics: bool,
     pub priority: i32,
     pub idempotency_key: &'a str,
 }

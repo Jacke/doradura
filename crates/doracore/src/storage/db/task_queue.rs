@@ -17,6 +17,11 @@ pub struct TaskQueueEntry {
     pub time_range_start: Option<String>,
     pub time_range_end: Option<String>,
     pub carousel_mask: Option<u32>,
+    /// Whether the user clicked "📝 Lyrics ON" before queuing. Persisted so
+    /// the lyrics fetch fires even on cache-hit re-enqueues that bypass the
+    /// in-memory `dl:mp3+lyr:` callback path. Migration V47 added the
+    /// `with_lyrics` column; pre-V47 rows default to `false`.
+    pub with_lyrics: bool,
     pub priority: i32,
     pub status: String,
     pub error_message: Option<String>,
@@ -53,27 +58,28 @@ fn map_task_queue_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskQueueEn
         time_range_start: row.get(8)?,
         time_range_end: row.get(9)?,
         carousel_mask: row.get(10)?,
-        priority: row.get(11)?,
-        status: row.get(12)?,
-        error_message: row.get(13)?,
-        retry_count: row.get(14)?,
-        idempotency_key: row.get(15)?,
-        worker_id: row.get(16)?,
-        leased_at: row.get(17)?,
-        lease_expires_at: row.get(18)?,
-        last_heartbeat_at: row.get(19)?,
-        execute_at: row.get(20)?,
-        started_at: row.get(21)?,
-        finished_at: row.get(22)?,
-        created_at: row.get(23)?,
-        updated_at: row.get(24)?,
+        with_lyrics: row.get::<_, i32>(11).map(|v| v == 1).unwrap_or(false),
+        priority: row.get(12)?,
+        status: row.get(13)?,
+        error_message: row.get(14)?,
+        retry_count: row.get(15)?,
+        idempotency_key: row.get(16)?,
+        worker_id: row.get(17)?,
+        leased_at: row.get(18)?,
+        lease_expires_at: row.get(19)?,
+        last_heartbeat_at: row.get(20)?,
+        execute_at: row.get(21)?,
+        started_at: row.get(22)?,
+        finished_at: row.get(23)?,
+        created_at: row.get(24)?,
+        updated_at: row.get(25)?,
     })
 }
 
 fn task_queue_select_sql() -> &'static str {
     "SELECT id, user_id, url, message_id, format, is_video, video_quality, audio_bitrate,
-            time_range_start, time_range_end, carousel_mask, priority, status, error_message,
-            retry_count, idempotency_key, worker_id, leased_at, lease_expires_at,
+            time_range_start, time_range_end, carousel_mask, with_lyrics, priority, status,
+            error_message, retry_count, idempotency_key, worker_id, leased_at, lease_expires_at,
             last_heartbeat_at, execute_at, started_at, finished_at, created_at, updated_at
      FROM task_queue"
 }
@@ -93,15 +99,16 @@ pub fn save_task_to_queue(
     time_range_start: Option<&str>,
     time_range_end: Option<&str>,
     carousel_mask: Option<u32>,
+    with_lyrics: bool,
     priority: i32,
     idempotency_key: &str,
 ) -> Result<EnqueueResult> {
     let result = conn.execute(
         "INSERT INTO task_queue (
              id, user_id, url, message_id, format, is_video, video_quality, audio_bitrate,
-             time_range_start, time_range_end, carousel_mask, priority, status, retry_count, idempotency_key
+             time_range_start, time_range_end, carousel_mask, with_lyrics, priority, status, retry_count, idempotency_key
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', 0, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'pending', 0, ?14)",
         [
             &task_id as &dyn rusqlite::ToSql,
             &user_id as &dyn rusqlite::ToSql,
@@ -114,6 +121,7 @@ pub fn save_task_to_queue(
             &time_range_start as &dyn rusqlite::ToSql,
             &time_range_end as &dyn rusqlite::ToSql,
             &carousel_mask as &dyn rusqlite::ToSql,
+            &(if with_lyrics { 1 } else { 0 }) as &dyn rusqlite::ToSql,
             &priority as &dyn rusqlite::ToSql,
             &idempotency_key as &dyn rusqlite::ToSql,
         ],

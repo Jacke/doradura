@@ -288,6 +288,10 @@ CREATE TABLE IF NOT EXISTS task_queue (
     time_range_start TEXT,
     time_range_end TEXT,
     carousel_mask INTEGER,
+    -- V47: persist lyrics-toggle flag so cache-hit re-enqueues still trigger
+    -- the lyrics fetcher even though the in-memory `dl:mp3+lyr:` callback
+    -- never reaches them.
+    with_lyrics INTEGER NOT NULL DEFAULT 0,
     priority INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
     error_message TEXT,
@@ -605,6 +609,14 @@ END $$;
 -- Migration: add custom_audio_file_id column to existing video_clip_sessions tables
 DO $$ BEGIN
     ALTER TABLE video_clip_sessions ADD COLUMN custom_audio_file_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- V47: add with_lyrics flag to task_queue so cache-hit re-enqueues still
+-- trigger the lyrics fetcher (the in-memory `dl:mp3+lyr:` callback path
+-- doesn't reach them). Default 0 keeps pre-V47 rows benign.
+DO $$ BEGIN
+    ALTER TABLE task_queue ADD COLUMN with_lyrics INTEGER NOT NULL DEFAULT 0;
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
 "#;

@@ -838,6 +838,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             0,
             "12380:https://example.com:mp3:-:320k:audio",
         )
@@ -887,6 +888,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             1,
             "12381:https://example.com:mp4:720p:-:video",
         )
@@ -926,6 +928,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             0,
             "12382:https://example.com:mp3:-:-:audio",
         )
@@ -956,6 +959,7 @@ mod tests {
             Some("00:10"),
             Some("00:20"),
             Some(3),
+            false,
             2,
             "12383:https://example.com/a:mp4:720p:-:video",
         )

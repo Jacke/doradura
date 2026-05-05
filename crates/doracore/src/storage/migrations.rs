@@ -85,6 +85,9 @@ fn ensure_tables(conn: &Connection) {
         "ALTER TABLE task_queue ADD COLUMN time_range_start TEXT",
         "ALTER TABLE task_queue ADD COLUMN time_range_end TEXT",
         "ALTER TABLE task_queue ADD COLUMN carousel_mask INTEGER",
+        // V47: persist lyrics-toggle flag so cache-hit re-enqueues still
+        // trigger the lyrics fetcher. Default 0 keeps pre-V47 rows benign.
+        "ALTER TABLE task_queue ADD COLUMN with_lyrics INTEGER DEFAULT 0",
     ];
     for sql in &alter_stmts {
         let _ = conn.execute_batch(sql); // ignore "duplicate column" errors
@@ -197,6 +200,7 @@ pub fn run_migrations_for_test(conn: &mut Connection) -> Result<()> {
     // but not present in the original migration SQL files.
     let _ = conn.execute_batch("ALTER TABLE video_clip_sessions ADD COLUMN custom_audio_file_id TEXT");
     let _ = conn.execute_batch("ALTER TABLE download_history ADD COLUMN speed REAL DEFAULT NULL");
+    let _ = conn.execute_batch("ALTER TABLE task_queue ADD COLUMN with_lyrics INTEGER DEFAULT 0");
 
     Ok(())
 }

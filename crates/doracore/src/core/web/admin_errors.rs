@@ -234,7 +234,8 @@ pub(super) async fn admin_api_error_retry(
         time_range_start: None,
         time_range_end: None,
         carousel_mask: None,
-        priority: 10, // higher than default so admin retries jump the queue
+        with_lyrics: false, // admin-retry path doesn't preserve user's lyrics toggle (rare, fine)
+        priority: 10,       // higher than default so admin retries jump the queue
         idempotency_key: &idempotency_key,
     };
 
