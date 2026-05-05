@@ -122,6 +122,13 @@ pub async fn download_and_send_audio(
             add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
 
             // Lyrics: fetch and show section picker — user picks → caption is edited on audio msg
+            log::info!(
+                "audio: with_lyrics={} title='{}' artist='{}' shared_storage_some={}",
+                with_lyrics,
+                pipeline_result.title,
+                pipeline_result.artist,
+                shared_storage_clone.is_some()
+            );
             if with_lyrics {
                 let bot_lyr = bot_clone.clone();
                 let title_lyr = pipeline_result.title.clone();
@@ -140,6 +147,8 @@ pub async fn download_and_send_audio(
                         )
                         .await;
                     });
+                } else {
+                    log::warn!("audio: with_lyrics=true but shared_storage is None — skipping lyrics");
                 }
             }
 
@@ -401,7 +410,13 @@ async fn show_lyrics_picker_for_audio(
     title: &str,
     shared_storage: &std::sync::Arc<crate::storage::SharedStorage>,
 ) {
+    log::info!(
+        "show_lyrics_picker_for_audio: invoked artist='{}' title='{}'",
+        artist,
+        title
+    );
     if title.trim().is_empty() {
+        log::warn!("show_lyrics_picker_for_audio: bailing on empty title");
         return;
     }
 

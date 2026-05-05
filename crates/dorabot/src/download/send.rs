@@ -1227,9 +1227,29 @@ pub async fn send_video_with_retry(
                     video_msg = video_msg.height(h);
                 }
 
-                // Add thumbnail if available
-                // IMPORTANT: Use absolute path and ensure file exists
-                if let Some(thumb_path) = temp_thumb_path_clone {
+                // Add thumbnail if available — but only for landscape/square
+                // videos.
+                //
+                // For portrait (vertical) videos we skip the explicit thumb
+                // attach: yt-dlp / YouTube returns landscape `hqdefault.jpg`
+                // (1280×720) for everything regardless of source orientation,
+                // so attaching it to a portrait video makes Telegram render a
+                // wide horizontal preview frame on a tall video — bug
+                // reported by users (5 May 2026). When `thumb` is omitted,
+                // Telegram auto-generates one from the video file itself,
+                // matching the orientation of the actual frames (same
+                // behaviour as a user manually uploading the same MP4).
+                //
+                // Square (rare) goes through the explicit-thumb path because
+                // YouTube's landscape thumb fits a square video acceptably.
+                let is_portrait = matches!((width_clone, height_clone), (Some(w), Some(h)) if h > w);
+                if is_portrait {
+                    log::info!(
+                        "[THUMBNAIL] Skipping explicit thumb for portrait video ({}×{}) — Telegram will auto-generate from frame 0",
+                        width_clone.unwrap_or(0),
+                        height_clone.unwrap_or(0)
+                    );
+                } else if let Some(thumb_path) = temp_thumb_path_clone {
                     // Check that file exists before sending
                     if thumb_path.exists() {
                         let abs_path_str = thumb_path.to_str().unwrap_or("thumb.jpg");

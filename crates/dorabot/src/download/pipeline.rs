@@ -844,19 +844,43 @@ pub async fn execute(
         if let Some(p) = crate::telegram::cache::PREVIEW_CACHE.get(url.as_str()).await
             && !p.title.trim().is_empty()
         {
+            log::info!(
+                "cached_title_artist: PREVIEW_CACHE hit title='{}' artist='{}'",
+                p.title,
+                p.artist
+            );
             return (p.title, p.artist);
         }
+        log::info!("cached_title_artist: PREVIEW_CACHE miss for {}", url.as_str());
         if let Some(storage) = shared_storage {
             let (vq, ab) = match format {
                 PipelineFormat::Audio { bitrate, .. } => (None, bitrate.as_deref()),
                 PipelineFormat::Video { quality, .. } => (quality.as_deref(), None),
             };
-            if let Ok(Some((_fid, title, artist))) = storage
+            log::info!(
+                "cached_title_artist: SQL lookup canonical_url={} format={} vq={:?} ab={:?}",
+                canonical_url,
+                format.label(),
+                vq,
+                ab
+            );
+            match storage
                 .find_cached_file_id_with_meta(&canonical_url, format.label(), vq, ab)
                 .await
             {
-                return (title, artist);
+                Ok(Some((_fid, title, artist))) => {
+                    log::info!("cached_title_artist: SQL hit title='{}' artist='{}'", title, artist);
+                    return (title, artist);
+                }
+                Ok(None) => {
+                    log::warn!("cached_title_artist: SQL returned None despite cache-hit upstream");
+                }
+                Err(e) => {
+                    log::warn!("cached_title_artist: SQL error {}", e);
+                }
             }
+        } else {
+            log::warn!("cached_title_artist: shared_storage is None");
         }
         (String::new(), String::new())
     };
@@ -1457,13 +1481,25 @@ pub async fn handle_pipeline_error(
     alert_manager: Option<&Arc<crate::core::alerts::AlertManager>>,
     message_id: Option<i32>,
 ) {
-    // Set 😢 reaction on error
+    let error_str = error.to_string();
+
+    // GH #9: user-cancelled downloads are not service errors. Surface a
+    // neutral "Download cancelled" notice instead of a 😢 sticker + admin
+    // alert. The double-prefix bug (`"Download error: Download error:
+    // Cancelled by user"`) came from `PipelineError::Operational(
+    // AppError::Download(...))` — both layers prepend `"Download error: "`
+    // to their `Display` impls. We short-circuit before the SAD reaction
+    // and admin notification so cancellation is fully neutral.
+    if error_str.contains("Cancelled by user") {
+        let _ = bot.send_message(chat_id, "❌ Download cancelled.").await;
+        return;
+    }
+
+    // Set 😢 reaction on real errors (after the cancel-check above).
     if let Some(msg_id) = message_id {
         use teloxide::types::MessageId;
         crate::telegram::try_set_reaction(bot, chat_id, MessageId(msg_id), crate::telegram::emoji::SAD).await;
     }
-
-    let error_str = error.to_string();
 
     // Determine custom error message
     let custom_message = if error_str.contains("Only images are available") {
