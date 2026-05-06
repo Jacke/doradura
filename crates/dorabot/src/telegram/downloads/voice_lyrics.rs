@@ -512,21 +512,24 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
 
             let lyrics_session = ctx.shared_storage.get_lyrics_session(session_id).await.ok().flatten();
 
-            if let Some((_artist, _title, sections_json, _has_struct)) = lyrics_session {
+            if let Some((_artist, _title, sections_json, has_struct)) = lyrics_session {
                 let sections: Vec<crate::lyrics::LyricsSection> =
                     serde_json::from_str(&sections_json).unwrap_or_default();
 
+                // Drop `[Name]` headers for auto-segmented unstructured lyrics —
+                // "[Part 1]" adds no value. Keep them for genuine [Verse]/[Chorus].
+                let fmt_section = |s: &crate::lyrics::LyricsSection| -> String {
+                    if has_struct {
+                        format!("[{}]\n{}", s.name, s.text())
+                    } else {
+                        s.text()
+                    }
+                };
+
                 let lyrics_text = if idx_str == "all" {
-                    sections
-                        .iter()
-                        .map(|s| format!("[{}]\n{}", s.name, s.text()))
-                        .collect::<Vec<_>>()
-                        .join("\n\n")
+                    sections.iter().map(fmt_section).collect::<Vec<_>>().join("\n\n")
                 } else if let Ok(idx) = idx_str.parse::<usize>() {
-                    sections
-                        .get(idx)
-                        .map(|s| format!("[{}]\n{}", s.name, s.text()))
-                        .unwrap_or_default()
+                    sections.get(idx).map(fmt_section).unwrap_or_default()
                 } else {
                     String::new()
                 };

@@ -166,6 +166,52 @@ pub fn parse_sections(text: &str) -> (Vec<LyricsSection>, bool) {
     (sections, true)
 }
 
+/// Split unstructured lyrics into pseudo-sections of ~8 lines each so the
+/// picker can offer multiple chunks. Source-of-truth lyrics from LRCLIB
+/// (and some Genius pages) lack `[Verse]/[Chorus]` markers, leaving us with
+/// a single 100-line "Lyrics" section — useless for picking. We chunk by
+/// fixed line count rather than blank-line stanzas because `parse_sections`
+/// already strips blanks before we get here.
+pub fn auto_segment_unstructured(lines: &[String]) -> Vec<LyricsSection> {
+    const CHUNK: usize = 8;
+    if lines.len() <= CHUNK {
+        return vec![LyricsSection {
+            name: "Lyrics".to_string(),
+            lines: lines.to_vec(),
+        }];
+    }
+    lines
+        .chunks(CHUNK)
+        .enumerate()
+        .map(|(i, chunk)| LyricsSection {
+            name: format!("Part {}", i + 1),
+            lines: chunk.to_vec(),
+        })
+        .collect()
+}
+
+/// Build a compact button label for a section: `"{name} · {first-line preview}"`,
+/// capped at `max_chars`. Falls back to `name` alone when the section has no
+/// lines or the preview adds no information.
+pub fn section_button_label(s: &LyricsSection, max_chars: usize) -> String {
+    let preview = s
+        .lines
+        .iter()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim())
+        .unwrap_or("");
+    if preview.is_empty() {
+        return s.name.clone();
+    }
+    let combined = format!("{} · {}", s.name, preview);
+    let chars: Vec<char> = combined.chars().collect();
+    if chars.len() <= max_chars {
+        return combined;
+    }
+    let truncated: String = chars.iter().take(max_chars.saturating_sub(1)).collect();
+    format!("{}…", truncated)
+}
+
 fn title_case(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut cap_next = true;
@@ -703,5 +749,58 @@ mod tests {
     fn test_decode_html_entities() {
         assert_eq!(decode_html_entities("it&#x27;s"), "it's");
         assert_eq!(decode_html_entities("&amp;"), "&");
+    }
+
+    #[test]
+    fn test_auto_segment_unstructured_short() {
+        let lines: Vec<String> = (0..5).map(|i| format!("line {}", i)).collect();
+        let segs = auto_segment_unstructured(&lines);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].name, "Lyrics");
+        assert_eq!(segs[0].lines.len(), 5);
+    }
+
+    #[test]
+    fn test_auto_segment_unstructured_chunks() {
+        let lines: Vec<String> = (0..20).map(|i| format!("line {}", i)).collect();
+        let segs = auto_segment_unstructured(&lines);
+        // 20 / 8 = 3 chunks (8 + 8 + 4)
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[0].name, "Part 1");
+        assert_eq!(segs[0].lines.len(), 8);
+        assert_eq!(segs[1].name, "Part 2");
+        assert_eq!(segs[1].lines.len(), 8);
+        assert_eq!(segs[2].name, "Part 3");
+        assert_eq!(segs[2].lines.len(), 4);
+    }
+
+    #[test]
+    fn test_section_button_label_short() {
+        let s = LyricsSection {
+            name: "Verse 1".to_string(),
+            lines: vec!["Yo listen up".to_string()],
+        };
+        assert_eq!(section_button_label(&s, 32), "Verse 1 · Yo listen up");
+    }
+
+    #[test]
+    fn test_section_button_label_truncates() {
+        let s = LyricsSection {
+            name: "Verse 1".to_string(),
+            lines: vec!["The quick brown fox jumps over the lazy dog".to_string()],
+        };
+        let label = section_button_label(&s, 24);
+        assert!(label.chars().count() <= 24);
+        assert!(label.ends_with('…'));
+        assert!(label.starts_with("Verse 1 · "));
+    }
+
+    #[test]
+    fn test_section_button_label_no_preview() {
+        let s = LyricsSection {
+            name: "Outro".to_string(),
+            lines: vec![],
+        };
+        assert_eq!(section_button_label(&s, 32), "Outro");
     }
 }

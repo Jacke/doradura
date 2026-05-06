@@ -445,8 +445,32 @@ async fn show_lyrics_picker_for_audio(
         }
     };
 
+    // Auto-apply when full lyrics fit comfortably in a Telegram caption (1024
+    // char hard limit; 900 keeps headroom for emojis/wide chars). Skips the
+    // picker entirely — one-tap UX for short tracks. The user opted in via
+    // "📝 Lyrics ☑", so applying without prompting is the expected outcome.
+    let all_text = lyrics.all_text();
+    if all_text.chars().count() <= 900 && !all_text.trim().is_empty() {
+        if let Err(e) = bot.edit_message_caption(chat_id, audio_msg_id).caption(all_text).await {
+            log::warn!("Auto-apply lyrics caption failed: {}", e);
+        }
+        return;
+    }
+
+    // For unstructured lyrics (no [Verse]/[Chorus] markers) the parser
+    // returns a single mega-section — useless for a picker. Re-segment into
+    // ~8-line chunks so the user gets meaningful choices.
+    let working_sections: Vec<crate::lyrics::LyricsSection> = if !lyrics.has_structure
+        && let Some(only) = lyrics.sections.first()
+        && only.lines.len() > 8
+    {
+        crate::lyrics::auto_segment_unstructured(&only.lines)
+    } else {
+        lyrics.sections.clone()
+    };
+
     let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
-    let sections_json = serde_json::to_string(&lyrics.sections).unwrap_or_default();
+    let sections_json = serde_json::to_string(&working_sections).unwrap_or_default();
     let _ = shared_storage
         .create_lyrics_session(
             &session_id,
@@ -461,23 +485,25 @@ async fn show_lyrics_picker_for_audio(
     // Build picker with callbacks: downloads:lyr_cap:{audio_msg_id}:{session_id}:{idx}
     use std::collections::HashMap;
     let mut total: HashMap<String, usize> = HashMap::new();
-    for s in &lyrics.sections {
+    for s in &working_sections {
         *total.entry(s.name.clone()).or_insert(0) += 1;
     }
     let mut seen: HashMap<String, usize> = HashMap::new();
 
-    let buttons: Vec<teloxide::types::InlineKeyboardButton> = lyrics
-        .sections
+    // Single-section pickers stay roomy (one button per row, longer preview).
+    // Multi-section grids stay narrow so 3-per-row chunks remain legible.
+    let label_max = if working_sections.len() == 1 { 36 } else { 28 };
+    let buttons: Vec<teloxide::types::InlineKeyboardButton> = working_sections
         .iter()
         .enumerate()
         .map(|(idx, s)| {
             let occ = seen.entry(s.name.clone()).or_insert(0);
             *occ += 1;
-            let label = if total.get(&s.name).copied().unwrap_or(1) > 1 {
-                format!("{} ({})", s.name, occ)
-            } else {
-                s.name.clone()
-            };
+            let mut display = s.clone();
+            if total.get(&s.name).copied().unwrap_or(1) > 1 {
+                display.name = format!("{} ({})", s.name, occ);
+            }
+            let label = crate::lyrics::section_button_label(&display, label_max);
             crate::telegram::cb(
                 label,
                 format!("downloads:lyr_cap:{}:{}:{}", audio_msg_id.0, session_id, idx),
@@ -485,7 +511,9 @@ async fn show_lyrics_picker_for_audio(
         })
         .collect();
 
-    let mut rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> = buttons.chunks(3).map(|c| c.to_vec()).collect();
+    let chunk_size = if working_sections.len() <= 3 { 1 } else { 2 };
+    let mut rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> =
+        buttons.chunks(chunk_size).map(|c| c.to_vec()).collect();
     rows.push(vec![crate::telegram::cb(
         "📄 All Lyrics".to_string(),
         format!("downloads:lyr_cap:{}:{}:all", audio_msg_id.0, session_id),
@@ -496,7 +524,7 @@ async fn show_lyrics_picker_for_audio(
     )]);
 
     let display = format!("{} – {}", lyrics.artist, lyrics.title);
-    let msg = if lyrics.has_structure && lyrics.sections.len() > 1 {
+    let msg = if working_sections.len() > 1 {
         format!("🎵 {}\nChoose lyrics to add as caption:", display)
     } else {
         format!("🎵 {}\nAdd lyrics as caption?", display)
