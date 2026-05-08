@@ -92,6 +92,15 @@ download_cancel =
     .signalled = ❌ Cancelling… download will stop within a few seconds.
     .not_active = ℹ️ No active download to cancel.
 
+long_video =
+    .panel = 📚 Long video — { $duration }.\n\nFull video may be very large (multi-GB) and slow to process. Pick how to proceed:
+    .btn_mp3 = 🎵 Audio MP3 (full)
+    .btn_continue = 📺 Continue with full video
+    .btn_range = ✂️ Pick a time range
+    .btn_cancel = ❌ Cancel
+    .range_hint = ✂️ Send the URL again on its own line followed by a time range, e.g.:\n\n`https://… 0:00-30:00`\n\nFormats: `MM:SS-MM:SS` or `HH:MM:SS-HH:MM:SS` (also dash `–` / em-dash `—`).
+    .cache_expired = ⏰ Preview expired — please paste the link again.
+
 common =
     .back = 🔙 Back
     .seconds = seconds

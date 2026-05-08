@@ -1739,7 +1739,7 @@ dependencies = [
 
 [[package]]
 name = "doracore"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "doradura"
-version = "0.51.0-alpha.16"
+version = "0.51.0-alpha.18"
 dependencies = [
  "anyhow",
  "async-trait",

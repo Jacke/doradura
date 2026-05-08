@@ -216,6 +216,36 @@ pub async fn send_preview(
         .await
         .unwrap_or_else(|_| "320k".to_string());
 
+    // Long-video gate: when duration > 2h and the user hasn't already
+    // acknowledged ("Continue anyway"), show an interstitial panel instead
+    // of the standard format keyboard. Skipped when a time_range is set
+    // (partial download bypasses the size concern by definition) and when
+    // there are no video formats (audio-only previews never need the gate).
+    let long_gate = metadata
+        .duration
+        .map(|d| d >= crate::telegram::menu::long_video::LONG_VIDEO_THRESHOLD_SECS)
+        .unwrap_or(false)
+        && time_range.is_none()
+        && has_video_formats
+        && !crate::telegram::cache::get_long_ack(url.as_str()).await
+        && metadata.carousel_count <= 1;
+
+    if long_gate {
+        let panel_text = crate::telegram::menu::long_video::format_panel_text(metadata.duration.unwrap_or(0), &lang);
+        // Lyrics toggle is per-render UI state, not a persisted setting.
+        // Default OFF here — user can still flip it after picking MP3 on the
+        // standard preview by re-rendering with the time-range workflow.
+        let keyboard = crate::telegram::menu::long_video::build_long_video_keyboard(&url_id, false, &lang);
+        let sent = bot.send_message(chat_id, panel_text).reply_markup(keyboard).await?;
+        log::info!(
+            "Long-video gate shown for {} (duration={}s, took {}ms)",
+            url,
+            metadata.duration.unwrap_or(0),
+            preview_start.elapsed().as_millis()
+        );
+        return Ok(sent);
+    }
+
     // Carousel photo selector: show toggle keyboard instead of standard photo/video buttons
     let keyboard = if metadata.carousel_count > 1 {
         let full_mask = (1u32 << metadata.carousel_count) - 1; // all selected

@@ -15,6 +15,7 @@ pub mod odesli;
 pub mod process;
 pub mod share;
 pub mod types;
+pub mod upload_limits;
 pub mod utils;
 pub mod validation;
 pub mod web;

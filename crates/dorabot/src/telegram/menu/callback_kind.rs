@@ -116,6 +116,8 @@ pub(crate) enum CallbackKind {
     DlCancel,
     #[strum(serialize = "info")]
     Info,
+    #[strum(serialize = "long")]
+    Long,
 }
 
 impl CallbackKind {

@@ -92,6 +92,15 @@ download_cancel =
     .signalled = ❌ Annulation… le téléchargement s'arrête dans quelques secondes.
     .not_active = ℹ️ Aucun téléchargement en cours à annuler.
 
+long_video =
+    .panel = 📚 Vidéo longue — { $duration }.\n\nLe fichier peut être très gros (plusieurs Go) et long à traiter. Choisis comment procéder :
+    .btn_mp3 = 🎵 Audio MP3 (complet)
+    .btn_continue = 📺 Continuer avec la vidéo complète
+    .btn_range = ✂️ Choisir un intervalle
+    .btn_cancel = ❌ Annuler
+    .range_hint = ✂️ Renvoie l'URL avec un intervalle de temps, par ex. :\n\n`https://… 0:00-30:00`\n\nFormats : `MM:SS-MM:SS` ou `HH:MM:SS-HH:MM:SS` (aussi tiret `–` / cadratin `—`).
+    .cache_expired = ⏰ Aperçu expiré — colle de nouveau le lien.
+
 common =
     .back = 🔙 Retour
     .seconds = secondes

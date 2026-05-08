@@ -178,6 +178,26 @@ pub async fn get_burn_sub_lang(url: &str) -> Option<String> {
     BURN_SUB_LANG_CACHE.get(url).await
 }
 
+/// "Long-video acknowledged" flag — set when the user dismisses the
+/// long-video panel via the `📺 Continue anyway` button. While the flag is
+/// live (5-min TTL), `send_preview` skips the long-video gate for that URL
+/// and renders the standard format keyboard. Per-URL, not per-chat: the
+/// same URL pasted again starts fresh after TTL.
+pub static LONG_ACK_CACHE: LazyLock<Cache<String, bool>> = LazyLock::new(|| {
+    Cache::builder()
+        .max_capacity(2_000)
+        .time_to_live(Duration::from_secs(300))
+        .build()
+});
+
+pub async fn store_long_ack(url: &str) {
+    LONG_ACK_CACHE.insert(url.to_string(), true).await;
+}
+
+pub async fn get_long_ack(url: &str) -> bool {
+    LONG_ACK_CACHE.get(url).await.unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

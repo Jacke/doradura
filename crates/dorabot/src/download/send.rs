@@ -379,26 +379,22 @@ where
         })?
         .len();
 
-    let max_size = match file_type {
-        "audio" => config::validation::max_audio_size_bytes(),
-        "video" => config::validation::max_video_size_bytes(),
-        _ => config::validation::MAX_FILE_SIZE_BYTES,
+    use doracore::core::upload_limits::{UploadKind, UploadLimits};
+    let kind = match file_type {
+        "audio" => UploadKind::Audio,
+        "video" => UploadKind::Video,
+        _ => UploadKind::Document,
     };
-
-    if file_size > max_size {
-        let size_mb = file_size as f64 / (1024.0 * 1024.0);
-        let max_mb = max_size as f64 / (1024.0 * 1024.0);
-        log::warn!(
-            "File {} too large: {:.2} MB (max: {:.2} MB)",
-            download_path,
-            size_mb,
-            max_mb
-        );
+    let limits = UploadLimits::from_env();
+    if let Err(too_large) = limits.check(kind, file_size) {
+        log::warn!("File {} {}", download_path, too_large);
         return Err(AppError::Validation(format!(
             "File too large ({:.2} MB). Maximum size: {:.2} MB",
-            size_mb, max_mb
+            too_large.size_mb(),
+            too_large.cap_mb(),
         )));
     }
+    let max_size = limits.cap(kind);
 
     log::info!(
         "Preparing upload for {}: file_size={} bytes, max_size={} bytes, path={}",

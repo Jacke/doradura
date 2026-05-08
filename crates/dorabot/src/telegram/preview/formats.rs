@@ -19,10 +19,15 @@ use url::Url;
 /// Bot API (max is 5 GB) and hid 720p/1080p from long videos — user report
 /// 2026-04-20 on a 2h26m Noize MC concert showing only 480p max.
 pub fn filter_video_formats_by_size(formats: &[VideoFormatInfo]) -> Vec<VideoFormatInfo> {
-    let max_bytes = doracore::core::config::validation::max_video_size_bytes();
+    use doracore::core::upload_limits::{UploadKind, UploadLimits};
+    let limits = UploadLimits::from_env();
     formats
         .iter()
-        .filter(|format| format.size_bytes.is_none_or(|size| size <= max_bytes))
+        .filter(|format| {
+            format
+                .size_bytes
+                .is_none_or(|size| limits.check(UploadKind::Video, size).is_ok())
+        })
         .cloned()
         .collect()
 }
