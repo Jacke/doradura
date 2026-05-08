@@ -10,7 +10,6 @@ pub use info::*;
 pub use subtitles::*;
 
 use crate::core::alerts::AlertManager;
-use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
@@ -914,15 +913,18 @@ pub async fn handle_message(
                             Ok(metadata) => {
                                 let display_title = metadata.display_title();
 
-                                // Check file size for group downloads
+                                // Check file size for group downloads via the
+                                // typed validator — single source of truth for
+                                // per-method Telegram caps.
+                                use doracore::core::upload_limits::{UploadKind, UploadLimits};
+                                let kind_for_format = if format == "mp4" {
+                                    UploadKind::Video
+                                } else {
+                                    UploadKind::Audio
+                                };
+                                let limits_for_format = UploadLimits::from_env();
                                 let status_marker = if let Some(filesize) = metadata.filesize {
-                                    let max_size = if format == "mp4" {
-                                        config::validation::max_video_size_bytes()
-                                    } else {
-                                        config::validation::max_audio_size_bytes()
-                                    };
-
-                                    if filesize > max_size {
+                                    if limits_for_format.check(kind_for_format, filesize).is_err() {
                                         i18n::t(&lang_clone, "commands.status_too_large")
                                     } else {
                                         i18n::t(&lang_clone, "commands.status_in_queue")
@@ -940,12 +942,7 @@ pub async fn handle_message(
 
                                 // Skip files that are too large and do not enqueue them
                                 let should_skip = if let Some(filesize) = metadata.filesize {
-                                    let max_size = if format == "mp4" {
-                                        config::validation::max_video_size_bytes()
-                                    } else {
-                                        config::validation::max_audio_size_bytes()
-                                    };
-                                    filesize > max_size
+                                    limits_for_format.check(kind_for_format, filesize).is_err()
                                 } else {
                                     false
                                 };
@@ -1209,7 +1206,8 @@ pub async fn handle_message(
                         if format != "mp4"
                             && let Some(filesize) = metadata.filesize
                         {
-                            let max_size = config::validation::max_audio_size_bytes();
+                            let max_size = doracore::core::upload_limits::UploadLimits::from_env()
+                                .cap(doracore::core::upload_limits::UploadKind::Audio);
 
                             if filesize > max_size * 1000 {
                                 let size_mb = filesize as f64 / (1024.0 * 1024.0);

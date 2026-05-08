@@ -415,14 +415,18 @@ where
         })?
         .len();
 
-    let max_size = 50 * 1024 * 1024; // 50 MB
+    // Cap at the audio kind's Telegram limit (50 MB cloud / 2 GB local) —
+    // before alpha.20 this was hardcoded to 50 MB even on local Bot API,
+    // which would reject otherwise-deliverable audio-effects output.
+    let max_size =
+        crate::core::upload_limits::UploadLimits::from_env().cap(crate::core::upload_limits::UploadKind::Audio);
     if file_size > max_size {
         // Clean up oversized file
         crate::core::utils::try_remove_file(output_path).await;
         crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
         return Err(AppError::AudioEffect(AudioEffectError::FileTooLarge(
             file_size as f64 / (1024.0 * 1024.0),
-            50.0,
+            max_size as f64 / (1024.0 * 1024.0),
         )));
     }
 

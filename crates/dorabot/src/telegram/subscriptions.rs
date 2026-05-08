@@ -589,7 +589,11 @@ async fn handle_toggle_content_type(
 
 /// Download a media URL to a temp file. Returns None on failure.
 async fn download_media_to_temp(client: &reqwest::Client, url: &str, is_video: bool) -> Option<PathBuf> {
-    const MAX_SIZE: u64 = 50 * 1024 * 1024; // 50 MB Telegram limit
+    // Use the typed validator instead of a 50 MB hardcode — on local Bot API
+    // we can deliver up to 2 GB for video, so the third-party fetch shouldn't
+    // pre-truncate at 50 MB and break otherwise-deliverable subscription media.
+    use doracore::core::upload_limits::{UploadKind, UploadLimits};
+    let max_size: u64 = UploadLimits::from_env().cap(if is_video { UploadKind::Video } else { UploadKind::Photo });
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
     let resp = match client.get(url).timeout(TIMEOUT).send().await {
@@ -607,7 +611,7 @@ async fn download_media_to_temp(client: &reqwest::Client, url: &str, is_video: b
 
     // Check content-length if available
     if let Some(len) = resp.content_length()
-        && len > MAX_SIZE
+        && len > max_size
     {
         log::warn!("Media too large ({} bytes), skipping: {}", len, url);
         return None;
@@ -639,8 +643,8 @@ async fn download_media_to_temp(client: &reqwest::Client, url: &str, is_video: b
             }
         };
         total += chunk.len() as u64;
-        if total > MAX_SIZE {
-            log::warn!("Media too large (>{} bytes), skipping: {}", MAX_SIZE, url);
+        if total > max_size {
+            log::warn!("Media too large (>{} bytes), skipping: {}", max_size, url);
             fs_err::tokio::remove_file(&temp_path).await.ok();
             return None;
         }

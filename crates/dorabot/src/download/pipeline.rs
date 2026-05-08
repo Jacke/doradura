@@ -269,9 +269,11 @@ impl PipelineFormat {
 
     /// Returns the max file size for this format.
     pub fn max_file_size(&self) -> u64 {
+        use doracore::core::upload_limits::{UploadKind, UploadLimits};
+        let limits = UploadLimits::from_env();
         match self {
-            PipelineFormat::Audio { .. } => config::validation::max_audio_size_bytes(),
-            PipelineFormat::Video { .. } => config::validation::max_video_size_bytes(),
+            PipelineFormat::Audio { .. } => limits.cap(UploadKind::Audio),
+            PipelineFormat::Video { .. } => limits.cap(UploadKind::Video),
         }
     }
 

@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use teloxide::prelude::*;
 
-use crate::core::config;
 use crate::core::error::AppError;
 use crate::i18n;
 use crate::storage::SharedStorage;
@@ -98,32 +97,16 @@ pub async fn process_audio_cut(
         .arg("0")
         .arg("-y")
         .arg(&output_path);
-    // GH #8: pulse the user's status message every 3s during audio cut encode
-    // so it doesn't look frozen on long inputs. Same channel-watcher pattern
-    // as process_video_clip.
-    let (audio_pulse_tx, mut audio_pulse_rx) = tokio::sync::mpsc::unbounded_channel::<std::time::Duration>();
-    let audio_watcher_bot = bot.clone();
-    let audio_watcher_chat = chat_id;
-    let audio_watcher_msg = status.id;
-    let audio_watcher = tokio::spawn(async move {
-        while let Some(elapsed) = audio_pulse_rx.recv().await {
-            let body = format!("🎵 Cutting audio… {}s elapsed", elapsed.as_secs());
-            let _ = audio_watcher_bot
-                .edit_message_text(audio_watcher_chat, audio_watcher_msg, body)
-                .await;
-        }
-    });
-
-    let audio_outcome = doracore::core::process::run_with_pulses(
+    // Pulses every 3s (GH #8) — moved to shared helper in alpha.20.
+    let audio_outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
+        &bot,
+        chat_id,
+        status.id,
         &mut audio_cmd,
         audio_timeout,
-        std::time::Duration::from_secs(3),
-        move |elapsed| {
-            let _ = audio_pulse_tx.send(elapsed);
-        },
+        "🎵 Cutting audio",
     )
     .await;
-    let _ = audio_watcher.await;
 
     let output = match audio_outcome {
         doracore::core::process::PulseOutcome::Done(o) => o,
@@ -160,7 +143,11 @@ pub async fn process_audio_cut(
         .await
         .map(|m| m.len())
         .unwrap_or(0);
-    if file_size > config::validation::max_audio_size_bytes() {
+    let limits = doracore::core::upload_limits::UploadLimits::from_env();
+    if limits
+        .check(doracore::core::upload_limits::UploadKind::Audio, file_size)
+        .is_err()
+    {
         bot.delete_message(chat_id, status.id).await.ok();
         bot.send_message(chat_id, i18n::t(&lang, "commands.audio_too_large_for_telegram"))
             .await

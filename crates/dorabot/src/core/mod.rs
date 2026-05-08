@@ -26,6 +26,7 @@ pub use doracore::core::disk;
 pub mod alerts;
 pub mod export;
 pub mod history;
+pub mod progress_pulse;
 pub mod rate_limiter;
 pub mod retry;
 pub mod stats;

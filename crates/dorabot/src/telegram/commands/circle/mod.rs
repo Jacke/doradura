@@ -1034,16 +1034,10 @@ pub async fn process_video_clip(
     cmd.arg("-y").arg(&output_path);
 
     // GH #8: surface progress on long encodes. /circle on a 4K source can run
-    // 5+ minutes silently, which feels like the bot froze. We pulse every 3s
-    // with elapsed seconds; a watcher task edits the user's status message so
-    // they see motion. Strict percent isn't worth the ffmpeg-args reshape —
-    // "still alive" is the actual UX gap. Channel-based decoupling so the
-    // sync pulse callback doesn't need to await Telegram.
-    let (pulse_tx, mut pulse_rx) = tokio::sync::mpsc::unbounded_channel::<std::time::Duration>();
-    let watcher_bot = bot.clone();
-    let watcher_chat = chat_id;
-    let watcher_msg = status.id;
-    let watcher_label = if is_video_note {
+    // 5+ minutes silently, which feels like the bot froze. Migrated to the
+    // shared helper in alpha.20 — label varies by output kind so the user can
+    // tell circle vs ringtone vs GIF without reading the message body twice.
+    let watcher_label: &'static str = if is_video_note {
         "🎬 Encoding circle"
     } else if is_iphone_ringtone || is_android_ringtone {
         "🔔 Building ringtone"
@@ -1052,25 +1046,15 @@ pub async fn process_video_clip(
     } else {
         "✂️ Encoding cut"
     };
-    let watcher = tokio::spawn(async move {
-        while let Some(elapsed) = pulse_rx.recv().await {
-            let secs = elapsed.as_secs();
-            let body = format!("{}… {}s elapsed", watcher_label, secs);
-            let _ = watcher_bot.edit_message_text(watcher_chat, watcher_msg, body).await;
-        }
-    });
-
-    let pulse_outcome = doracore::core::process::run_with_pulses(
+    let pulse_outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
+        &bot,
+        chat_id,
+        status.id,
         &mut cmd,
         ffmpeg_timeout,
-        std::time::Duration::from_secs(3),
-        move |elapsed| {
-            let _ = pulse_tx.send(elapsed);
-        },
+        watcher_label,
     )
     .await;
-    // Drop the channel sender so the watcher task can drain and exit.
-    let _ = watcher.await;
 
     let output = match pulse_outcome {
         doracore::core::process::PulseOutcome::Done(o) => o,
@@ -1168,21 +1152,33 @@ pub async fn process_video_clip(
             c
         };
         let mut av_retry_cmd = build_av_retry();
-        let av_retry_output =
-            match doracore::core::process::run_with_timeout_raw(&mut av_retry_cmd, ffmpeg_timeout).await {
-                Ok(result) => result.map_err(AppError::from)?,
-                Err(_) => {
-                    log::error!("❌ ffmpeg retry timed out after {} seconds", ffmpeg_timeout.as_secs());
-                    bot.delete_message(chat_id, status.id).await.ok();
-                    bot.send_message(
-                        chat_id,
-                        "❌ Video processing timed out (10 min limit). Try a shorter segment.",
-                    )
-                    .await
-                    .ok();
-                    return Ok(());
-                }
-            };
+        // GH #8 Phase 2: retry passes used to run silently — user's status
+        // froze for up to 10 min. Same pulse helper as the first pass; just
+        // a different label so the user can tell we're on a retry.
+        let av_retry_outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
+            &bot,
+            chat_id,
+            status.id,
+            &mut av_retry_cmd,
+            ffmpeg_timeout,
+            "🔁 Re-encoding (retry)",
+        )
+        .await;
+        let av_retry_output = match av_retry_outcome {
+            doracore::core::process::PulseOutcome::Done(o) => o,
+            doracore::core::process::PulseOutcome::Io(e) => return Err(AppError::Io(e)),
+            doracore::core::process::PulseOutcome::Timeout => {
+                log::error!("❌ ffmpeg retry timed out after {} seconds", ffmpeg_timeout.as_secs());
+                bot.delete_message(chat_id, status.id).await.ok();
+                bot.send_message(
+                    chat_id,
+                    "❌ Video processing timed out (10 min limit). Try a shorter segment.",
+                )
+                .await
+                .ok();
+                return Ok(());
+            }
+        };
 
         if !av_retry_output.status.success() {
             log::warn!("⚠️ audio+video retry also failed; falling back to video-only (audioless)");
@@ -1208,10 +1204,21 @@ pub async fn process_video_clip(
                 retry_cmd.arg("-maxrate").arg("1400k").arg("-bufsize").arg("2800k");
             }
             retry_cmd.arg("-movflags").arg("+faststart").arg("-y").arg(&output_path);
-            let retry_output = match doracore::core::process::run_with_timeout_raw(&mut retry_cmd, ffmpeg_timeout).await
-            {
-                Ok(result) => result.map_err(AppError::from)?,
-                Err(_) => {
+            // GH #8 Phase 2: video-only fallback — last-chance encode, can take
+            // 5+ min on long sources. Keep the user informed via pulses.
+            let retry_outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
+                &bot,
+                chat_id,
+                status.id,
+                &mut retry_cmd,
+                ffmpeg_timeout,
+                "🔁 Re-encoding (video-only fallback)",
+            )
+            .await;
+            let retry_output = match retry_outcome {
+                doracore::core::process::PulseOutcome::Done(o) => o,
+                doracore::core::process::PulseOutcome::Io(e) => return Err(AppError::Io(e)),
+                doracore::core::process::PulseOutcome::Timeout => {
                     log::error!(
                         "❌ ffmpeg final retry timed out after {} seconds",
                         ffmpeg_timeout.as_secs()

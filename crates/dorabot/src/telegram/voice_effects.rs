@@ -176,15 +176,25 @@ pub async fn handle_voice_effect_callback(
         }
     };
 
-    // Run ffmpeg with a timeout to prevent hung processes
+    // Run ffmpeg with periodic progress pulses (GH #8 Phase 2). Long voice
+    // effects (e.g. `tear` with chorus + freqshift on a 60s clip) can run
+    // 30-60s; previously the user's "⏳ Processing..." sat frozen.
     const FFMPEG_VOICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
     let mut ffmpeg_cmd = tokio::process::Command::new("ffmpeg");
     ffmpeg_cmd.args(&ffmpeg_args);
-    let ffmpeg_result = doracore::core::process::run_with_timeout_raw(&mut ffmpeg_cmd, FFMPEG_VOICE_TIMEOUT).await;
+    let outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
+        bot,
+        chat_id,
+        message_id,
+        &mut ffmpeg_cmd,
+        FFMPEG_VOICE_TIMEOUT,
+        "🎤 Applying voice effect",
+    )
+    .await;
 
-    match ffmpeg_result {
-        Ok(Ok(output)) if output.status.success() => {}
-        Ok(Ok(output)) => {
+    match outcome {
+        doracore::core::process::PulseOutcome::Done(output) if output.status.success() => {}
+        doracore::core::process::PulseOutcome::Done(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("ffmpeg voice effect '{}' failed: {}", effect, stderr);
             // Extract the meaningful error line for the user
@@ -196,14 +206,14 @@ pub async fn handle_voice_effect_callback(
             let _ = bot.edit_message_text(chat_id, message_id, user_msg).await;
             return Ok(());
         }
-        Ok(Err(e)) => {
+        doracore::core::process::PulseOutcome::Io(e) => {
             log::error!("Failed to run ffmpeg: {}", e);
             let _ = bot
                 .edit_message_text(chat_id, message_id, "ffmpeg not available.")
                 .await;
             return Ok(());
         }
-        Err(_) => {
+        doracore::core::process::PulseOutcome::Timeout => {
             log::error!(
                 "ffmpeg voice effect '{}' timed out after {}s for chat {}",
                 effect,

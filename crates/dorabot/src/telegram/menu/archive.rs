@@ -11,22 +11,13 @@ use teloxide::types::{CallbackQueryId, InlineKeyboardMarkup, InputFile, MessageI
 
 const ITEMS_PER_PAGE: usize = 5;
 
-/// Maximum archive size for standard Bot API (50 MB).
-const MAX_ARCHIVE_SIZE_STANDARD: i64 = 50 * 1024 * 1024;
-
-/// Maximum archive size for local Bot API (2 GB, conservative).
-const MAX_ARCHIVE_SIZE_LOCAL: i64 = 2 * 1024 * 1024 * 1024;
-
+/// Maximum archive size — delegates to the shared upload validator so the
+/// 50 MB cloud / 2 GB local switch lives in one place. Returned as `i64`
+/// for compatibility with existing call sites that compare against signed
+/// totals.
 fn max_archive_size() -> i64 {
-    let is_local = std::env::var("BOT_API_URL")
-        .ok()
-        .map(|u| !u.contains("api.telegram.org"))
-        .unwrap_or(false);
-    if is_local {
-        MAX_ARCHIVE_SIZE_LOCAL
-    } else {
-        MAX_ARCHIVE_SIZE_STANDARD
-    }
+    use doracore::core::upload_limits::{UploadKind, UploadLimits};
+    UploadLimits::from_env().cap(UploadKind::Document) as i64
 }
 
 /// Re-export of the shared byte formatter under the local name so call

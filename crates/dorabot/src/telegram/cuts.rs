@@ -465,7 +465,7 @@ This may take a few minutes\\.",
             )
             .await?;
 
-        match change_video_speed(bot, chat_id, &file_id, speed, &cut.title).await {
+        match change_video_speed(bot, chat_id, processing.id, &file_id, speed, &cut.title).await {
             Ok((sent_message, file_size)) => {
                 bot.delete_message(chat_id, processing.id).await.ok();
                 if !cut.original_url.trim().is_empty() {
@@ -898,6 +898,7 @@ const FFMPEG_SPEED_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 async fn change_video_speed(
     bot: &Bot,
     chat_id: ChatId,
+    status_msg_id: MessageId,
     file_id: &str,
     speed: f32,
     title: &str,
@@ -959,12 +960,24 @@ async fn change_video_speed(
         .arg("-y")
         .arg(&output_path);
 
-    let output = match doracore::core::process::run_with_timeout_raw(&mut cmd, FFMPEG_SPEED_TIMEOUT).await {
-        Ok(Ok(out)) => out,
-        Ok(Err(e)) => {
+    // GH #8 Phase 2: speed-change at 0.5×/2× re-encodes libx264 from scratch
+    // — can run minutes on a 60s 1080p clip. Previous run_with_timeout_raw
+    // left the user's "⚙️ Processing video at Nx speed…" frozen.
+    let outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
+        bot,
+        chat_id,
+        status_msg_id,
+        &mut cmd,
+        FFMPEG_SPEED_TIMEOUT,
+        "⚡ Re-encoding at new speed",
+    )
+    .await;
+    let output = match outcome {
+        doracore::core::process::PulseOutcome::Done(o) => o,
+        doracore::core::process::PulseOutcome::Io(e) => {
             return Err(format!("ffmpeg IO error: {}", e).into());
         }
-        Err(_) => {
+        doracore::core::process::PulseOutcome::Timeout => {
             log::error!(
                 "ffmpeg speed change timed out after {}s for chat {}",
                 FFMPEG_SPEED_TIMEOUT.as_secs(),
