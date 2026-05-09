@@ -630,21 +630,44 @@ pub async fn process_video_clip(
     // Multi-circle split disabled — single-clip mode is enforced above.
     // The "video_note_will_split" notification path is intentionally skipped.
 
-    // Notify user if segments were truncated (ringtones and GIF)
+    // Notify user if segments were truncated (ringtones, GIF, video notes).
+    //
+    // Pre-fix this branch had three bugs that compounded into garbage UX
+    // ("for ringtones (30 sec) (40s). First 60 seconds will be used."):
+    //   1. video_note fell into the ringtone `else`-branch → wrong limit shown
+    //   2. `cut_limit_ringtone` locale string hardcoded "30 sec" regardless of
+    //      which platform was actually capped
+    //   3. code appended `({N}s)` *after* the localized string → number doubled
+    //
+    // Fix: pick the kind-specific locale key + cap, hand both to one template.
     if truncated {
-        let max_secs = if is_iphone_ringtone {
-            crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
+        let (kind_key, max_secs) = if is_video_note {
+            ("commands.cut_limit_video_note", VIDEO_NOTE_MAX_DURATION as i64)
+        } else if is_iphone_ringtone {
+            (
+                "commands.cut_limit_iphone_ringtone",
+                crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64,
+            )
+        } else if is_android_ringtone {
+            (
+                "commands.cut_limit_android_ringtone",
+                crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64,
+            )
         } else if is_gif {
-            GIF_MAX_DURATION_SECS
+            ("commands.cut_limit_gif", GIF_MAX_DURATION_SECS)
         } else {
-            crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
+            // truncation is gated on (is_ringtone || is_gif || is_video_note)
+            // upstream, so this branch is unreachable in practice. Keep a
+            // sensible fallback rather than panicking.
+            ("commands.cut_limit_video_note", VIDEO_NOTE_MAX_DURATION as i64)
         };
-        let limit_text = if is_gif {
-            format!("GIF ({}s)", max_secs)
-        } else {
-            format!("{} ({}s)", i18n::t(&lang, "commands.cut_limit_ringtone"), max_secs)
-        };
-        let args = doracore::fluent_args!("total" => total_len, "limit" => limit_text, "actual" => actual_total_len);
+        let kind_text = i18n::t(&lang, kind_key);
+        let args = doracore::fluent_args!(
+            "total" => total_len,
+            "kind" => kind_text,
+            "limit" => max_secs,
+            "actual" => actual_total_len,
+        );
         bot.send_message(chat_id, i18n::t_args(&lang, "commands.cut_truncated", &args))
             .await
             .ok();
