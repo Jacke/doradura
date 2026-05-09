@@ -146,8 +146,20 @@ pub fn create_video_format_keyboard(
         .unwrap_or_else(|| "MP3".to_string());
     let mut buttons: Vec<Vec<InlineKeyboardButton>> = Vec::new();
 
+    // Sort formats DESC by quality (2160p → 144p) so "best" actually means
+    // best, default-button picks the highest, and small-button rows show
+    // top-down. Pre-fix `formats` came from a HashMap → random iteration
+    // order → "best" picked a random quality and the cap-4 small-button
+    // limit could hide 4K/1440p depending on hash seed.
+    fn quality_to_int(label: &str) -> u32 {
+        label.trim_end_matches('p').parse().unwrap_or(0)
+    }
+    let mut formats_sorted: Vec<VideoFormatInfo> = formats.to_vec();
+    formats_sorted.sort_by_key(|f| std::cmp::Reverse(quality_to_int(&f.quality)));
+    let formats: &[VideoFormatInfo] = &formats_sorted;
+
     // Find default format (from user settings)
-    // Map "best" to the first (best) format in the list
+    // Map "best" to the first (highest) format in the now-sorted list.
     let default_format_info = if let Some(quality) = default_quality {
         if quality == "best" {
             formats.first()
@@ -188,12 +200,12 @@ pub fn create_video_format_keyboard(
     };
 
     let mut added_count = 0;
-    // For MP4+MP3 show all formats; for MP4 show at most 4 additional formats
-    let max_formats = if default_format == "mp4+mp3" {
-        formats.len() // Show all formats for MP4+MP3
-    } else {
-        4 // For MP4 show max 4 additional formats
-    };
+    // Show ALL qualities — the previous cap of 4 additional buttons
+    // (with random HashMap-iteration order) hid 4K/1440p from users
+    // running 1080p as their default preset. Telegram allows up to 100
+    // inline buttons; 8 small format-pick buttons + the toggles is well
+    // under that.
+    let max_formats = formats.len();
 
     for (idx, format_info) in formats.iter().enumerate() {
         // For MP4, skip the default; for MP4+MP3 show all
