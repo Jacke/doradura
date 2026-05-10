@@ -444,11 +444,17 @@ fn compute_clip_max_len_secs(
     is_gif: bool,
 ) -> i64 {
     if is_video_note {
-        // Multi-circle split is disabled — every video note is capped at
-        // exactly one 60 s clip. The `video_note_needs_split` parameter
-        // is kept in the signature for future re-enabling but ignored.
-        let _ = video_note_needs_split;
-        VIDEO_NOTE_MAX_DURATION as i64
+        // Re-enabled in alpha.24 (GH user request): when the requested clip
+        // exceeds 60 s and is short enough to split into ≤6 parts (≤6 min),
+        // accept the whole length and let `to_video_notes_split` slice it
+        // into 60 s circles delivered sequentially. Beyond 6 min we still
+        // cap to 60 s (fall back to the legacy single-clip truncate), but
+        // that's an extreme edge case for circle UX.
+        if video_note_needs_split {
+            (VIDEO_NOTE_MAX_DURATION as i64) * doracore::conversion::video::VIDEO_NOTE_MAX_PARTS as i64
+        } else {
+            VIDEO_NOTE_MAX_DURATION as i64
+        }
     } else if is_iphone_ringtone {
         crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
     } else if is_android_ringtone {
@@ -558,15 +564,24 @@ pub async fn process_video_clip(
         total_len
     };
 
-    // Multi-circle split is intentionally disabled — empirically the split
-    // path produced lower-quality circles than a single 60 s clip (the
-    // post-cut split ffmpeg pass ran with `ultrafast`-ish defaults and
-    // dropped audio in some failure modes). Always emit exactly **one**
-    // circle: if the user-requested range exceeds 60 s the segments get
-    // truncated to fit, and the user is notified instead of getting a
-    // multi-part delivery.
-    let video_note_needs_split = false;
-    let _ = effective_len; // kept for future re-enabling of split path
+    // Multi-circle split: re-enabled in alpha.24 (user request — "не могу
+    // создать полный кружок"). When the requested range exceeds 60 s and
+    // the EFFECTIVE length (after speed) fits in ≤6 parts (≤6 min), let
+    // `to_video_notes_split` slice the encoded output into N×60 s circles
+    // delivered sequentially.
+    //
+    // Why it was disabled in alpha.44.1: the split path produced lower-
+    // quality circles because the per-part `to_video_note` ran another
+    // libx264 pass (medium / CRF 18) on top of the main encode → second-
+    // generation loss + occasional audio drop. The current `to_video_note`
+    // recipe (`crates/doracore/src/conversion/video.rs:158-172`) uses
+    // `medium / CRF 18 / 1400k maxrate / aac 128k` — same ballpark as the
+    // single-circle main pass. The "audio dropped" failure mode is gated
+    // by `-map 0:a?` (optional, won't fail) so any input with audio
+    // produces audio output. Acceptable trade-off vs. silent truncation.
+    let video_note_needs_split = is_video_note
+        && effective_len > VIDEO_NOTE_MAX_DURATION as i64
+        && !doracore::conversion::video::is_too_long_for_split(effective_len as u64);
 
     let max_len_secs = compute_clip_max_len_secs(
         is_video_note,
