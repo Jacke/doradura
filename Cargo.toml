@@ -202,3 +202,23 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# ── Source overrides ────────────────────────────────────────────────────────
+#
+# Pin teloxide + teloxide-core + teloxide-macros to upstream master (rev
+# 912b5ad2, 2026-04-23) for ~9 months of accumulated fixes since v0.17.0
+# (2025-07-11) — dependabot bumps + Bot API 8.x types + minor patches that
+# haven't been cut into a 0.18 release. `[patch.crates-io]` overrides every
+# resolution in the workspace so all transitive consumers see the same
+# revision (no duplicate-teloxide-version compile errors).
+#
+# Trade-off: `teloxide_tests` (LasterAlex fork) targets RELEASED teloxide
+# only and breaks against master (`MockBot::new` signature + ApproveSugges
+# tedPost types it doesn't know about). We dropped the fork + the single
+# integration-test file (`crates/dorabot/tests/handlers_integration.rs`) in
+# alpha.26 — handler logic is still covered by 605 unit tests in the lib.
+# Re-evaluate when official 0.18 ships AND teloxide_tests catches up.
+[patch.crates-io]
+teloxide = { git = "https://github.com/teloxide/teloxide", rev = "912b5ad2a06c15415734cdc8368bf9faee4f1ff1" }
+teloxide-core = { git = "https://github.com/teloxide/teloxide", rev = "912b5ad2a06c15415734cdc8368bf9faee4f1ff1" }
+teloxide-macros = { git = "https://github.com/teloxide/teloxide", rev = "912b5ad2a06c15415734cdc8368bf9faee4f1ff1" }

@@ -297,6 +297,25 @@ macro_rules! requester_forward {
             $body!(set_message_reaction this (chat_id: C, message_id: MessageId))
         }
     };
+    // Bot API 8.x: suggested-post moderation in channels (added in teloxide
+    // master since 0.17.0). Trait uses `C: Into<ChatId>` (not Recipient) for
+    // these — channel-only feature, no @username form needed.
+    (@method approve_suggested_post $body:ident $ty:ident) => {
+        type ApproveSuggestedPost = $ty![ApproveSuggestedPost];
+
+        fn approve_suggested_post<C>(&self, chat_id: C, message_id: MessageId) -> Self::ApproveSuggestedPost where C: Into<ChatId> {
+            let this = self;
+            $body!(approve_suggested_post this (chat_id: C, message_id: MessageId))
+        }
+    };
+    (@method decline_suggested_post $body:ident $ty:ident) => {
+        type DeclineSuggestedPost = $ty![DeclineSuggestedPost];
+
+        fn decline_suggested_post<C>(&self, chat_id: C, message_id: MessageId) -> Self::DeclineSuggestedPost where C: Into<ChatId> {
+            let this = self;
+            $body!(decline_suggested_post this (chat_id: C, message_id: MessageId))
+        }
+    };
     (@method get_user_profile_photos $body:ident $ty:ident) => {
         type GetUserProfilePhotos = $ty![GetUserProfilePhotos];
 
@@ -1421,6 +1440,8 @@ impl Requester for Bot {
         send_dice,
         send_chat_action,
         set_message_reaction,
+        approve_suggested_post,
+        decline_suggested_post,
         get_user_profile_photos,
         set_user_emoji_status,
         get_file,
