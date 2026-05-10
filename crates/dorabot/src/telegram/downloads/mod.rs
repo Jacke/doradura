@@ -227,10 +227,18 @@ pub async fn show_downloads_page(
 
     // List downloads
     for download in page_downloads {
+        // `download.format` is "mp3" / "mp4" for download_history rows, but for
+        // cuts rows it's `output_kind` (video_note/ringtone/gif/cut) per the
+        // SELECT alias in `shared/download_history.rs::get_cuts_history_filtered`.
+        // Pre-fix, only "edit" was matched → all real cuts (video_note/ringtone/
+        // gif/cut) silently rendered as 📄 default icon.
         let icon = match download.format.as_str() {
             "mp3" => "🎵",
             "mp4" => "🎬",
-            "edit" => "✂️",
+            "video_note" => "⭕️",
+            "ringtone" => "🔔",
+            "gif" => "🖼",
+            "edit" | "cut" => "✂️",
             _ => "📄",
         };
         let title = if let Some(ref author) = download.author {
@@ -297,25 +305,55 @@ pub async fn show_downloads_page(
     // Build keyboard
     let mut keyboard_rows = Vec::new();
 
-    // Each download gets a button to resend
+    // Each download gets a button to resend.
+    //
+    // Pre-fix bugs (alpha.25):
+    //   1. Button text was always "📤 {title}" regardless of file type — user
+    //      with a single video downloaded as MP3+MP4+circle+ringtone saw 4
+    //      identical "📤 Title" buttons, indistinguishable.
+    //   2. `download.format == "edit"` was the cuts-routing condition, but
+    //      `format` for cuts entries actually carries `output_kind` (video_note
+    //      / ringtone / gif / cut) per the SELECT alias in
+    //      `shared/download_history.rs::get_cuts_history_filtered`. So real
+    //      cuts entries got `downloads:resend:{id}` (download_history table)
+    //      with cuts-table id → resend handler couldn't find them → silent fail.
     for download in page_downloads {
-        let button_text = format!(
-            "📤 {}",
-            if download.title.chars().count() > 30 {
-                let truncated: String = download.title.chars().take(27).collect();
-                format!("{}...", truncated)
-            } else {
-                download.title.clone()
-            }
+        let row_icon = match download.format.as_str() {
+            "mp3" => "🎵",
+            "mp4" => "🎬",
+            "video_note" => "⭕️",
+            "ringtone" => "🔔",
+            "gif" => "🖼",
+            "edit" | "cut" => "✂️",
+            _ => "📤",
+        };
+        let row_label = match download.format.as_str() {
+            "mp3" => "MP3".to_string(),
+            "mp4" => download.video_quality.clone().unwrap_or_else(|| "MP4".into()),
+            "video_note" => "Circle".into(),
+            "ringtone" => "Ringtone".into(),
+            "gif" => "GIF".into(),
+            "edit" | "cut" => "Cut".into(),
+            other => other.to_string(),
+        };
+        let title_truncated: String = if download.title.chars().count() > 24 {
+            let t: String = download.title.chars().take(21).collect();
+            format!("{}...", t)
+        } else {
+            download.title.clone()
+        };
+        let button_text = format!("{} {} · {}", row_icon, title_truncated, row_label);
+
+        let is_cut = matches!(
+            download.format.as_str(),
+            "edit" | "cut" | "video_note" | "ringtone" | "gif"
         );
-        keyboard_rows.push(vec![crate::telegram::cb(
-            button_text,
-            if download.format == "edit" {
-                format!("downloads:resend_cut:{}", download.id)
-            } else {
-                format!("downloads:resend:{}", download.id)
-            },
-        )]);
+        let callback = if is_cut {
+            format!("downloads:resend_cut:{}", download.id)
+        } else {
+            format!("downloads:resend:{}", download.id)
+        };
+        keyboard_rows.push(vec![crate::telegram::cb(button_text, callback)]);
     }
 
     // Navigation row
