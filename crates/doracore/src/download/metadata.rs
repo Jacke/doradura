@@ -738,10 +738,28 @@ pub fn build_highres_format(requested_height: u32) -> String {
     let filt = format!("[height<={}]", requested_height);
     let mut parts: Vec<String> = Vec::new();
 
-    parts.push(format!("bv*{filt}[vcodec^=av01]+ba[acodec^=mp4a]"));
-    parts.push(format!("bv*{filt}[vcodec^=av01]+ba"));
+    // VP9 first (was AV1 first pre-v0.51.0-alpha.23). Reasoning:
+    //
+    // The downstream `transmux_or_recode_to_mp4` (`ytdlp.rs:652`) does a
+    // codec-aware dispatch:
+    //   * H.264/VP9 → `-c copy` remux (instant, true 1:1, pristine quality)
+    //   * AV1/unknown → libx264 re-encode (lossy, even at CRF 12 veryslow)
+    //
+    // YouTube ships both VP9 and AV1 for nearly every 1440p+ video. AV1 is
+    // smaller (~40% less data) BUT requires us to recode it because AV1-in-
+    // mp4 doesn't play inline in any Telegram client
+    // (telegramdesktop/tdesktop#7452). Recoding AV1 → H.264 throws away the
+    // quality the user paid the bandwidth for in the first place.
+    //
+    // Preferring VP9 trades ~50-60% file size for true 1:1 quality. The mp4
+    // is still ≪ 2 GB local-Bot-API cap (LISA-FUTW Vixi 2160p: 335 MB VP9 vs
+    // 204 MB AV1). VP9-in-mp4 plays inline on Telegram Desktop 4.9+, iOS 16+,
+    // and modern Android. AV1 stays as the second-tier fallback for the rare
+    // video that doesn't ship VP9.
     parts.push(format!("bv*{filt}[vcodec^=vp9]+ba[acodec^=mp4a]"));
     parts.push(format!("bv*{filt}[vcodec^=vp9]+ba"));
+    parts.push(format!("bv*{filt}[vcodec^=av01]+ba[acodec^=mp4a]"));
+    parts.push(format!("bv*{filt}[vcodec^=av01]+ba"));
     parts.push(format!("bv*{filt}+ba"));
 
     parts.push(build_telegram_safe_format(Some(1080)));
