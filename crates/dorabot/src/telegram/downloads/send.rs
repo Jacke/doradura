@@ -8,22 +8,40 @@ use super::CallbackCtx;
 use super::is_youtube_url;
 use super::subtitles::{add_audio_tools_buttons_from_history, add_video_cut_button_from_history, send_document_forced};
 
+/// Sentinel for "all" / "no period" used in callback data to keep the colon-
+/// separated layout stable when the period slot is unset.
+const PERIOD_ALL: &str = "a";
+
+fn opt(value: &str) -> Option<String> {
+    if value.is_empty() || value == "all" {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn period_opt(value: &str) -> Option<String> {
+    if value.is_empty() || value == PERIOD_ALL {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
 pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> ResponseResult<()> {
     match action {
+        // New shape:        downloads:page:{page}:{filter}:{period}:{search}
+        // Backwards compat: downloads:page:{page}:{filter}:{search}        (pre-alpha.28)
         "page" => {
             if parts.len() < 5 {
                 return Ok(());
             }
             let page = parts[2].parse::<usize>().unwrap_or(0);
-            let filter = if parts[3] == "all" {
-                None
+            let filter = opt(parts[3]);
+            let (period, search) = if parts.len() >= 6 {
+                (period_opt(parts[4]), opt(parts[5]))
             } else {
-                Some(parts[3].to_string())
-            };
-            let search = if parts[4].is_empty() {
-                None
-            } else {
-                Some(parts[4].to_string())
+                (None, opt(parts[4]))
             };
 
             ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await?;
@@ -36,22 +54,21 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 filter,
                 search,
                 None,
+                period,
             )
             .await?;
         }
+        // New shape:        downloads:filter:{filter}:{period}:{search}
+        // Backwards compat: downloads:filter:{filter}:{search}             (pre-alpha.28)
         "filter" => {
             if parts.len() < 4 {
                 return Ok(());
             }
-            let filter = if parts[2] == "all" {
-                None
+            let filter = opt(parts[2]);
+            let (period, search) = if parts.len() >= 5 {
+                (period_opt(parts[3]), opt(parts[4]))
             } else {
-                Some(parts[2].to_string())
-            };
-            let search = if parts[3].is_empty() {
-                None
-            } else {
-                Some(parts[3].to_string())
+                (None, opt(parts[3]))
             };
 
             ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await?;
@@ -64,9 +81,35 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 filter,
                 search,
                 None,
+                period,
             )
             .await?;
         }
+        // New shape:        downloads:period:{period}:{filter}:{search}
+        // Switches active period; resets page to 0 and keeps filter+search.
+        "period" => {
+            if parts.len() < 5 {
+                return Ok(());
+            }
+            let period = period_opt(parts[2]);
+            let filter = opt(parts[3]);
+            let search = opt(parts[4]);
+            ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await?;
+            super::show_downloads_page(
+                &ctx.bot,
+                ctx.chat_id,
+                ctx.db_pool.clone(),
+                ctx.shared_storage.clone(),
+                0,
+                filter,
+                search,
+                None,
+                period,
+            )
+            .await?;
+        }
+        // New shape:        downloads:catfilter:{cat}:{filter}:{period}:{search}
+        // Backwards compat: downloads:catfilter:{cat}:{filter}:{search}    (pre-alpha.28)
         "catfilter" => {
             if parts.len() < 5 {
                 return Ok(());
@@ -76,15 +119,11 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
             } else {
                 Some(urlencoding::decode(parts[2]).unwrap_or_default().to_string())
             };
-            let format = if parts[3].is_empty() {
-                None
+            let format = opt(parts[3]);
+            let (period, search) = if parts.len() >= 6 {
+                (period_opt(parts[4]), opt(parts[5]))
             } else {
-                Some(parts[3].to_string())
-            };
-            let search = if parts[4].is_empty() {
-                None
-            } else {
-                Some(parts[4].to_string())
+                (None, opt(parts[4]))
             };
             ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await?;
             super::show_downloads_page(
@@ -96,6 +135,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 format,
                 search,
                 category,
+                period,
             )
             .await?;
         }

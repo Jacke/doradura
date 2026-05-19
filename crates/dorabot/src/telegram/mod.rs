@@ -56,6 +56,7 @@ pub mod downloads;
 pub mod draft;
 pub mod ext;
 pub mod feedback;
+pub mod guest_bots;
 pub mod handlers;
 pub mod inline_query;
 pub mod instagram;

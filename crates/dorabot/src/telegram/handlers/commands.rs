@@ -1,5 +1,6 @@
 //! Command handler implementations (/start, /downloads, /uploads, /cuts)
 
+use teloxide::prelude::Requester;
 use teloxide::types::Message;
 
 use super::types::{HandlerDeps, HandlerError};
@@ -32,6 +33,38 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
         )
         .await;
         return Ok(());
+    }
+
+    // alpha.29 Path B: deep link from a guest_message in a group.
+    // Payload shape: `dl_<urlid>_<a|v|p>` (encoded by
+    // `telegram::guest_bots::lookup::encode_deeplink_payload`).
+    if let Some(text) = msg.text()
+        && let Some(payload) = text.strip_prefix("/start dl_")
+        && let Some((url_id, fmt)) = payload.rsplit_once('_')
+    {
+        let url = doracore::storage::cache::get_url(&deps.db_pool, Some(deps.shared_storage.as_ref()), url_id).await;
+        if let Some(url) = url {
+            let prompt = match fmt {
+                "a" => format!("mp3 {}", url),
+                "v" => format!("mp4 {}", url),
+                _ => url,
+            };
+            if let Err(e) = bot
+                .send_message(
+                    msg.chat.id,
+                    format!("🔽 Открыл по ссылке из группы:\n{}\n\nСекунду…", prompt),
+                )
+                .await
+            {
+                log::warn!("dl_ deep-link send_message: {:?}", e);
+            }
+            // Best-effort: post the URL as if the user typed it so the
+            // existing pipeline kicks in via on_text_message().
+            let _ = bot.send_message(msg.chat.id, prompt).await;
+            return Ok(());
+        }
+        log::info!("dl_ deep-link: url_id {} expired or not found", url_id);
+        // Fall through to normal /start UX on unparseable payload.
     }
 
     // Check if user exists
@@ -164,6 +197,7 @@ pub(super) async fn handle_downloads_command(bot: &Bot, msg: &Message, deps: &Ha
         0,
         filter,
         search,
+        None,
         None,
     )
     .await

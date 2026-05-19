@@ -7,6 +7,62 @@ use crate::timestamps::{TimestampSource, VideoTimestamp};
 
 use super::SharedStorage;
 
+/// Parsed search query for history filtering.
+///
+/// If the raw input contains `" - "`, it splits into `author` (left) + `title`
+/// (right) and the filter applies both as AND. Otherwise a single free-text
+/// query is OR-matched against both author and title.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HistorySearch {
+    pub author: Option<String>,
+    pub title: Option<String>,
+    pub free: Option<String>,
+}
+
+impl HistorySearch {
+    /// Parse user input. Empty / whitespace-only input yields an empty query.
+    pub fn parse(raw: &str) -> Self {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Self::default();
+        }
+        if let Some((left, right)) = trimmed.split_once(" - ") {
+            let author = left.trim();
+            let title = right.trim();
+            return Self {
+                author: (!author.is_empty()).then(|| author.to_string()),
+                title: (!title.is_empty()).then(|| title.to_string()),
+                free: None,
+            };
+        }
+        Self {
+            author: None,
+            title: None,
+            free: Some(trimmed.to_string()),
+        }
+    }
+
+    /// True if no filter terms — caller can skip SQL conditions.
+    pub fn is_empty(&self) -> bool {
+        self.author.is_none() && self.title.is_none() && self.free.is_none()
+    }
+}
+
+/// Convert a period token (`"d"`, `"w"`, `"m"`, or empty/`"a"`) into a
+/// `downloaded_at >= NOW() - INTERVAL` cutoff timestamp string suitable for
+/// both Postgres `TIMESTAMP` columns and SQLite ISO strings.
+///
+/// Returns `None` for all-time / unrecognized tokens.
+pub fn period_cutoff(period: Option<&str>) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::{Duration, Utc};
+    match period.unwrap_or("a") {
+        "d" => Some(Utc::now() - Duration::days(1)),
+        "w" => Some(Utc::now() - Duration::days(7)),
+        "m" => Some(Utc::now() - Duration::days(30)),
+        _ => None,
+    }
+}
+
 impl SharedStorage {
     #[allow(clippy::too_many_arguments)]
     pub async fn save_download_history(
@@ -292,14 +348,19 @@ impl SharedStorage {
         file_type_filter: Option<&str>,
         search_text: Option<&str>,
         category_filter: Option<&str>,
+        date_from: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<DownloadHistoryEntry>> {
+        let search = search_text.map(HistorySearch::parse).unwrap_or_default();
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite get_download_history_filtered connection")?;
-                db::get_download_history_filtered(&conn, user_id, file_type_filter, search_text, category_filter)
+                db::get_download_history_filtered(&conn, user_id, file_type_filter, &search, category_filter, date_from)
                     .context("sqlite get_download_history_filtered")
             }
             Self::Postgres { pg_pool, .. } => {
+                let free = search.free.as_ref().map(|s| format!("%{}%", s));
+                let author = search.author.as_ref().map(|s| format!("%{}%", s));
+                let title = search.title.as_ref().map(|s| format!("%{}%", s));
                 let rows = sqlx::query(
                     "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
                             file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
@@ -311,12 +372,18 @@ impl SharedStorage {
                        AND ($2::text IS NULL OR format = $2)
                        AND ($3::text IS NULL OR (title ILIKE $3 OR author ILIKE $3))
                        AND ($4::text IS NULL OR category = $4)
+                       AND ($5::text IS NULL OR author ILIKE $5)
+                       AND ($6::text IS NULL OR title ILIKE $6)
+                       AND ($7::timestamptz IS NULL OR downloaded_at >= $7)
                      ORDER BY downloaded_at DESC",
                 )
                 .bind(user_id)
                 .bind(file_type_filter)
-                .bind(search_text.map(|s| format!("%{}%", s)))
+                .bind(free)
                 .bind(category_filter)
+                .bind(author)
+                .bind(title)
+                .bind(date_from)
                 .fetch_all(pg_pool)
                 .await
                 .context("postgres get_download_history_filtered")?;
@@ -406,13 +473,22 @@ impl SharedStorage {
         &self,
         user_id: i64,
         search_text: Option<&str>,
+        date_from: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<DownloadHistoryEntry>> {
+        // Cuts table has no `author` column, so the parsed `author` term is
+        // matched against `title` too (best-effort) and AND-ed with the title
+        // term when both are present.
+        let search = search_text.map(HistorySearch::parse).unwrap_or_default();
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite get_cuts_history_filtered connection")?;
-                db::get_cuts_history_filtered(&conn, user_id, search_text).context("sqlite get_cuts_history_filtered")
+                db::get_cuts_history_filtered(&conn, user_id, &search, date_from)
+                    .context("sqlite get_cuts_history_filtered")
             }
             Self::Postgres { pg_pool, .. } => {
+                let free = search.free.as_ref().map(|s| format!("%{}%", s));
+                let author = search.author.as_ref().map(|s| format!("%{}%", s));
+                let title = search.title.as_ref().map(|s| format!("%{}%", s));
                 let rows = sqlx::query(
                     "SELECT id, original_url AS url, title, output_kind AS format, created_at::text AS downloaded_at,
                             file_id, NULL::text AS author, file_size, duration, video_quality,
@@ -421,10 +497,16 @@ impl SharedStorage {
                      FROM cuts
                      WHERE user_id = $1
                        AND ($2::text IS NULL OR title ILIKE $2)
+                       AND ($3::text IS NULL OR title ILIKE $3)
+                       AND ($4::text IS NULL OR title ILIKE $4)
+                       AND ($5::timestamptz IS NULL OR created_at >= $5)
                      ORDER BY created_at DESC",
                 )
                 .bind(user_id)
-                .bind(search_text.map(|s| format!("%{}%", s)))
+                .bind(free)
+                .bind(author)
+                .bind(title)
+                .bind(date_from)
                 .fetch_all(pg_pool)
                 .await
                 .context("postgres get_cuts_history_filtered")?;
@@ -702,5 +784,70 @@ fn map_pg_cut(row: sqlx::postgres::PgRow) -> CutEntry {
         file_size: row.get("file_size"),
         duration: row.get("duration"),
         video_quality: row.get("video_quality"),
+    }
+}
+
+#[cfg(test)]
+mod history_search_tests {
+    use super::*;
+
+    #[test]
+    fn parse_empty_is_empty() {
+        let s = HistorySearch::parse("");
+        assert!(s.is_empty());
+        let s2 = HistorySearch::parse("   ");
+        assert!(s2.is_empty());
+    }
+
+    #[test]
+    fn parse_free_text() {
+        let s = HistorySearch::parse("дора");
+        assert_eq!(s.free.as_deref(), Some("дора"));
+        assert!(s.author.is_none());
+        assert!(s.title.is_none());
+    }
+
+    #[test]
+    fn parse_artist_title_dash() {
+        let s = HistorySearch::parse("Дора - Дорадура");
+        assert_eq!(s.author.as_deref(), Some("Дора"));
+        assert_eq!(s.title.as_deref(), Some("Дорадура"));
+        assert!(s.free.is_none());
+    }
+
+    #[test]
+    fn parse_dash_without_spaces_is_free_text() {
+        // No surrounding spaces → not a split.
+        let s = HistorySearch::parse("hip-hop");
+        assert_eq!(s.free.as_deref(), Some("hip-hop"));
+    }
+
+    #[test]
+    fn parse_only_left_side_with_separator_intact() {
+        // "Дора -  X" → split happens (separator present after dropping trailing
+        // double-space), author = "Дора", title = "X".
+        let s = HistorySearch::parse("Дора - X");
+        assert_eq!(s.author.as_deref(), Some("Дора"));
+        assert_eq!(s.title.as_deref(), Some("X"));
+    }
+
+    #[test]
+    fn parse_trailing_dash_no_separator_falls_to_free() {
+        // Trim strips the trailing space, so the input loses its " - " marker
+        // and becomes a free-text query "Дора -".
+        let s = HistorySearch::parse("Дора - ");
+        assert_eq!(s.free.as_deref(), Some("Дора -"));
+        assert!(s.author.is_none());
+        assert!(s.title.is_none());
+    }
+
+    #[test]
+    fn period_cutoff_tokens() {
+        assert!(period_cutoff(Some("d")).is_some());
+        assert!(period_cutoff(Some("w")).is_some());
+        assert!(period_cutoff(Some("m")).is_some());
+        assert!(period_cutoff(Some("a")).is_none());
+        assert!(period_cutoff(None).is_none());
+        assert!(period_cutoff(Some("garbage")).is_none());
     }
 }

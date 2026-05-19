@@ -6,6 +6,7 @@ mod download_history;
 mod errors;
 mod playlists;
 mod pool;
+mod popular_files;
 mod sessions;
 mod subscriptions;
 mod synced_playlists;
@@ -18,6 +19,7 @@ pub use download_history::*;
 pub use errors::*;
 pub use playlists::*;
 pub use pool::*;
+pub use popular_files::*;
 pub use sessions::*;
 pub use subscriptions::*;
 pub use synced_playlists::*;
@@ -797,21 +799,26 @@ mod tests {
         )
         .unwrap();
 
+        use crate::storage::shared::download_history::HistorySearch;
+        let empty_search = HistorySearch::default();
+
         // No filter - should get mp3 and mp4 with file_id
-        let filtered = get_download_history_filtered(&conn, 12375, None, None, None).unwrap();
+        let filtered = get_download_history_filtered(&conn, 12375, None, &empty_search, None, None).unwrap();
         assert_eq!(filtered.len(), 2);
 
         // Filter by mp3
-        let filtered = get_download_history_filtered(&conn, 12375, Some("mp3"), None, None).unwrap();
+        let filtered = get_download_history_filtered(&conn, 12375, Some("mp3"), &empty_search, None, None).unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].format, "mp3");
 
-        // Search by title
-        let filtered = get_download_history_filtered(&conn, 12375, None, Some("Song"), None).unwrap();
+        // Search by title (free text)
+        let title_search = HistorySearch::parse("Song");
+        let filtered = get_download_history_filtered(&conn, 12375, None, &title_search, None, None).unwrap();
         assert_eq!(filtered.len(), 1);
 
-        // Search by author
-        let filtered = get_download_history_filtered(&conn, 12375, None, Some("Artist A"), None).unwrap();
+        // Search by author (free text — matches author OR title)
+        let author_search = HistorySearch::parse("Artist A");
+        let filtered = get_download_history_filtered(&conn, 12375, None, &author_search, None, None).unwrap();
         assert_eq!(filtered.len(), 1);
     }
 

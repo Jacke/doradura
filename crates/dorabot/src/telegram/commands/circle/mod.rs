@@ -1069,12 +1069,18 @@ pub async fn process_video_clip(
     } else {
         std::time::Duration::from_secs(10 * 60)
     };
+    // Real percent-progress bar (alpha.27): emit ffmpeg's machine-readable
+    // progress to stdout so the dorabot helper can parse `out_time_us=` and
+    // render "▰▰▰▰▰▱▱▱▱▱ 50% · 12s/27s" instead of just "12s elapsed".
+    // `-progress pipe:1` MUST land before the output path.
+    cmd.arg("-progress").arg("pipe:1");
     cmd.arg("-y").arg(&output_path);
 
-    // GH #8: surface progress on long encodes. /circle on a 4K source can run
-    // 5+ minutes silently, which feels like the bot froze. Migrated to the
-    // shared helper in alpha.20 — label varies by output kind so the user can
-    // tell circle vs ringtone vs GIF without reading the message body twice.
+    // GH #8: surface progress on long encodes. Label varies by output kind so
+    // the user can tell circle vs ringtone vs GIF without reading the message
+    // body twice. Pass `effective_len` (post-speed) as the total — ffmpeg's
+    // out_time tracks the OUTPUT file, which has already had setpts/atempo
+    // applied by our filter graph.
     let watcher_label: &'static str = if is_video_note {
         "🎬 Encoding circle"
     } else if is_iphone_ringtone || is_android_ringtone {
@@ -1084,13 +1090,14 @@ pub async fn process_video_clip(
     } else {
         "✂️ Encoding cut"
     };
-    let pulse_outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
+    let pulse_outcome = crate::core::progress_pulse::run_ffmpeg_with_progress_bar(
         &bot,
         chat_id,
         status.id,
         &mut cmd,
         ffmpeg_timeout,
         watcher_label,
+        effective_len.max(1) as u64,
     )
     .await;
 

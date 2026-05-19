@@ -568,13 +568,14 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
 /// Gets filtered download history for the /downloads command
 ///
 /// Returns only files with file_id (successfully sent) and only mp3/mp4 (excluding subtitles).
-/// Supports filtering by file type and searching by title/author.
+/// Supports filtering by file type, period cutoff, and parsed search terms.
 pub fn get_download_history_filtered(
     conn: &DbConnection,
     user_id: i64,
     file_type_filter: Option<&str>,
-    search_text: Option<&str>,
+    search: &crate::storage::shared::download_history::HistorySearch,
     category_filter: Option<&str>,
+    date_from: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let mut query = String::from(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size,
@@ -595,16 +596,29 @@ pub fn get_download_history_filtered(
         params.push(Box::new(ft.to_string()));
     }
 
-    if let Some(search) = search_text {
+    if let Some(free) = &search.free {
         query.push_str(" AND (title LIKE ? OR author LIKE ?)");
-        let search_pattern = format!("%{}%", search);
-        params.push(Box::new(search_pattern.clone()));
-        params.push(Box::new(search_pattern));
+        let pattern = format!("%{}%", free);
+        params.push(Box::new(pattern.clone()));
+        params.push(Box::new(pattern));
+    }
+    if let Some(author) = &search.author {
+        query.push_str(" AND author LIKE ?");
+        params.push(Box::new(format!("%{}%", author)));
+    }
+    if let Some(title) = &search.title {
+        query.push_str(" AND title LIKE ?");
+        params.push(Box::new(format!("%{}%", title)));
     }
 
     if let Some(cat) = category_filter {
         query.push_str(" AND category = ?");
         params.push(Box::new(cat.to_string()));
+    }
+
+    if let Some(from) = date_from {
+        query.push_str(" AND downloaded_at >= ?");
+        params.push(Box::new(from.format("%Y-%m-%d %H:%M:%S").to_string()));
     }
 
     query.push_str(" ORDER BY downloaded_at DESC");

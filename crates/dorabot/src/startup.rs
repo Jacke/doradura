@@ -199,7 +199,16 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     let result = if let Some(url) = webhook_url {
         log::info!("Webhook mode requested with public URL {}", url);
-        crate::webhook::run_webhook_mode(bot, handler, Arc::clone(&shared_storage), bot_id, bot_init_start).await
+        crate::webhook::run_webhook_mode(
+            bot,
+            handler,
+            Arc::clone(&shared_storage),
+            Arc::clone(&db_pool),
+            bot_id,
+            bot_username.map(|s| s.to_string()).unwrap_or_default(),
+            bot_init_start,
+        )
+        .await
     } else {
         run_polling_mode(bot, handler, bot_init_start, Arc::clone(&shared_storage)).await
     };

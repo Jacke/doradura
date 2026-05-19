@@ -345,9 +345,24 @@ async fn handle_settings_main(
                     .await;
         }
         "history" => {
+            // Unified history view (alpha.28): old `core::history::show_history`
+            // was a thin paginated list with no filters; `/downloads` ships
+            // richer per-item actions (clip/circle/ringtone, etc.) + period
+            // filter + parsed "artist - title" search. Send the user there
+            // directly so they get the powerful view from the main menu too.
             bot.try_delete(chat_id, message_id).await;
-            let _ = crate::core::history::show_history(bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage))
-                .await;
+            let _ = crate::telegram::downloads::show_downloads_page(
+                bot,
+                chat_id,
+                Arc::clone(&db_pool),
+                Arc::clone(&shared_storage),
+                0,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
         }
         "services" => {
             show_services_menu(bot, chat_id, message_id, lang, &extension_registry).await?;

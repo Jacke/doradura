@@ -48,7 +48,7 @@ pub async fn handle_downloads_callback(
 
     match action {
         // Send / navigation
-        "page" | "filter" | "catfilter" | "resend" | "resend_cut" | "send" | "send_cut" => {
+        "page" | "filter" | "period" | "catfilter" | "resend" | "resend_cut" | "send" | "send_cut" => {
             super::send::handle(&ctx, action, &parts).await?;
         }
         // Clipping & circles

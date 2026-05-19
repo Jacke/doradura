@@ -619,4 +619,25 @@ DO $$ BEGIN
     ALTER TABLE task_queue ADD COLUMN with_lyrics INTEGER NOT NULL DEFAULT 0;
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
+
+-- V48: popular_files — global (url, format) → file_id cache feeding the
+-- alpha.29 Guest Bots viral path. When the bot is @-mentioned in a chat
+-- it isn't a member of with a URL anybody previously downloaded, we
+-- answer the guest_query with an InlineQueryResultCached* using this
+-- file_id — sub-second viral delivery, no re-download.
+CREATE TABLE IF NOT EXISTS popular_files (
+    url        TEXT NOT NULL,
+    format     TEXT NOT NULL,
+    file_id    TEXT NOT NULL,
+    title      TEXT,
+    author     TEXT,
+    duration   INTEGER,
+    file_size  BIGINT,
+    hits       INTEGER NOT NULL DEFAULT 1,
+    first_seen TIMESTAMPTZ DEFAULT NOW(),
+    last_used  TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (url, format)
+);
+CREATE INDEX IF NOT EXISTS idx_popular_files_last_used ON popular_files(last_used DESC);
+CREATE INDEX IF NOT EXISTS idx_popular_files_hits ON popular_files(hits DESC);
 "#;

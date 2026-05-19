@@ -13,10 +13,11 @@ mod types;
 
 mod analytics;
 mod content_subs;
-mod download_history;
+pub mod download_history;
 mod errors;
 mod helpers;
 mod playlists;
+mod popular_files;
 mod search;
 mod sessions;
 mod share_pages;
@@ -28,6 +29,7 @@ mod user_settings;
 mod users;
 mod vault;
 
+pub use download_history::{HistorySearch, period_cutoff};
 pub use types::{ContentSourceGroup, ContentSubscriptionRecord, PreviewContext, QueueTaskInput, SharePageRecord};
 pub use user_settings::{SubtitleFlags, VideoDownloadSettings};
 

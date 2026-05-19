@@ -182,6 +182,27 @@ fn ensure_tables(conn: &Connection) {
     );
     let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_admin_sessions_admin ON admin_sessions(admin_id)");
     let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at)");
+
+    // V48: popular_files — global (url, format) → file_id cache feeding the
+    // alpha.29 Guest Bots viral path. Mirrored in migrations/V48__popular_files.sql.
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS popular_files (
+            url        TEXT NOT NULL,
+            format     TEXT NOT NULL,
+            file_id    TEXT NOT NULL,
+            title      TEXT,
+            author     TEXT,
+            duration   INTEGER,
+            file_size  INTEGER,
+            hits       INTEGER NOT NULL DEFAULT 1,
+            first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_used  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (url, format)
+        )",
+    );
+    let _ =
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_popular_files_last_used ON popular_files(last_used DESC)");
+    let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_popular_files_hits ON popular_files(hits DESC)");
 }
 
 /// Run migrations for tests without the outer transaction wrapper

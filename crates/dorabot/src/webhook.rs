@@ -16,7 +16,7 @@ use teloxide::update_listeners::UpdateListener;
 use teloxide::update_listeners::webhooks::{self, Options};
 
 use crate::core::config;
-use crate::storage::SharedStorage;
+use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use crate::telegram::handlers::HandlerError;
 
@@ -26,15 +26,26 @@ const TELEGRAM_SECRET_HEADER: &str = "X-Telegram-Bot-Api-Secret-Token";
 #[derive(Clone)]
 struct DedupState {
     shared_storage: Arc<SharedStorage>,
+    db_pool: Arc<DbPool>,
     bot_id: i64,
     secret_token: Arc<str>,
+    // alpha.29: bot token + username for the guest_message intercept path.
+    // teloxide master (rev 912b5ad2) deserializes unknown update kinds into
+    // `UpdateKind::Error(empty)` — the raw JSON is dropped. So we sniff for
+    // `guest_message` in the webhook body BEFORE teloxide gets the bytes
+    // and handle it via direct HTTP `answerGuestQuery`.
+    bot_token: Arc<str>,
+    bot_username: Arc<str>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_webhook_mode(
     bot: Bot,
     handler: UpdateHandler<HandlerError>,
     shared_storage: Arc<SharedStorage>,
+    db_pool: Arc<DbPool>,
     bot_id: UserId,
+    bot_username: String,
     bot_init_start: std::time::Instant,
 ) -> Result<()> {
     let public_url = config::WEBHOOK_URL
@@ -61,8 +72,11 @@ pub async fn run_webhook_mode(
     let app = router.layer(middleware::from_fn_with_state(
         DedupState {
             shared_storage,
+            db_pool,
             bot_id: bot_id.0 as i64,
             secret_token: Arc::<str>::from(secret_token),
+            bot_token: Arc::<str>::from(bot.token().to_string()),
+            bot_username: Arc::<str>::from(bot_username),
         },
         dedup_middleware,
     ));
@@ -127,13 +141,48 @@ async fn dedup_middleware(State(state): State<DedupState>, request: Request<Body
         }
     };
 
-    let update_id = match serde_json::from_slice::<serde_json::Value>(&bytes)
-        .ok()
-        .and_then(|value| value.get("update_id").and_then(|value| value.as_i64()))
-    {
-        Some(update_id) => update_id,
+    let parsed = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(v) => v,
+        Err(err) => {
+            log::warn!("webhook body is not valid JSON: {}", err);
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
+
+    let update_id = match parsed.get("update_id").and_then(|v| v.as_i64()) {
+        Some(id) => id,
         None => return StatusCode::BAD_REQUEST.into_response(),
     };
+
+    // alpha.29: intercept Bot API 10.0 guest_message before teloxide eats it.
+    // We still register the update_id so dedup keeps working across crashes.
+    if parsed.get("guest_message").is_some() {
+        match state
+            .shared_storage
+            .register_processed_update(state.bot_id, update_id)
+            .await
+        {
+            Ok(true) => {
+                let handled = crate::telegram::guest_bots::try_handle_guest_update(
+                    &parsed,
+                    state.bot_token.as_ref(),
+                    state.bot_username.as_ref(),
+                    Arc::clone(&state.db_pool),
+                    Arc::clone(&state.shared_storage),
+                )
+                .await;
+                if !handled {
+                    log::warn!("guest_message field present but handler returned false (no-op)");
+                }
+                return StatusCode::OK.into_response();
+            }
+            Ok(false) => return StatusCode::OK.into_response(),
+            Err(err) => {
+                log::warn!("Failed to register guest_message update {}: {}", update_id, err);
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        }
+    }
 
     match state
         .shared_storage

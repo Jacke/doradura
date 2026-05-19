@@ -83,7 +83,15 @@ async fn handle_new(
             }
         };
 
-        let downloads = db::get_download_history_filtered(&conn, chat_id.0, None, None, None).unwrap_or_default();
+        let downloads = db::get_download_history_filtered(
+            &conn,
+            chat_id.0,
+            None,
+            &doracore::storage::shared::HistorySearch::default(),
+            None,
+            None,
+        )
+        .unwrap_or_default();
         if downloads.is_empty() {
             bot.edit_message_text(chat_id, message_id, "📦 No downloads to archive.")
                 .await?;
@@ -127,7 +135,15 @@ async fn handle_toggle(
 
         let _ = db::toggle_archive_item(&conn, &session.id, download_id);
 
-        let downloads = db::get_download_history_filtered(&conn, chat_id.0, None, None, None).unwrap_or_default();
+        let downloads = db::get_download_history_filtered(
+            &conn,
+            chat_id.0,
+            None,
+            &doracore::storage::shared::HistorySearch::default(),
+            None,
+            None,
+        )
+        .unwrap_or_default();
         downloads
             .iter()
             .position(|d| d.id == download_id)
@@ -165,7 +181,15 @@ async fn handle_select_page(
             }
         };
 
-        let downloads = db::get_download_history_filtered(&conn, chat_id.0, None, None, None).unwrap_or_default();
+        let downloads = db::get_download_history_filtered(
+            &conn,
+            chat_id.0,
+            None,
+            &doracore::storage::shared::HistorySearch::default(),
+            None,
+            None,
+        )
+        .unwrap_or_default();
         let start = page * ITEMS_PER_PAGE;
         let page_items: Vec<i64> = downloads
             .iter()
@@ -215,7 +239,15 @@ async fn handle_preset(
             }
         };
 
-        let downloads = db::get_download_history_filtered(&conn, chat_id.0, None, None, None).unwrap_or_default();
+        let downloads = db::get_download_history_filtered(
+            &conn,
+            chat_id.0,
+            None,
+            &doracore::storage::shared::HistorySearch::default(),
+            None,
+            None,
+        )
+        .unwrap_or_default();
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
         let ids: Vec<i64> = match preset {
@@ -678,7 +710,15 @@ async fn expired_message(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> R
 fn gather_selection_data(db_pool: &DbPool, user_id: i64) -> Option<SelectionPageData> {
     let conn = db::get_connection(db_pool).ok()?;
     let session = db::get_active_archive_session(&conn, user_id).ok().flatten()?;
-    let downloads = db::get_download_history_filtered(&conn, user_id, None, None, None).unwrap_or_default();
+    let downloads = db::get_download_history_filtered(
+        &conn,
+        user_id,
+        None,
+        &doracore::storage::shared::HistorySearch::default(),
+        None,
+        None,
+    )
+    .unwrap_or_default();
     let selected_ids = db::get_archive_item_ids(&conn, &session.id).unwrap_or_default();
     let (sel_count, sel_size) = db::count_archive_items(&conn, &session.id).unwrap_or((0, 0));
     Some(SelectionPageData {

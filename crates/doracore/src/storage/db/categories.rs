@@ -76,7 +76,8 @@ pub fn delete_new_category_session(conn: &DbConnection, user_id: i64) -> Result<
 pub fn get_cuts_history_filtered(
     conn: &DbConnection,
     user_id: i64,
-    search_text: Option<&str>,
+    search: &crate::storage::shared::download_history::HistorySearch,
+    date_from: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let mut query = String::from(
         "SELECT id, original_url, title, output_kind, created_at, file_id, file_size,
@@ -88,10 +89,23 @@ pub fn get_cuts_history_filtered(
     // Only show files with file_id
     query.push_str(" AND file_id IS NOT NULL");
 
-    if let Some(search) = search_text {
+    // Cuts have no author column — match all parsed terms against title.
+    if let Some(free) = &search.free {
         query.push_str(" AND title LIKE ?");
-        let search_pattern = format!("%{}%", search);
-        params.push(Box::new(search_pattern));
+        params.push(Box::new(format!("%{}%", free)));
+    }
+    if let Some(author) = &search.author {
+        query.push_str(" AND title LIKE ?");
+        params.push(Box::new(format!("%{}%", author)));
+    }
+    if let Some(title) = &search.title {
+        query.push_str(" AND title LIKE ?");
+        params.push(Box::new(format!("%{}%", title)));
+    }
+
+    if let Some(from) = date_from {
+        query.push_str(" AND created_at >= ?");
+        params.push(Box::new(from.format("%Y-%m-%d %H:%M:%S").to_string()));
     }
 
     query.push_str(" ORDER BY created_at DESC");

@@ -154,7 +154,14 @@ fn build_timestamp_ui(
     (button_rows, text)
 }
 
-/// Show downloads page
+/// Show downloads page.
+///
+/// `period` is a compact token used in callback data so that period selection
+/// survives bot restarts:
+///   - `"d"` — last 24 hours
+///   - `"w"` — last 7 days
+///   - `"m"` — last 30 days
+///   - `"a"` or `None` — all time
 pub async fn show_downloads_page(
     bot: &Bot,
     chat_id: ChatId,
@@ -164,11 +171,14 @@ pub async fn show_downloads_page(
     file_type_filter: Option<String>,
     search_text: Option<String>,
     category_filter: Option<String>,
+    period: Option<String>,
 ) -> ResponseResult<Message> {
+    let date_from = doracore::storage::shared::period_cutoff(period.as_deref());
+
     // Get filtered downloads
     let all_downloads = if file_type_filter.as_deref() == Some("edit") {
         shared_storage
-            .get_cuts_history_filtered(chat_id.0, search_text.as_deref())
+            .get_cuts_history_filtered(chat_id.0, search_text.as_deref(), date_from)
             .await
             .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
     } else {
@@ -178,6 +188,7 @@ pub async fn show_downloads_page(
                 file_type_filter.as_deref(),
                 search_text.as_deref(),
                 category_filter.as_deref(),
+                date_from,
             )
             .await
             .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
@@ -218,8 +229,17 @@ pub async fn show_downloads_page(
         };
         text.push_str(&format!("Filter: {} {}\n\n", icon, filter_name));
     }
+    let period_label = match period.as_deref() {
+        Some("d") => Some("📅 Today"),
+        Some("w") => Some("📅 Last 7 days"),
+        Some("m") => Some("📅 Last 30 days"),
+        _ => None,
+    };
+    if let Some(lbl) = period_label {
+        text.push_str(&format!("{}\n\n", lbl));
+    }
     if let Some(ref search) = search_text {
-        text.push_str(&format!("🔍 Search: \"{}\"\n\n", search));
+        text.push_str(&format!("🔍 Search: \"{}\"\n\n", escape_markdown(search)));
     }
     if let Some(ref cat) = category_filter {
         text.push_str(&format!("🏷 Category: {}\n\n", escape_markdown(cat)));
@@ -301,6 +321,8 @@ pub async fn show_downloads_page(
     // Truncate search_text to 20 chars before embedding in callback_data to
     // prevent Telegram's 64-byte callback_data overflow (CRIT-10).
     let search_short: String = search_text.as_deref().unwrap_or("").chars().take(20).collect();
+    let period_tok: &str = period.as_deref().unwrap_or("a");
+    let filter_tok: &str = file_type_filter.as_deref().unwrap_or("all");
 
     // Build keyboard
     let mut keyboard_rows = Vec::new();
@@ -363,9 +385,10 @@ pub async fn show_downloads_page(
         nav_buttons.push(crate::telegram::cb(
             "⬅️".to_string(),
             format!(
-                "downloads:page:{}:{}:{}",
+                "downloads:page:{}:{}:{}:{}",
                 current_page - 1,
-                file_type_filter.as_deref().unwrap_or("all"),
+                filter_tok,
+                period_tok,
                 search_short
             ),
         ));
@@ -375,10 +398,8 @@ pub async fn show_downloads_page(
         nav_buttons.push(crate::telegram::cb(
             format!("{}/{}", current_page + 1, total_pages),
             format!(
-                "downloads:page:{}:{}:{}",
-                current_page,
-                file_type_filter.as_deref().unwrap_or("all"),
-                search_short
+                "downloads:page:{}:{}:{}:{}",
+                current_page, filter_tok, period_tok, search_short
             ),
         ));
     }
@@ -387,9 +408,10 @@ pub async fn show_downloads_page(
         nav_buttons.push(crate::telegram::cb(
             "➡️".to_string(),
             format!(
-                "downloads:page:{}:{}:{}",
+                "downloads:page:{}:{}:{}:{}",
                 current_page + 1,
-                file_type_filter.as_deref().unwrap_or("all"),
+                filter_tok,
+                period_tok,
                 search_short
             ),
         ));
@@ -399,34 +421,61 @@ pub async fn show_downloads_page(
         keyboard_rows.push(nav_buttons);
     }
 
+    // Period row — checkmark on the active period, hide it from picker
+    let mut period_row = Vec::new();
+    let mark = |active: bool, label: &str| {
+        if active {
+            format!("• {}", label)
+        } else {
+            label.to_string()
+        }
+    };
+    period_row.push(crate::telegram::cb(
+        mark(period_tok == "d", "Today"),
+        format!("downloads:period:d:{}:{}", filter_tok, search_short),
+    ));
+    period_row.push(crate::telegram::cb(
+        mark(period_tok == "w", "7d"),
+        format!("downloads:period:w:{}:{}", filter_tok, search_short),
+    ));
+    period_row.push(crate::telegram::cb(
+        mark(period_tok == "m", "30d"),
+        format!("downloads:period:m:{}:{}", filter_tok, search_short),
+    ));
+    period_row.push(crate::telegram::cb(
+        mark(period_tok == "a", "All"),
+        format!("downloads:period:a:{}:{}", filter_tok, search_short),
+    ));
+    keyboard_rows.push(period_row);
+
     // Format filter buttons row
     let mut filter_row = Vec::new();
 
     if file_type_filter.as_deref() != Some("mp3") {
         filter_row.push(crate::telegram::cb(
             "🎵 MP3".to_string(),
-            format!("downloads:filter:mp3:{}", search_short),
+            format!("downloads:filter:mp3:{}:{}", period_tok, search_short),
         ));
     }
 
     if file_type_filter.as_deref() != Some("mp4") {
         filter_row.push(crate::telegram::cb(
             "🎬 MP4".to_string(),
-            format!("downloads:filter:mp4:{}", search_short),
+            format!("downloads:filter:mp4:{}:{}", period_tok, search_short),
         ));
     }
 
     if file_type_filter.as_deref() != Some("edit") {
         filter_row.push(crate::telegram::cb(
             "✂️ Clips".to_string(),
-            format!("downloads:filter:edit:{}", search_short),
+            format!("downloads:filter:edit:{}:{}", period_tok, search_short),
         ));
     }
 
     if file_type_filter.is_some() {
         filter_row.push(crate::telegram::cb(
             "🔄 All".to_string(),
-            format!("downloads:filter:all:{}", search_short),
+            format!("downloads:filter:all:{}:{}", period_tok, search_short),
         ));
     }
 
@@ -452,9 +501,10 @@ pub async fn show_downloads_page(
             cat_row.push(crate::telegram::cb(
                 label,
                 format!(
-                    "downloads:catfilter:{}:{}:{}",
+                    "downloads:catfilter:{}:{}:{}:{}",
                     urlencoding::encode(cat),
                     ft_str,
+                    period_tok,
                     search_short
                 ),
             ));
@@ -468,7 +518,7 @@ pub async fn show_downloads_page(
         if category_filter.is_some() {
             keyboard_rows.push(vec![crate::telegram::cb(
                 "📂 All".to_string(),
-                format!("downloads:catfilter::{}:{}", ft_str, search_short),
+                format!("downloads:catfilter::{}:{}:{}", ft_str, period_tok, search_short),
             )]);
         }
     }
