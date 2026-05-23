@@ -60,6 +60,10 @@ pub async fn handle_downloads_callback(
         "speed" | "speed_cut" | "apply_speed" | "apply_speed_cut" => {
             super::speed::handle(&ctx, action, &parts).await?;
         }
+        // Instagram Stories (vertical 9:16 split)
+        "stories" => {
+            super::stories::handle(&ctx, action, &parts).await?;
+        }
         // Voice, subtitles, lyrics
         "subtitles" | "burn_subs" | "burn_subs_lang" | "voice" | "voice_dur" | "lyrics" | "lyr_cap" | "lyrics_send" => {
             super::voice_lyrics::handle(&ctx, action, &parts).await?;

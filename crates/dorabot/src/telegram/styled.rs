@@ -34,6 +34,7 @@ const STYLE_RULES: &[(&str, &str)] = &[
     ("downloads:speed_cut:", "primary"),
     ("downloads:setcat:", "primary"),
     ("downloads:dur:", "primary"),
+    ("downloads:stories:", "primary"),
     ("ringtone:select:", "primary"),
 ];
 

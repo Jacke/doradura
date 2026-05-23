@@ -390,10 +390,13 @@ pub async fn download_and_send_video(
                                 let url_str = url.as_str().to_string();
                                 tokio::spawn(async move {
                                     use teloxide::types::InlineKeyboardMarkup;
-                                    let mut rows = vec![vec![crate::telegram::cb(
-                                        "✂️ Cut Video",
-                                        format!("downloads:clip:{}", id),
-                                    )]];
+                                    let mut rows = vec![
+                                        vec![crate::telegram::cb("✂️ Cut Video", format!("downloads:clip:{}", id))],
+                                        vec![crate::telegram::cb(
+                                            "📱 Instagram Stories",
+                                            format!("downloads:stories:{}", id),
+                                        )],
+                                    ];
                                     // Add "Burn subtitles" for YouTube videos
                                     let is_yt = url_str.contains("://youtube.com/")
                                         || url_str.contains("://www.youtube.com/")

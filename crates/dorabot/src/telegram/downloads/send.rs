@@ -225,6 +225,11 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                             format!("downloads:speed:{}", download_id),
                         )]);
                     }
+                    // Instagram Stories (vertical 9:16 split)
+                    options.push(vec![crate::telegram::cb(
+                        "📱 Instagram Stories".to_string(),
+                        format!("downloads:stories:{}", download_id),
+                    )]);
                 }
 
                 // Category button

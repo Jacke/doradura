@@ -121,6 +121,10 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                         "⚙️ Change speed".to_string(),
                         format!("downloads:speed:{}", download_id),
                     )]);
+                    options.push(vec![crate::telegram::cb(
+                        "📱 Instagram Stories".to_string(),
+                        format!("downloads:stories:{}", download_id),
+                    )]);
                 }
                 if is_youtube_url(&download.url) {
                     options.push(vec![crate::telegram::cb(

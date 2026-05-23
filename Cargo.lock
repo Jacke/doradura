@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "doradura"
-version = "0.51.0-alpha.29"
+version = "0.51.0-alpha.31"
 dependencies = [
  "anyhow",
  "async-trait",

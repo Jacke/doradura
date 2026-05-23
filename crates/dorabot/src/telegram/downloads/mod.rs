@@ -5,6 +5,7 @@ mod clipping;
 mod cover;
 mod send;
 mod speed;
+mod stories;
 pub mod subtitles;
 mod voice_lyrics;
 
