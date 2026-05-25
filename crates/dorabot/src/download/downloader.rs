@@ -79,6 +79,7 @@ pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: 
         message_id,
         alert_manager: _alert_manager,
         created_timestamp: _created_timestamp,
+        silent,
     } = ctx;
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
@@ -98,7 +99,7 @@ pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: 
                 .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
                 .unwrap_or_else(|| crate::i18n::lang_from_code("ru"))
         };
-        let mut progress_msg = ProgressMessage::new(chat_id, lang);
+        let mut progress_msg = ProgressMessage::new(chat_id, lang).silent(silent);
         if let Some(storage) = shared_storage_clone.as_ref() {
             if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
                 progress_msg.style = ProgressBarStyle::parse(&style_str);

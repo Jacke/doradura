@@ -47,8 +47,10 @@ pub(super) fn verify_csrf(header_map: &HeaderMap, _bot_token: &str) -> bool {
         .get(header::COOKIE)
         .and_then(|c| c.to_str().ok())
         .unwrap_or("");
-    if let Some(token) = cookie_str.split(';').find(|s| s.trim().starts_with("admin_token=")) {
-        let token_val = token.trim().strip_prefix("admin_token=").unwrap();
+    if let Some(token_val) = cookie_str
+        .split(';')
+        .find_map(|cookie| cookie.trim().strip_prefix("admin_token="))
+    {
         constant_time_eq(&generate_csrf_token(token_val), csrf_header)
     } else {
         false
@@ -427,4 +429,70 @@ pub(super) async fn admin_logout_handler(State(state): State<WebState>, header_m
         .body(Body::empty())
         .unwrap()
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(unsafe_code)]
+
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn verify_csrf_accepts_matching_admin_cookie() {
+        let session_token = "session-123";
+        let csrf = generate_csrf_token(session_token);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-csrf-token",
+            HeaderValue::from_str(&csrf).expect("csrf header must be valid"),
+        );
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("foo=bar; admin_token=session-123; theme=dark"),
+        );
+
+        assert!(verify_csrf(&headers, "unused"));
+    }
+
+    #[test]
+    fn verify_csrf_rejects_missing_or_malformed_admin_cookie() {
+        let csrf = generate_csrf_token("session-123");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-csrf-token",
+            HeaderValue::from_str(&csrf).expect("csrf header must be valid"),
+        );
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("foo=bar; admin_tokenx=session-123"),
+        );
+        assert!(!verify_csrf(&headers, "unused"));
+
+        let mut missing_cookie_headers = HeaderMap::new();
+        missing_cookie_headers.insert(
+            "x-csrf-token",
+            HeaderValue::from_str(&csrf).expect("csrf header must be valid"),
+        );
+        assert!(!verify_csrf(&missing_cookie_headers, "unused"));
+    }
+
+    #[test]
+    fn extract_ip_uses_nth_from_right_proxy_hop() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.1, 198.51.100.2, 192.0.2.3"),
+        );
+
+        unsafe {
+            std::env::set_var("TRUSTED_PROXY_HOPS", "1");
+        }
+        assert_eq!(extract_ip(&headers), "192.0.2.3");
+
+        unsafe {
+            std::env::set_var("TRUSTED_PROXY_HOPS", "2");
+        }
+        assert_eq!(extract_ip(&headers), "198.51.100.2");
+    }
 }

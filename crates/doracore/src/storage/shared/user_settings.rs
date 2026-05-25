@@ -76,6 +76,22 @@ impl SharedStorage {
         .await
     }
 
+    /// Whether the user has silent downloads enabled (V49). When `true`,
+    /// downloads run at Low priority with no queue/progress messages, are
+    /// delivered with `disable_notification`, and are recapped via a MOTD
+    /// digest on the user's next interaction.
+    pub async fn get_user_silent_downloads(&self, telegram_id: i64) -> Result<bool> {
+        Ok(self
+            .get_user_i32_setting(
+                telegram_id,
+                "silent_downloads",
+                "SELECT COALESCE(silent_downloads, 0) AS silent_downloads FROM users WHERE telegram_id = $1",
+                0,
+            )
+            .await?
+            == 1)
+    }
+
     pub async fn get_user_send_audio_as_document(&self, telegram_id: i64) -> Result<i32> {
         self.get_user_i32_setting(
             telegram_id,
@@ -207,6 +223,16 @@ impl SharedStorage {
             "send_as_document",
             send_as_document,
             "UPDATE users SET send_as_document = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_silent_downloads(&self, telegram_id: i64, enabled: bool) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "silent_downloads",
+            i32::from(enabled),
+            "UPDATE users SET silent_downloads = $2, updated_at = NOW() WHERE telegram_id = $1",
         )
         .await
     }

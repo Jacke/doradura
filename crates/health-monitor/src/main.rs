@@ -8,12 +8,6 @@
 //! Single source of truth for bot name/avatar — the main bot process
 //! does NOT change avatar on smoke test results.
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unreachable)]
-#![allow(clippy::unwrap_in_result)]
-
 use std::env;
 use std::time::Duration;
 
@@ -32,7 +26,6 @@ const TELEGRAM_API_URL: &str = "https://api.telegram.org";
 
 struct Config {
     bot_token: String,
-    bot_api_url: String,
     health_url: String,
     interval: Duration,
     fail_threshold: u32,
@@ -40,40 +33,48 @@ struct Config {
 }
 
 impl Config {
-    fn from_env() -> Self {
-        let bot_token = env::var("TELOXIDE_TOKEN")
-            .or_else(|_| env::var("BOT_TOKEN"))
-            .expect("TELOXIDE_TOKEN or BOT_TOKEN must be set");
+    fn from_env() -> Result<Self, ConfigError> {
+        Ok(Self {
+            bot_token: required_env(&["TELOXIDE_TOKEN", "BOT_TOKEN"])?,
+            health_url: env::var("HEALTH_MONITOR_HEALTH_URL").unwrap_or_else(|_| "http://localhost:9090/health".into()),
+            interval: Duration::from_secs(parsed_env_or("HEALTH_MONITOR_INTERVAL_SECS", 30_u64)),
+            fail_threshold: parsed_env_or("HEALTH_MONITOR_FAIL_THRESHOLD", 3_u32),
+            startup_delay: Duration::from_secs(parsed_env_or("HEALTH_MONITOR_STARTUP_DELAY_SECS", 60_u64)),
+        })
+    }
+}
 
-        let bot_api_url = env::var("BOT_API_URL").unwrap_or_else(|_| "http://localhost:8081".into());
+#[derive(Debug)]
+enum ConfigError {
+    MissingEnv { keys: &'static [&'static str] },
+}
 
-        let health_url =
-            env::var("HEALTH_MONITOR_HEALTH_URL").unwrap_or_else(|_| "http://localhost:9090/health".into());
-
-        let interval_secs: u64 = env::var("HEALTH_MONITOR_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30);
-
-        let fail_threshold: u32 = env::var("HEALTH_MONITOR_FAIL_THRESHOLD")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3);
-
-        let startup_delay_secs: u64 = env::var("HEALTH_MONITOR_STARTUP_DELAY_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(60);
-
-        Self {
-            bot_token,
-            bot_api_url,
-            health_url,
-            interval: Duration::from_secs(interval_secs),
-            fail_threshold,
-            startup_delay: Duration::from_secs(startup_delay_secs),
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingEnv { keys } => {
+                write!(f, "missing required environment variable: one of {}", keys.join(", "))
+            }
         }
     }
+}
+
+impl std::error::Error for ConfigError {}
+
+fn required_env(keys: &'static [&'static str]) -> Result<String, ConfigError> {
+    keys.iter()
+        .find_map(|key| env::var(key).ok())
+        .ok_or(ConfigError::MissingEnv { keys })
+}
+
+fn parsed_env_or<T>(key: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+{
+    env::var(key)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
 }
 
 /// Result of a Telegram API call that may include a rate-limit backoff.
@@ -88,7 +89,7 @@ async fn try_set_name(client: &Client, token: &str, name: &str) -> ApiResult {
     let url = format!("{}/bot{}/setMyName", TELEGRAM_API_URL, token);
     info!("[API] POST setMyName name=\"{}\"", name);
 
-    let resp = match client
+    let response = match client
         .post(&url)
         .json(&serde_json::json!({ "name": name }))
         .timeout(Duration::from_secs(10))
@@ -101,21 +102,7 @@ async fn try_set_name(client: &Client, token: &str, name: &str) -> ApiResult {
             return ApiResult::Failed;
         }
     };
-
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-
-    if status.is_success() && body.contains("\"ok\":true") {
-        info!("[API] setMyName: success");
-        return ApiResult::Success;
-    }
-    if status.as_u16() == 429 {
-        let retry_secs = parse_retry_after(&body);
-        warn!("[API] setMyName: 429 — backing off {}s", retry_secs.as_secs());
-        return ApiResult::RateLimited(retry_secs);
-    }
-    warn!("[API] setMyName: HTTP {} — {}", status, &body[..body.len().min(200)]);
-    ApiResult::Failed
+    finalize_telegram_call("setMyName", response).await
 }
 
 /// Parse `retry_after` from Telegram 429 response JSON, default to 1 hour.
@@ -128,7 +115,7 @@ fn parse_retry_after(body: &str) -> Duration {
 }
 
 /// Try to set bot avatar. Returns `ApiResult` so the caller can respect `retry_after`.
-async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) -> ApiResult {
+async fn try_set_avatar(client: &Client, token: &str, photo: &[u8]) -> ApiResult {
     let photo_file = match reqwest::multipart::Part::bytes(photo.to_vec())
         .file_name("photo.png")
         .mime_str("image/png")
@@ -147,7 +134,7 @@ async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u
     let url = format!("{}/bot{}/setMyProfilePhoto", TELEGRAM_API_URL, token);
     info!("[API] POST setMyProfilePhoto (photo_size={}B)", photo.len());
 
-    let resp = match client
+    let response = match client
         .post(&url)
         .multipart(form)
         .timeout(Duration::from_secs(30))
@@ -160,24 +147,23 @@ async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u
             return ApiResult::Failed;
         }
     };
+    finalize_telegram_call("setMyProfilePhoto", response).await
+}
 
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+async fn finalize_telegram_call(operation: &str, response: reqwest::Response) -> ApiResult {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
 
     if status.is_success() && body.contains("\"ok\":true") {
-        info!("[API] setMyProfilePhoto: success");
+        info!("[API] {operation}: success");
         return ApiResult::Success;
     }
     if status.as_u16() == 429 {
-        let retry_secs = parse_retry_after(&body);
-        warn!("[API] setMyProfilePhoto: 429 — backing off {}s", retry_secs.as_secs());
-        return ApiResult::RateLimited(retry_secs);
+        let retry_after = parse_retry_after(&body);
+        warn!("[API] {operation}: 429 — backing off {}s", retry_after.as_secs());
+        return ApiResult::RateLimited(retry_after);
     }
-    warn!(
-        "[API] setMyProfilePhoto: HTTP {} — {}",
-        status,
-        &body[..body.len().min(200)]
-    );
+    warn!("[API] {operation}: HTTP {} — {}", status, &body[..body.len().min(200)]);
     ApiResult::Failed
 }
 
@@ -207,10 +193,10 @@ enum ActualState {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
+async fn main() -> Result<(), ConfigError> {
     env_logger::init();
 
-    let config = Config::from_env();
+    let config = Config::from_env()?;
 
     info!(
         "Health monitor starting (interval={}s, threshold={}, startup_delay={}s, health_url={})",
@@ -241,7 +227,7 @@ async fn main() {
             actual_name = ActualState::Online;
         }
         if matches!(
-            try_set_avatar(&client, &config.bot_api_url, &config.bot_token, ONLINE_AVATAR).await,
+            try_set_avatar(&client, &config.bot_token, ONLINE_AVATAR).await,
             ApiResult::Success
         ) {
             actual_avatar = ActualState::Online;
@@ -255,7 +241,7 @@ async fn main() {
             actual_name = ActualState::Offline;
         }
         if matches!(
-            try_set_avatar(&client, &config.bot_api_url, &config.bot_token, OFFLINE_AVATAR).await,
+            try_set_avatar(&client, &config.bot_token, OFFLINE_AVATAR).await,
             ApiResult::Success
         ) {
             actual_avatar = ActualState::Offline;
@@ -323,7 +309,7 @@ async fn main() {
                 DesiredState::Online => ONLINE_AVATAR,
                 DesiredState::Offline => OFFLINE_AVATAR,
             };
-            match try_set_avatar(&client, &config.bot_api_url, &config.bot_token, photo).await {
+            match try_set_avatar(&client, &config.bot_token, photo).await {
                 ApiResult::Success => {
                     actual_avatar = desired_name_state;
                     info!("Bot avatar updated successfully");

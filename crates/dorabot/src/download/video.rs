@@ -51,6 +51,7 @@ pub async fn download_and_send_video(
         message_id,
         alert_manager,
         created_timestamp: _created_timestamp,
+        silent,
     } = ctx;
     let bot_clone = bot.clone();
     let shared_storage_clone = shared_storage.clone();
@@ -67,7 +68,7 @@ pub async fn download_and_send_video(
         } else {
             crate::i18n::lang_from_code("ru")
         };
-        let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
+        let mut progress_msg = ProgressMessage::new(chat_id, lang.clone()).silent(silent);
         if let Some(ref storage) = shared_storage_clone
             && let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await
         {
@@ -457,6 +458,15 @@ pub async fn download_and_send_video(
                 .await;
             }
 
+            // Silent mode (V49): record a digest row for the next-interaction
+            // MOTD recap. The file itself was already delivered quietly.
+            if silent && let Some(ref storage) = shared_storage_clone {
+                storage
+                    .insert_silent_digest(chat_id.0, Some(display_title.as_ref()), Some("mp4"), "done")
+                    .await
+                    .ok();
+            }
+
             // Auto-clear success message after delay
             {
                 let bot_for_clear = bot_clone.clone();
@@ -474,8 +484,10 @@ pub async fn download_and_send_video(
                 });
             }
 
-            // Share page: create after successful video send (YouTube only, fire-and-forget)
-            if crate::core::share::is_youtube_url(url.as_str())
+            // Share page: create after successful video send (YouTube only, fire-and-forget).
+            // Suppressed in silent mode — it posts a separate message.
+            if !silent
+                && crate::core::share::is_youtube_url(url.as_str())
                 && let Some(ref storage) = shared_storage_clone
             {
                 let storage_share = Arc::clone(storage);

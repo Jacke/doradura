@@ -856,6 +856,8 @@ pub async fn send_audio_with_retry(
     message_id: Option<i32>,
     artist: Option<String>,
 ) -> Result<(Message, u64), AppError> {
+    // Silent mode (V49): deliver without a notification ping.
+    let silent = progress_msg.is_silent();
     if send_as_document {
         log::info!("User preference: sending audio as document");
         let caption_clone = caption.to_string();
@@ -873,6 +875,7 @@ pub async fn send_audio_with_retry(
                     bot.send_document(chat_id, input_file)
                         .caption(&caption_clone)
                         .parse_mode(ParseMode::MarkdownV2)
+                        .disable_notification(silent)
                         .await
                 }
             },
@@ -898,6 +901,7 @@ pub async fn send_audio_with_retry(
                         .caption(&caption_clone)
                         .parse_mode(ParseMode::MarkdownV2)
                         .duration(duration)
+                        .disable_notification(silent)
                         .await
                 }
             },
@@ -1154,6 +1158,8 @@ pub async fn send_video_with_retry(
 
     // Clone values for use in closure
     let duration_clone = duration;
+    // Silent mode (V49): deliver without a notification ping.
+    let silent = progress_msg.is_silent();
     // If user chose to send as document, send as document immediately
     if send_as_document {
         log::info!("User preference: sending video as document (skip send_video)");
@@ -1169,7 +1175,7 @@ pub async fn send_video_with_retry(
                 let title_for_doc = title_for_doc.clone();
                 async move {
                     let input_file = input_file_with_progress(&path, progress).await?;
-                    let mut req = bot.send_document(chat_id, input_file);
+                    let mut req = bot.send_document(chat_id, input_file).disable_notification(silent);
                     if !suppress_caption {
                         req = req.caption(&title_for_doc).parse_mode(ParseMode::MarkdownV2);
                     }
@@ -1207,7 +1213,7 @@ pub async fn send_video_with_retry(
 
             async move {
                 let input_file = input_file_with_progress(&path, progress).await?;
-                let mut video_msg = bot.send_video(chat_id, input_file);
+                let mut video_msg = bot.send_video(chat_id, input_file).disable_notification(silent);
                 if !suppress_caption {
                     video_msg = video_msg.caption(&title_clone).parse_mode(ParseMode::MarkdownV2);
                 }
@@ -1334,6 +1340,7 @@ pub async fn send_video_with_retry(
                     bot.send_document(chat_id, input_file)
                         .caption(&title_for_fallback)
                         .parse_mode(ParseMode::MarkdownV2)
+                        .disable_notification(silent)
                         .await
                 }
             },

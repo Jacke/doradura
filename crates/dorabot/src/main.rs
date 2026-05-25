@@ -7,13 +7,6 @@
 //! - `background_tasks.rs` — periodic background tasks
 //! - `queue_processor.rs`  — download queue processing
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unreachable)]
-#![allow(clippy::unwrap_in_result)]
-#![allow(unsafe_code)]
-
 use anyhow::Result;
 use dotenvy::dotenv;
 
@@ -25,6 +18,15 @@ use doradura::core::{config, init_logger};
 // teloxide payloads. 10-25% improvement on alloc-heavy paths is typical.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+fn set_bootstrap_env_var(key: &str, value: impl AsRef<std::ffi::OsStr>) {
+    // Safety: CLI dispatch mutates process env before the bot starts any
+    // concurrent work that may read it.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var(key, value);
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,16 +56,13 @@ async fn main() -> Result<()> {
             if let Err(e) = dotenvy::from_filename_override(".env.staging") {
                 anyhow::bail!("Failed to load .env.staging: {}", e);
             }
-            // Safety: runs before any concurrent access to env vars
-            unsafe { std::env::set_var("DORADURA_STAGING", "1") };
+            set_bootstrap_env_var("DORADURA_STAGING", "1");
             doradura::startup::run_bot(webhook).await
         }
         Some(Commands::RunWithCookies { cookies, webhook }) => {
             log::info!("Running bot with cookies refresh (webhook: {})", webhook);
             if let Some(cookies_path) = cookies {
-                // Safety: runs before any concurrent access to env vars
-                // TODO: Audit that the environment access only happens in single-threaded code.
-                unsafe { std::env::set_var("YTDL_COOKIES_FILE", cookies_path) };
+                set_bootstrap_env_var("YTDL_COOKIES_FILE", cookies_path);
             }
             doradura::startup::run_bot(webhook).await
         }
@@ -114,6 +113,8 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     pub use doradura::download::queue::DownloadFormat;
     pub use doradura::download::queue::DownloadQueue;
     pub use doradura::download::queue::DownloadTask;

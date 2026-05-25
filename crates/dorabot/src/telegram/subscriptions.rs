@@ -2,15 +2,6 @@
 //!
 //! Handles `/subscriptions` command and `cw:` callback prefix.
 //
-// Rust 1.95 clippy tightened `collapsible_match` to flag the
-// `match parts[1] { "X" => { if parts.len() >= N { ... } } ... }` pattern
-// that this callback dispatcher uses 5 times. Collapsing each arm to
-// `"X" if parts.len() >= N => { ... }` duplicates every guard check and
-// splits the single `parts[1]` match into five near-identical arms — less
-// readable than the nested form. Suppress at module scope (same rationale
-// as the v0.38.22 TUI fix in `doratui/src/main.rs`).
-#![allow(clippy::collapsible_match)]
-
 use crate::core::config;
 use crate::download::source::instagram::InstagramSource;
 use crate::storage::SharedStorage;
@@ -36,6 +27,65 @@ fn max_subscriptions_for_plan(plan: &str) -> u32 {
         "vip" => *config::watcher::MAX_SUBS_VIP,
         "premium" => *config::watcher::MAX_SUBS_PREMIUM,
         _ => *config::watcher::MAX_SUBS_FREE,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubscriptionCallback<'a> {
+    ConfirmSubscribe {
+        source_type: &'a str,
+        source_id: &'a str,
+        mask: u32,
+    },
+    Cancel,
+    TogglePending {
+        username: &'a str,
+        bit: u32,
+        current_mask: u32,
+    },
+    Manage {
+        sub_id: i64,
+    },
+    Unsub {
+        sub_id: i64,
+    },
+    ToggleExisting {
+        sub_id: i64,
+        bit: u32,
+    },
+    List,
+}
+
+fn parse_subscription_callback(data: &str) -> Option<SubscriptionCallback<'_>> {
+    let mut parts = data.split(':');
+    if parts.next()? != "cw" {
+        return None;
+    }
+
+    match parts.next()? {
+        "ok" => Some(SubscriptionCallback::ConfirmSubscribe {
+            source_type: parts.next()?,
+            source_id: parts.next()?,
+            mask: parts.next().and_then(|mask| mask.parse().ok()).unwrap_or(3),
+        }),
+        "cancel" => Some(SubscriptionCallback::Cancel),
+        "ptog" => Some(SubscriptionCallback::TogglePending {
+            username: parts.next()?,
+            bit: parts.next().and_then(|bit| bit.parse().ok()).unwrap_or(0),
+            current_mask: parts.next().and_then(|mask| mask.parse().ok()).unwrap_or(3),
+        }),
+        "manage" => Some(SubscriptionCallback::Manage {
+            sub_id: parts.next()?.parse().ok()?,
+        }),
+        "unsub" => Some(SubscriptionCallback::Unsub {
+            sub_id: parts.next()?.parse().ok()?,
+        }),
+        "tog" => Some(SubscriptionCallback::ToggleExisting {
+            sub_id: parts.next()?.parse().ok()?,
+            bit: parts.next()?.parse().ok()?,
+        }),
+        "list" => Some(SubscriptionCallback::List),
+        _ => None,
     }
 }
 
@@ -247,76 +297,55 @@ pub async fn handle_subscription_callback(
 ) {
     let _ = bot.answer_callback_query(callback_id.clone()).await;
 
-    let parts: Vec<&str> = data.split(':').collect();
-    if parts.len() < 2 {
+    let Some(callback) = parse_subscription_callback(data) else {
         return;
-    }
+    };
 
-    match parts[1] {
-        "ok" => {
-            // cw:ok:ig:<username>:<mask>
-            if parts.len() >= 5 {
-                let source_type = parts[2];
-                let source_id = parts[3];
-                let mask: u32 = parts[4].parse().unwrap_or(3);
-                handle_confirm_subscribe(
-                    bot,
-                    chat_id,
-                    message_id,
-                    source_type,
-                    source_id,
-                    mask,
-                    &db_pool,
-                    &shared_storage,
-                    registry,
-                )
-                .await;
-            }
+    match callback {
+        SubscriptionCallback::ConfirmSubscribe {
+            source_type,
+            source_id,
+            mask,
+        } => {
+            handle_confirm_subscribe(
+                bot,
+                chat_id,
+                message_id,
+                source_type,
+                source_id,
+                mask,
+                &db_pool,
+                &shared_storage,
+                registry,
+            )
+            .await;
         }
-        "cancel" => {
+        SubscriptionCallback::Cancel => {
             bot.try_delete(chat_id, message_id).await;
         }
-        "ptog" => {
-            // cw:ptog:<username>:<bit>:<current_mask>
-            if parts.len() >= 5 {
-                let username = parts[2];
-                let bit: u32 = parts[3].parse().unwrap_or(0);
-                let current_mask: u32 = parts[4].parse().unwrap_or(3);
-                let new_mask = current_mask ^ bit;
-                // Don't allow mask=0
-                let new_mask = if new_mask == 0 { bit } else { new_mask };
-                update_toggle_keyboard(bot, chat_id, message_id, username, new_mask).await;
-            }
+        SubscriptionCallback::TogglePending {
+            username,
+            bit,
+            current_mask,
+        } => {
+            let new_mask = current_mask ^ bit;
+            // Don't allow mask=0
+            let new_mask = if new_mask == 0 { bit } else { new_mask };
+            update_toggle_keyboard(bot, chat_id, message_id, username, new_mask).await;
         }
-        "manage" => {
-            // cw:manage:<id>
-            if parts.len() >= 3
-                && let Ok(sub_id) = parts[2].parse::<i64>()
-            {
-                show_manage_subscription(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
-            }
+        SubscriptionCallback::Manage { sub_id } => {
+            show_manage_subscription(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
         }
-        "unsub" => {
-            // cw:unsub:<id>
-            if parts.len() >= 3
-                && let Ok(sub_id) = parts[2].parse::<i64>()
-            {
-                handle_unsubscribe(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
-            }
+        SubscriptionCallback::Unsub { sub_id } => {
+            handle_unsubscribe(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
         }
-        "tog" => {
-            // cw:tog:<id>:<bit>
-            if parts.len() >= 4
-                && let (Ok(sub_id), Ok(bit)) = (parts[2].parse::<i64>(), parts[3].parse::<u32>())
-            {
-                handle_toggle_content_type(bot, chat_id, message_id, sub_id, bit, &db_pool, &shared_storage).await;
-            }
+        SubscriptionCallback::ToggleExisting { sub_id, bit } => {
+            handle_toggle_content_type(bot, chat_id, message_id, sub_id, bit, &db_pool, &shared_storage).await;
         }
-        "list" => {
+        SubscriptionCallback::List => {
             bot.try_delete(chat_id, message_id).await;
             handle_subscriptions_command(bot, chat_id, &db_pool, &shared_storage).await;
         }
-        _ => {}
     }
 }
 
@@ -959,5 +988,47 @@ fn handle_send_error(
         });
     } else {
         log::error!("Failed to send notification to {}: {}", user_id, err);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SubscriptionCallback, parse_subscription_callback};
+
+    #[test]
+    fn parses_confirm_subscribe_callback() {
+        assert_eq!(
+            parse_subscription_callback("cw:ok:instagram:dashaostro:3"),
+            Some(SubscriptionCallback::ConfirmSubscribe {
+                source_type: "instagram",
+                source_id: "dashaostro",
+                mask: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn defaults_pending_toggle_numbers_when_invalid() {
+        assert_eq!(
+            parse_subscription_callback("cw:ptog:cristiano:not-a-bit:not-a-mask"),
+            Some(SubscriptionCallback::TogglePending {
+                username: "cristiano",
+                bit: 0,
+                current_mask: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_callbacks_with_invalid_numeric_ids() {
+        assert_eq!(parse_subscription_callback("cw:manage:not-a-number"), None);
+        assert_eq!(parse_subscription_callback("cw:unsub:not-a-number"), None);
+        assert_eq!(parse_subscription_callback("cw:tog:42:not-a-bit"), None);
+    }
+
+    #[test]
+    fn rejects_non_subscription_callbacks() {
+        assert_eq!(parse_subscription_callback("ig:sub:cristiano"), None);
+        assert_eq!(parse_subscription_callback("cw:unknown"), None);
     }
 }

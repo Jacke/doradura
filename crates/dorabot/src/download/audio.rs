@@ -41,6 +41,7 @@ pub async fn download_and_send_audio(
         message_id,
         alert_manager,
         created_timestamp: _created_timestamp,
+        silent,
     } = ctx;
     log::info!(
         "Starting download_and_send_audio for chat {} with URL: {}",
@@ -92,7 +93,7 @@ pub async fn download_and_send_audio(
         } else {
             crate::i18n::lang_from_code("ru")
         };
-        let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
+        let mut progress_msg = ProgressMessage::new(chat_id, lang.clone()).silent(silent);
         if let Some(ref storage) = shared_storage_clone
             && let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await
         {
@@ -118,8 +119,19 @@ pub async fn download_and_send_audio(
 
             metrics::record_file_size("mp3", pipeline_result.file_size);
 
-            // Audio-specific: add effects button
-            add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
+            // Silent mode (V49): record a digest row for the next-interaction
+            // MOTD recap. The file itself was already delivered quietly.
+            if silent && let Some(ref storage) = shared_storage_clone {
+                storage
+                    .insert_silent_digest(chat_id.0, Some(&pipeline_result.title), Some("mp3"), "done")
+                    .await
+                    .ok();
+            }
+
+            // Audio-specific: add effects button (skipped in silent mode — no chatter)
+            if !silent {
+                add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
+            }
 
             // Lyrics: fetch and show section picker — user picks → caption is edited on audio msg
             log::info!(
@@ -129,7 +141,7 @@ pub async fn download_and_send_audio(
                 pipeline_result.artist,
                 shared_storage_clone.is_some()
             );
-            if with_lyrics {
+            if with_lyrics && !silent {
                 let bot_lyr = bot_clone.clone();
                 let title_lyr = pipeline_result.title.clone();
                 let artist_lyr = pipeline_result.artist.clone();
@@ -152,8 +164,10 @@ pub async fn download_and_send_audio(
                 }
             }
 
-            // Share page: create after successful audio send (YouTube only, fire-and-forget)
-            if crate::core::share::is_youtube_url(url.as_str())
+            // Share page: create after successful audio send (YouTube only, fire-and-forget).
+            // Suppressed in silent mode — it posts a separate message.
+            if !silent
+                && crate::core::share::is_youtube_url(url.as_str())
                 && let Some(ref storage) = shared_storage_clone
             {
                 let storage_share = std::sync::Arc::clone(storage);
@@ -216,11 +230,14 @@ pub async fn download_and_send_audio(
                 log::info!("Audio download completed successfully for chat {}", chat_id);
                 timer.observe_duration();
                 metrics::record_download_success("mp3", quality);
-                let signoff = crate::i18n::random_signoff(&lang);
-                let _ = bot_clone
-                    .send_message(chat_id, signoff)
-                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                    .await;
+                // Silent mode: no signoff message — the MOTD recap covers it.
+                if !silent {
+                    let signoff = crate::i18n::random_signoff(&lang);
+                    let _ = bot_clone
+                        .send_message(chat_id, signoff)
+                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                        .await;
+                }
             }
             Err(e) => {
                 e.track_with_operation("audio_download");

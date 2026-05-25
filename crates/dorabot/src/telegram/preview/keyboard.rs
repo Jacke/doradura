@@ -104,6 +104,10 @@ pub fn create_fallback_keyboard(
         format!("info:menu:{}", url_id),
     )]);
     rows.push(vec![crate::telegram::cb(
+        "🔇 Тихий режим".to_string(),
+        format!("pv:silent:{}", url_id),
+    )]);
+    rows.push(vec![crate::telegram::cb(
         "⚙️ Settings".to_string(),
         format!("pv:set:{}", url_id),
     )]);
@@ -304,6 +308,12 @@ pub fn create_video_format_keyboard(
     buttons.push(vec![crate::telegram::cb(
         "📋 Инфо".to_string(),
         format!("info:menu:{}", url_id),
+    )]);
+
+    // Silent-mode toggle (V49)
+    buttons.push(vec![crate::telegram::cb(
+        "🔇 Тихий режим".to_string(),
+        format!("pv:silent:{}", url_id),
     )]);
 
     // Settings button

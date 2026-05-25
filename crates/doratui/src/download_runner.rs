@@ -188,8 +188,28 @@ async fn run_download(
         }
     };
 
-    let stdout = child.stdout.take().expect("stdout piped");
-    let stderr = child.stderr.take().expect("stderr piped");
+    let Some(stdout) = child.stdout.take() else {
+        let _ = tx
+            .send((
+                slot_id,
+                SlotEvent::Failed {
+                    reason: "yt-dlp stdout pipe was not available".to_string(),
+                },
+            ))
+            .await;
+        return;
+    };
+    let Some(stderr) = child.stderr.take() else {
+        let _ = tx
+            .send((
+                slot_id,
+                SlotEvent::Failed {
+                    reason: "yt-dlp stderr pipe was not available".to_string(),
+                },
+            ))
+            .await;
+        return;
+    };
 
     // Track the final file path as yt-dlp announces destinations
     let captured_path = std::sync::Arc::new(tokio::sync::Mutex::new(None::<String>));
@@ -567,10 +587,11 @@ fn find_srt_file(dir: &std::path::Path, stem: &str, lang: &str) -> anyhow::Resul
 
     // Last resort: first available SRT. `candidates` is non-empty here —
     // the `if candidates.is_empty()` bail above guarantees it.
-    Ok(candidates
-        .into_iter()
-        .next()
-        .expect("candidates non-empty — checked above"))
+    if let Some(candidate) = candidates.into_iter().next() {
+        Ok(candidate)
+    } else {
+        anyhow::bail!("No SRT file found for {}.{}.srt", stem, lang);
+    }
 }
 
 #[cfg(test)]

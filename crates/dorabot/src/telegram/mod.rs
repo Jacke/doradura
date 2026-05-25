@@ -66,6 +66,7 @@ pub mod notifications;
 pub mod operation;
 pub mod preview;
 pub mod reactions;
+pub mod silent_digest;
 pub mod styled;
 pub mod subscriptions;
 pub mod types;

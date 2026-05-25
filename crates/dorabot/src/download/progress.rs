@@ -25,6 +25,9 @@ pub struct ProgressMessage {
     pub source_badge: Option<String>,
     /// Last successful editMessageText time — used for throttling to avoid Telegram 429
     last_edit_at: Option<std::time::Instant>,
+    /// Silent mode (V49): when true, `update()` is a no-op and no progress
+    /// message is ever created or edited.
+    silent: bool,
 }
 
 impl ProgressMessage {
@@ -37,7 +40,21 @@ impl ProgressMessage {
             style: ProgressBarStyle::default(),
             source_badge: None,
             last_edit_at: None,
+            silent: false,
         }
+    }
+
+    /// Mark this progress handle silent (V49). A silent handle never creates or
+    /// edits a Telegram message — every `update()` returns immediately.
+    pub fn silent(mut self, silent: bool) -> Self {
+        self.silent = silent;
+        self
+    }
+
+    /// Whether this handle is in silent mode. Send helpers read this to deliver
+    /// the file with `disable_notification` (no ping).
+    pub fn is_silent(&self) -> bool {
+        self.silent
     }
 
     /// Minimum interval between editMessageText calls (prevents Telegram 429).
@@ -52,6 +69,7 @@ impl ProgressMessage {
             style: self.style,
             source_badge: self.source_badge.clone(),
             last_edit_at: None,
+            silent: self.silent,
         }
     }
 
@@ -76,6 +94,10 @@ impl ProgressMessage {
     }
 
     pub async fn update(&mut self, bot: &Bot, status: DownloadStatus) -> ResponseResult<()> {
+        // Silent mode: never surface progress to the user.
+        if self.silent {
+            return Ok(());
+        }
         let text = status.to_message(&self.lang, self.style, self.source_badge.as_deref());
         let keyboard = self.keyboard_for(&status);
 

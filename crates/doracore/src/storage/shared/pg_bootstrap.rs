@@ -640,4 +640,22 @@ CREATE TABLE IF NOT EXISTS popular_files (
 );
 CREATE INDEX IF NOT EXISTS idx_popular_files_last_used ON popular_files(last_used DESC);
 CREATE INDEX IF NOT EXISTS idx_popular_files_hits ON popular_files(hits DESC);
+
+-- V49: silent downloads — per-user toggle + MOTD digest of completed silent
+-- downloads awaiting a one-time recap on the user's next interaction.
+DO $$ BEGIN
+    ALTER TABLE users ADD COLUMN silent_downloads INTEGER DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS silent_digest (
+    id           BIGSERIAL PRIMARY KEY,
+    user_id      BIGINT NOT NULL,
+    title        TEXT,
+    format       TEXT,
+    status       TEXT NOT NULL DEFAULT 'done',
+    completed_at TIMESTAMPTZ DEFAULT NOW(),
+    shown        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_silent_digest_user_shown ON silent_digest(user_id, shown);
 "#;

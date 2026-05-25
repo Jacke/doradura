@@ -16,6 +16,8 @@ pub mod emoji {
     pub const ZAP: &str = "⚡";
     /// "Sad" reaction - for failures
     pub const SAD: &str = "😢";
+    /// "OK hand" reaction - silent download accepted, will be processed quietly
+    pub const OK_HAND: &str = "👌";
 }
 
 /// Returns the appropriate success reaction emoji based on file format.

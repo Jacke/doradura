@@ -57,4 +57,8 @@ pub struct DownloadContext {
     pub alert_manager: Option<Arc<AlertManager>>,
     /// When the task was enqueued. Kept for API compatibility / future use.
     pub created_timestamp: DateTime<Utc>,
+    /// Silent mode (V49): suppress queue/progress messages, deliver the file
+    /// with `disable_notification`, and record the result in `silent_digest`
+    /// for a MOTD recap on the user's next interaction.
+    pub silent: bool,
 }

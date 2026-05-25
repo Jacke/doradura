@@ -45,6 +45,29 @@ pub async fn handle_preview_callback(
                 log::warn!("Failed to delete preview message: {:?}", e);
             }
         }
+        // Silent mode (V49): flip the user's silent-downloads flag right from
+        // the preview card. Same persistent flag as the Settings toggle; we
+        // confirm the new state via a callback alert.
+        "silent" => {
+            let current = shared_storage
+                .get_user_silent_downloads(chat_id.0)
+                .await
+                .unwrap_or(false);
+            let next = !current;
+            if let Err(e) = shared_storage.set_user_silent_downloads(chat_id.0, next).await {
+                log::warn!("Failed to toggle silent_downloads: {}", e);
+            }
+            let alert = if next {
+                "🔇 Тихий режим включён. Загрузка пойдёт без сообщений — итог покажу при следующем обращении."
+            } else {
+                "🔔 Тихий режим выключен. Загрузки снова показывают прогресс."
+            };
+            let _ = bot
+                .answer_callback_query(callback_id.clone())
+                .text(alert)
+                .show_alert(true)
+                .await;
+        }
         "set" => {
             let _ = bot.answer_callback_query(callback_id.clone()).await;
             let url_id = parts[2];

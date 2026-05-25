@@ -172,6 +172,16 @@ pub async fn process_queue(
     }
 }
 
+fn lock_recover<'a, T>(mutex: &'a std::sync::Mutex<T>, context: &str) -> std::sync::MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("{context} mutex poisoned; recovering state");
+            poisoned.into_inner()
+        }
+    }
+}
+
 /// Process a single download task.
 #[allow(clippy::too_many_arguments)]
 async fn process_single_task(
@@ -232,7 +242,7 @@ async fn process_single_task(
     // Read timestamp and drop lock BEFORE sleeping; std::sync::Mutex is fine
     // here because the critical section copies 16 bytes and never `.await`s.
     let wait_time = {
-        let last_start = last_download_start.lock().expect("last_download_start poisoned");
+        let last_start = lock_recover(&last_download_start, "last_download_start");
         let elapsed = last_start.elapsed();
         let inter_delay = config::queue::inter_download_delay();
         if elapsed < inter_delay {
@@ -250,7 +260,7 @@ async fn process_single_task(
         tokio::time::sleep(wait).await;
     }
     {
-        let mut last_start = last_download_start.lock().expect("last_download_start poisoned");
+        let mut last_start = lock_recover(&last_download_start, "last_download_start");
         *last_start = std::time::Instant::now();
     }
 
@@ -402,6 +412,13 @@ async fn process_single_task(
     // Dispatch by format
     let task_format_str = task_format.to_string();
     let sqlite_pool = shared_storage.sqlite_pool();
+    // Silent mode (V49): the per-user flag is read at processing time so the
+    // worker doesn't need a `silent` column on the task. Suppresses progress
+    // messages, delivers with disable_notification, and records a digest row.
+    let silent = shared_storage
+        .get_user_silent_downloads(task_chat_id.0)
+        .await
+        .unwrap_or(false);
     let ctx = DownloadContext {
         bot: bot.clone(),
         chat_id: task_chat_id,
@@ -412,6 +429,7 @@ async fn process_single_task(
         message_id: task_message_id,
         alert_manager: alert_manager.clone(),
         created_timestamp,
+        silent,
     };
     let result = match task_format {
         queue::DownloadFormat::Mp4 => download_and_send_video(ctx, video_quality, time_range.clone()).await,
@@ -454,6 +472,14 @@ async fn process_single_task(
             {
                 Ok(retry_scheduled) => {
                     if !retry_scheduled {
+                        // Silent mode (V49): record the failure for the MOTD recap
+                        // so a quiet download that failed isn't lost.
+                        if silent {
+                            shared_storage
+                                .insert_silent_digest(task_chat_id.0, None, Some(&task_format_str), "failed")
+                                .await
+                                .ok();
+                        }
                         notify_admin_task_failed(
                             bot.clone(),
                             Arc::clone(&sqlite_pool),
@@ -485,4 +511,30 @@ async fn process_single_task(
 
     metrics::CONCURRENT_DOWNLOADS.dec();
     log::info!("Task {} processing finished, permit released", task_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lock_recover;
+
+    #[test]
+    fn lock_recover_returns_guard_for_healthy_mutex() {
+        let mutex = std::sync::Mutex::new(7_u32);
+        let guard = lock_recover(&mutex, "healthy_test");
+        assert_eq!(*guard, 7);
+    }
+
+    #[test]
+    fn lock_recover_recovers_poisoned_mutex() {
+        let mutex = std::sync::Mutex::new(11_u32);
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = lock_recover(&mutex, "poison_setup");
+            panic!("intentional poison");
+        }));
+
+        assert!(mutex.is_poisoned());
+        let guard = lock_recover(&mutex, "poison_recover");
+        assert_eq!(*guard, 11);
+    }
 }

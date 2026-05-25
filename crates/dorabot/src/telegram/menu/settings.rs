@@ -313,6 +313,10 @@ pub async fn show_video_quality_menu(
         .get_user_video_no_caption(chat_id.0)
         .await
         .unwrap_or(false);
+    let silent_downloads = shared_storage
+        .get_user_silent_downloads(chat_id.0)
+        .await
+        .unwrap_or(false);
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // 4320p (8K) intentionally hidden — Railway workers can't reliably
@@ -437,6 +441,17 @@ pub async fn show_video_quality_menu(
             "video:toggle_no_caption",
         )]);
     }
+
+    // Silent downloads toggle (V49): when on, downloads run quietly (low
+    // priority, no progress messages, no ping) and are recapped as a MOTD.
+    keyboard_rows.push(vec![crate::telegram::cb(
+        if silent_downloads {
+            "🔇 Тихие загрузки: вкл"
+        } else {
+            "🔔 Тихие загрузки: выкл"
+        },
+        "settings:silent:toggle",
+    )]);
 
     keyboard_rows.push(vec![crate::telegram::cb(
         i18n::t(&lang, "common.back"),

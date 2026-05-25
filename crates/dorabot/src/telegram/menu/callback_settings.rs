@@ -134,6 +134,11 @@ pub async fn handle_settings_callback(
         return Ok(true);
     }
 
+    if data == "settings:silent:toggle" {
+        handle_settings_silent_toggle(bot, callback_id, chat_id, message_id, db_pool, shared_storage).await?;
+        return Ok(true);
+    }
+
     if data == "experimental:toggle" {
         handle_settings_experimental_toggle(bot, callback_id, chat_id, message_id, db_pool, shared_storage).await?;
         return Ok(true);
@@ -824,6 +829,50 @@ async fn handle_settings_experimental_toggle(
     let _ = bot
         .answer_callback_query(callback_id.clone())
         .text(crate::i18n::t(&lang, alert_key))
+        .show_alert(true)
+        .await;
+
+    show_video_quality_menu(
+        bot,
+        chat_id,
+        message_id,
+        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Handles `settings:silent:toggle` (V49) — flips the user's silent-downloads
+/// flag and re-renders the quality menu. When on, downloads run at low priority
+/// with no queue/progress messages and a MOTD recap on the next interaction.
+async fn handle_settings_silent_toggle(
+    bot: &Bot,
+    callback_id: &CallbackQueryId,
+    chat_id: ChatId,
+    message_id: teloxide::types::MessageId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    let current = shared_storage
+        .get_user_silent_downloads(chat_id.0)
+        .await
+        .unwrap_or(false);
+    let next = !current;
+    shared_storage
+        .set_user_silent_downloads(chat_id.0, next)
+        .await
+        .map_err(db_err)?;
+
+    let alert = if next {
+        "🔇 Тихий режим включён. Загрузки идут без сообщений — итог покажу при следующем обращении."
+    } else {
+        "🔔 Тихий режим выключен. Загрузки снова показывают прогресс."
+    };
+    let _ = bot
+        .answer_callback_query(callback_id.clone())
+        .text(alert)
         .show_alert(true)
         .await;
 

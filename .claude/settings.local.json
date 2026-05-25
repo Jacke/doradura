@@ -370,7 +370,22 @@
       "Bash(awk '$1 > 50 {print $2, \":\" , $1}')",
       "Bash(awk '{print $1}')",
       "Bash(awk -F: '{print $1}')",
-      "Bash(awk *)"
+      "Bash(awk *)",
+      "WebFetch(domain:telegram.org)",
+      "WebFetch(domain:docs.aiogram.dev)",
+      "WebFetch(domain:magazine.ediary.site)",
+      "WebFetch(domain:news.aibase.com)",
+      "Bash(ffprobe -v error -show_entries stream=index,codec_type,codec_name,width,height,r_frame_rate,duration:stream_tags=rotate:format=duration,size -of default=noprint_wrappers=0 /Users/stan/Downloads/IMG_4545.MOV)",
+      "Bash(ffprobe -v error -show_entries stream=index,codec_type,codec_name,width,height:stream_tags=rotate:format=duration,size -of default=noprint_wrappers=0 /Users/stan/Downloads/IMG_4545_stories/IMG_4545_story_00.mp4)",
+      "Bash(ffprobe -v error -select_streams v:0 -show_entries stream_side_data=rotation,displaymatrix -of default /Users/stan/Downloads/IMG_4545.MOV)",
+      "Bash(ffprobe -v error -show_entries stream=width,height,codec_name,pix_fmt -of default /tmp/test_5s.mp4)",
+      "Bash(sed -n '185,210p' crates/doracore/src/storage/migrations.rs)",
+      "Bash(sed -n '595,640p' crates/doracore/src/storage/shared/pg_bootstrap.rs)",
+      "Bash(perl -0pi -e 's/\\(mod popular_files;\\)/$1\\\\nmod silent_digest;/' crates/doracore/src/storage/db/mod.rs)",
+      "Bash(perl -0pi -e 's/\\(mod popular_files;\\)/$1\\\\nmod silent_digest;/' crates/doracore/src/storage/shared/mod.rs)",
+      "Bash(sed -n '44,60p' crates/dorabot/src/download/video.rs)",
+      "Bash(sed -n '30,78p' crates/dorabot/src/download/progress.rs)",
+      "Bash(perl -0pi -e 's/\\\\.priority\\\\\\(crate::download::queue::TaskPriority::from_plan\\\\\\(plan\\\\.as_str\\\\\\(\\\\\\)\\\\\\)\\\\\\)/.priority\\(priority\\)/g' crates/dorabot/src/telegram/menu/callback_download.rs)"
     ],
     "deny": [
       "Bash(git push --force*)",

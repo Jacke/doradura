@@ -203,6 +203,23 @@ fn ensure_tables(conn: &Connection) {
     let _ =
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_popular_files_last_used ON popular_files(last_used DESC)");
     let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_popular_files_hits ON popular_files(hits DESC)");
+
+    // V49: silent downloads — per-user toggle + MOTD digest of completed
+    // silent downloads awaiting a one-time recap on the next interaction.
+    let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN silent_downloads INTEGER DEFAULT 0");
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS silent_digest (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            title        TEXT,
+            format       TEXT,
+            status       TEXT NOT NULL DEFAULT 'done',
+            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            shown        INTEGER NOT NULL DEFAULT 0
+        )",
+    );
+    let _ =
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_silent_digest_user_shown ON silent_digest(user_id, shown)");
 }
 
 /// Run migrations for tests without the outer transaction wrapper

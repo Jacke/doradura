@@ -741,6 +741,11 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
             async move {
+                // Silent downloads (V49): recap any quietly-finished downloads
+                // before handling this message.
+                crate::telegram::silent_digest::maybe_show_silent_digest(&bot, &deps.shared_storage, msg.chat.id.0)
+                    .await;
+
                 // Handle message and get user info
                 let user_info_result = handle_message(
                     bot.clone(),
@@ -865,15 +870,31 @@ fn pre_checkout_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     })
 }
 
-/// Handler for inline queries (Vlipsy video search in any chat)
-fn inline_query_handler(_deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+/// Handler for inline queries.
+///
+/// Two flows in one handler (see `inline_query` module docs):
+///   - URL detected → popular_files cache lookup + deep-link fallback
+///   - Free text → Vlipsy video reaction search
+fn inline_query_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     use crate::telegram::inline_query::handle_inline_query;
 
-    Update::filter_inline_query().endpoint(move |bot: Bot, query: InlineQuery| async move {
-        if let Err(e) = handle_inline_query(bot, query).await {
-            log::error!("Inline query handler error: {:?}", e);
+    Update::filter_inline_query().endpoint(move |bot: Bot, query: InlineQuery| {
+        let deps = deps.clone();
+        async move {
+            let bot_username = deps.bot_username.clone().unwrap_or_default();
+            if let Err(e) = handle_inline_query(
+                bot,
+                query,
+                std::sync::Arc::clone(&deps.shared_storage),
+                std::sync::Arc::clone(&deps.db_pool),
+                &bot_username,
+            )
+            .await
+            {
+                log::error!("Inline query handler error: {:?}", e);
+            }
+            Ok(())
         }
-        Ok(())
     })
 }
 
@@ -884,6 +905,11 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     Update::filter_callback_query().endpoint(move |bot: Bot, q: CallbackQuery| {
         let deps = deps.clone();
         async move {
+            // Silent downloads (V49): recap any quietly-finished downloads
+            // before handling this button press.
+            crate::telegram::silent_digest::maybe_show_silent_digest(&bot, &deps.shared_storage, q.from.id.0 as i64)
+                .await;
+
             let result: teloxide::RequestError = match handle_menu_callback(
                 bot,
                 q,

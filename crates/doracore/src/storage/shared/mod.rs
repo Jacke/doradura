@@ -21,6 +21,7 @@ mod popular_files;
 mod search;
 mod sessions;
 mod share_pages;
+mod silent_digest;
 mod subscriptions;
 mod synced_playlists;
 mod task_queue;

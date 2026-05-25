@@ -104,6 +104,18 @@ pub async fn handle_download_callback(
 
                     let _ = (rate_limiter, &plan);
 
+                    // Silent mode (V49): low priority, no queue/progress messages,
+                    // just a 👌 reaction; a MOTD recap follows on next interaction.
+                    let silent = shared_storage
+                        .get_user_silent_downloads(chat_id.0)
+                        .await
+                        .unwrap_or(false);
+                    let priority = if silent {
+                        crate::download::queue::TaskPriority::Low
+                    } else {
+                        crate::download::queue::TaskPriority::from_plan(plan.as_str())
+                    };
+
                     if format == "mp4+mp3" {
                         let video_quality = if let Some(quality) = selected_quality {
                             Some(quality)
@@ -123,7 +135,7 @@ pub async fn handle_download_callback(
                             .format(DownloadFormat::Mp4)
                             .maybe_video_quality(video_quality)
                             .maybe_audio_bitrate(None)
-                            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+                            .priority(priority)
                             .build();
                         task_mp4.time_range = time_range.clone();
                         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
@@ -142,7 +154,7 @@ pub async fn handle_download_callback(
                             .format(DownloadFormat::Mp3)
                             .maybe_video_quality(None)
                             .maybe_audio_bitrate(audio_bitrate)
-                            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+                            .priority(priority)
                             .build();
                         task_mp3.time_range = time_range.clone();
                         task_mp3.with_lyrics = with_lyrics;
@@ -150,15 +162,16 @@ pub async fn handle_download_callback(
 
                         log::info!("Added 2 tasks to queue for mp4+mp3: MP4 and MP3 for chat {}", chat_id.0);
 
-                        if let Some(msg_id) = send_queue_position_message(
-                            bot,
-                            chat_id,
-                            plan.as_str(),
-                            &download_queue,
-                            &db_pool,
-                            &shared_storage,
-                        )
-                        .await
+                        if !silent
+                            && let Some(msg_id) = send_queue_position_message(
+                                bot,
+                                chat_id,
+                                plan.as_str(),
+                                &download_queue,
+                                &db_pool,
+                                &shared_storage,
+                            )
+                            .await
                         {
                             download_queue.set_queue_message_id(chat_id, msg_id.0).await;
                         }
@@ -198,25 +211,38 @@ pub async fn handle_download_callback(
                             .format(dl_format)
                             .maybe_video_quality(video_quality)
                             .maybe_audio_bitrate(audio_bitrate)
-                            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+                            .priority(priority)
                             .build();
                         task.time_range = time_range.clone();
                         task.carousel_mask = carousel_mask;
                         task.with_lyrics = with_lyrics;
                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
-                        if let Some(msg_id) = send_queue_position_message(
-                            bot,
-                            chat_id,
-                            plan.as_str(),
-                            &download_queue,
-                            &db_pool,
-                            &shared_storage,
-                        )
-                        .await
+                        if !silent
+                            && let Some(msg_id) = send_queue_position_message(
+                                bot,
+                                chat_id,
+                                plan.as_str(),
+                                &download_queue,
+                                &db_pool,
+                                &shared_storage,
+                            )
+                            .await
                         {
                             download_queue.set_queue_message_id(chat_id, msg_id.0).await;
                         }
+                    }
+
+                    // Silent mode: acknowledge with a 👌 reaction on the user's
+                    // original link message instead of any text message.
+                    if silent && let Some(orig_id) = original_message_id {
+                        crate::telegram::try_set_reaction(
+                            bot,
+                            chat_id,
+                            teloxide::types::MessageId(orig_id),
+                            crate::telegram::emoji::OK_HAND,
+                        )
+                        .await;
                     }
                 }
                 Err(e) => {

@@ -43,24 +43,24 @@ pub async fn show_instagram_profile(bot: &Bot, chat_id: ChatId, username: &str, 
 
     // Try to send profile pic as photo with caption
     if !profile.profile_pic_url.is_empty() {
-        match bot
-            .send_photo(
-                chat_id,
-                InputFile::url(
-                    profile
-                        .profile_pic_url
-                        .parse()
-                        .unwrap_or_else(|_| "https://instagram.com/favicon.ico".parse().unwrap()),
-                ),
-            )
-            .caption(&caption)
-            .reply_markup(keyboard.clone())
-            .await
-        {
-            Ok(_) => return,
-            Err(e) => {
-                log::warn!("Failed to send profile photo: {}, falling back to text", e);
+        if let Some(photo_url) = parse_profile_photo_url(&profile.profile_pic_url) {
+            match bot
+                .send_photo(chat_id, InputFile::url(photo_url))
+                .caption(&caption)
+                .reply_markup(keyboard.clone())
+                .await
+            {
+                Ok(_) => return,
+                Err(e) => {
+                    log::warn!("Failed to send profile photo: {}, falling back to text", e);
+                }
             }
+        } else {
+            log::warn!(
+                "Invalid Instagram profile photo URL for @{}: {}",
+                username,
+                profile.profile_pic_url
+            );
         }
     }
 
@@ -521,6 +521,10 @@ async fn handle_story_download(bot: &Bot, chat_id: ChatId, reel_id: &str, index:
     let _ = bot.send_message(chat_id, &item.media_url).await;
 }
 
+fn parse_profile_photo_url(url: &str) -> Option<url::Url> {
+    url::Url::parse(url).ok()
+}
+
 /// Format a count with K/M suffixes for display.
 fn format_count(count: u32) -> String {
     if count >= 1_000_000 {
@@ -542,5 +546,19 @@ mod tests {
         assert_eq!(format_count(9999), "9999");
         assert_eq!(format_count(10000), "10.0K");
         assert_eq!(format_count(1500000), "1.5M");
+    }
+
+    #[test]
+    fn parse_profile_photo_url_accepts_valid_urls() {
+        let parsed = parse_profile_photo_url("https://example.com/avatar.jpg");
+        assert_eq!(
+            parsed.as_ref().map(url::Url::as_str),
+            Some("https://example.com/avatar.jpg")
+        );
+    }
+
+    #[test]
+    fn parse_profile_photo_url_rejects_invalid_urls() {
+        assert!(parse_profile_photo_url("not a url").is_none());
     }
 }

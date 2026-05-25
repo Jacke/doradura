@@ -125,18 +125,9 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .skip(skip)
         .enumerate()
-        .map(|(i, &display_idx)| {
+        .filter_map(|(i, &display_idx)| {
             let abs_idx = skip + i;
-            // display_idx comes from the filtered-indices list built against
-            // the same reversed history view a few lines up, so it is always
-            // in-range. .expect() documents the invariant loudly if it ever
-            // breaks (e.g. history mutated between render passes).
-            let entry = app
-                .history
-                .iter()
-                .rev()
-                .nth(display_idx)
-                .expect("display_idx must index into reversed history");
+            let entry = app.history.iter().rev().nth(display_idx)?;
             let when = entry.finished_at.format("%H:%M %d/%m").to_string();
             let is_highlighted = abs_idx == highlight_idx;
             let is_multi_selected = app.history_selected.contains(&display_idx);
@@ -154,19 +145,21 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
                 app.theme.surface1
             };
 
-            Row::new([
-                Cell::from(sel_icon).style(Style::default().fg(sel_color)),
-                Cell::from(entry.title.clone()).style(Style::default().fg(if is_highlighted {
-                    app.theme.lavender
-                } else {
-                    app.theme.text
-                })),
-                Cell::from(entry.artist.clone()).style(Style::default().fg(app.theme.subtext)),
-                Cell::from(entry.format.label()).style(Style::default().fg(app.theme.peach)),
-                Cell::from(format!("{:.1} MB", entry.size_mb)).style(Style::default().fg(app.theme.blue)),
-                Cell::from(when).style(Style::default().fg(app.theme.subtext)),
-            ])
-            .style(row_style)
+            Some(
+                Row::new([
+                    Cell::from(sel_icon).style(Style::default().fg(sel_color)),
+                    Cell::from(entry.title.clone()).style(Style::default().fg(if is_highlighted {
+                        app.theme.lavender
+                    } else {
+                        app.theme.text
+                    })),
+                    Cell::from(entry.artist.clone()).style(Style::default().fg(app.theme.subtext)),
+                    Cell::from(entry.format.label()).style(Style::default().fg(app.theme.peach)),
+                    Cell::from(format!("{:.1} MB", entry.size_mb)).style(Style::default().fg(app.theme.blue)),
+                    Cell::from(when).style(Style::default().fg(app.theme.subtext)),
+                ])
+                .style(row_style),
+            )
         })
         .collect();
 
