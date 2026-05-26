@@ -22,6 +22,7 @@ use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use tokio::process::Command;
 
+use crate::i18n;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use crate::telegram::BotExt;
@@ -59,19 +60,18 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
         return Ok(());
     };
 
+    let lang = crate::i18n::user_lang_from_storage(&ctx.shared_storage, ctx.chat_id.0).await;
+
     if download.format != "mp4" {
         ctx.bot
-            .send_md(
-                ctx.chat_id,
-                "📱 Instagram Stories доступны только для видео \\(MP4\\)\\.",
-            )
+            .send_md(ctx.chat_id, i18n::t(&lang, "stories-only-mp4"))
             .await
             .ok();
         return Ok(());
     }
     let Some(file_id) = download.file_id.clone() else {
         ctx.bot
-            .send_md(ctx.chat_id, "❌ Не найден file\\_id для этого файла\\.")
+            .send_md(ctx.chat_id, i18n::t(&lang, "stories-no-file-id"))
             .await
             .ok();
         return Ok(());
@@ -101,7 +101,8 @@ async fn run_stories(
     file_id: String,
     title: String,
 ) -> ResponseResult<()> {
-    let status = bot.send_message(chat_id, "📱 Готовлю Instagram Stories…").await?;
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let status = bot.send_message(chat_id, i18n::t(&lang, "stories-preparing")).await?;
 
     // MTProto fallback coordinates for large files.
     let (fallback_message_id, fallback_chat_id) = shared_storage
@@ -133,12 +134,9 @@ async fn run_stories(
     {
         log::error!("stories: source download failed: {}", e);
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(
-            chat_id,
-            "❌ Не удалось получить исходное видео. Возможно, файл больше недоступен.",
-        )
-        .await
-        .ok();
+        bot.send_message(chat_id, i18n::t(&lang, "stories-download-failed"))
+            .await
+            .ok();
         return Ok(());
     }
 
@@ -170,9 +168,7 @@ async fn run_stories(
         }
         doracore::core::process::PulseOutcome::Timeout => {
             bot.delete_message(chat_id, status.id).await.ok();
-            bot.send_message(chat_id, "❌ Обработка заняла слишком долго. Попробуй клип покороче.")
-                .await
-                .ok();
+            bot.send_message(chat_id, i18n::t(&lang, "stories-timeout")).await.ok();
             return Ok(());
         }
     };
@@ -181,7 +177,7 @@ async fn run_stories(
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("stories: ffmpeg failed: {}", stderr.lines().last().unwrap_or(""));
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, "❌ Не удалось нарезать видео на Stories.")
+        bot.send_message(chat_id, i18n::t(&lang, "stories-cut-failed"))
             .await
             .ok();
         return Ok(());
@@ -204,7 +200,7 @@ async fn run_stories(
 
     if segments.is_empty() {
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, "❌ Не удалось создать ни одного сегмента Stories.")
+        bot.send_message(chat_id, i18n::t(&lang, "stories-no-segments"))
             .await
             .ok();
         return Ok(());
@@ -216,7 +212,11 @@ async fn run_stories(
     let mut sent = 0usize;
     for (idx, seg) in segments.iter().enumerate() {
         let dur = doracore::download::metadata::probe_duration_seconds(&seg.to_string_lossy()).await;
-        let caption = format!("📱 {} — Stories {}/{}", title, idx + 1, total);
+        let caption = i18n::t_args(
+            &lang,
+            "stories-caption",
+            &doracore::fluent_args!("title" => title.as_str(), "index" => idx as i64 + 1, "total" => total as i64),
+        );
 
         // Portrait video: omit explicit thumbnail (Telegram auto-generates one
         // matching the actual frame orientation; see download/send.rs notes).
@@ -238,15 +238,17 @@ async fn run_stories(
     bot.delete_message(chat_id, status.id).await.ok();
 
     if sent == 0 {
-        bot.send_message(chat_id, "❌ Не удалось отправить сегменты Stories.")
+        bot.send_message(chat_id, i18n::t(&lang, "stories-send-failed"))
             .await
             .ok();
     } else {
-        let mut done = format!("✅ Готово — {} сторис в формате 9:16.", sent);
+        let mut done = i18n::t_args(&lang, "stories-done", &doracore::fluent_args!("count" => sent as i64));
         if capped {
-            done.push_str(&format!(
-                "\n⚠️ Видео длиннее {} мин — обрезал начало.",
-                MAX_TOTAL_SECS / 60
+            done.push('\n');
+            done.push_str(&i18n::t_args(
+                &lang,
+                "stories-capped",
+                &doracore::fluent_args!("minutes" => MAX_TOTAL_SECS / 60),
             ));
         }
         bot.send_message(chat_id, done).await.ok();

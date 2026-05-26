@@ -57,10 +57,11 @@ pub async fn handle_preview_callback(
             if let Err(e) = shared_storage.set_user_silent_downloads(chat_id.0, next).await {
                 log::warn!("Failed to toggle silent_downloads: {}", e);
             }
+            let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
             let alert = if next {
-                "🔇 Тихий режим включён. Загрузка пойдёт без сообщений — итог покажу при следующем обращении."
+                crate::i18n::t(&lang, "silent-alert-on")
             } else {
-                "🔔 Тихий режим выключен. Загрузки снова показывают прогресс."
+                crate::i18n::t(&lang, "silent-alert-off")
             };
             let _ = bot
                 .answer_callback_query(callback_id.clone())

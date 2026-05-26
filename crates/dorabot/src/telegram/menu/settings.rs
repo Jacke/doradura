@@ -446,9 +446,9 @@ pub async fn show_video_quality_menu(
     // priority, no progress messages, no ping) and are recapped as a MOTD.
     keyboard_rows.push(vec![crate::telegram::cb(
         if silent_downloads {
-            "🔇 Тихие загрузки: вкл"
+            i18n::t(&lang, "silent-toggle-on")
         } else {
-            "🔔 Тихие загрузки: выкл"
+            i18n::t(&lang, "silent-toggle-off")
         },
         "settings:silent:toggle",
     )]);

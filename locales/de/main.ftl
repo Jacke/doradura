@@ -299,3 +299,25 @@ progress =
        *[other] Sekunden
     }!
     .error = Fehler
+
+# Silent downloads (V49) + Instagram Stories
+silent-toggle-on = 🔇 Stille Downloads: an
+silent-toggle-off = 🔔 Stille Downloads: aus
+silent-alert-on = 🔇 Stiller Modus an. Downloads laufen leise — beim nächsten Mal fasse ich sie zusammen.
+silent-alert-off = 🔔 Stiller Modus aus. Downloads zeigen wieder den Fortschritt.
+silent-motd-failed-suffix =  — fehlgeschlagen
+silent-motd-untitled = ohne Titel
+silent-motd-header-done = 📬 *Während du weg warst — { $count } stille Download\(s\) fertig*
+silent-motd-header-failed = 📬 *Während du weg warst — { $count } Download\(s\) fehlgeschlagen*
+silent-motd-header-mixed = 📬 *Während du weg warst — { $done } fertig, { $failed } fehlgeschlagen*
+stories-preparing = 📱 Bereite Instagram Stories vor…
+stories-download-failed = ❌ Quellvideo konnte nicht geladen werden. Es ist möglicherweise nicht mehr verfügbar.
+stories-timeout = ❌ Die Verarbeitung hat zu lange gedauert. Versuch einen kürzeren Clip.
+stories-cut-failed = ❌ Video konnte nicht in Stories geschnitten werden.
+stories-no-segments = ❌ Es konnte kein Story-Segment erstellt werden.
+stories-send-failed = ❌ Die Story-Segmente konnten nicht gesendet werden.
+stories-done = ✅ Fertig — { $count } Stories im Format 9:16.
+stories-capped = ⚠️ Video länger als { $minutes } Min — Anfang gekürzt.
+stories-caption = 📱 { $title } — Stories { $index }/{ $total }
+stories-only-mp4 = 📱 Instagram Stories sind nur für Videos \(MP4\) verfügbar\.
+stories-no-file-id = ❌ file\_id für diese Datei nicht gefunden\.

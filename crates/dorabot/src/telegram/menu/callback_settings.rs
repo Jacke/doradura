@@ -865,10 +865,11 @@ async fn handle_settings_silent_toggle(
         .await
         .map_err(db_err)?;
 
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
     let alert = if next {
-        "🔇 Тихий режим включён. Загрузки идут без сообщений — итог покажу при следующем обращении."
+        crate::i18n::t(&lang, "silent-alert-on")
     } else {
-        "🔔 Тихий режим выключен. Загрузки снова показывают прогресс."
+        crate::i18n::t(&lang, "silent-alert-off")
     };
     let _ = bot
         .answer_callback_query(callback_id.clone())
