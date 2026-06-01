@@ -85,6 +85,34 @@ pub fn lookup_popular_file(conn: &DbConnection, url: &str, format: &str) -> Resu
     Ok(row)
 }
 
+/// Look up every cached format for a given URL, ordered by hits DESC (most
+/// popular first). Powers the inline-mode multi-format URL response: one
+/// `popular_files` query returns mp3 + mp4 + m4r + video_note + gif + cut
+/// without N round-trips.
+pub fn lookup_popular_file_all_formats(conn: &DbConnection, url: &str) -> Result<Vec<PopularFileEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT url, format, file_id, title, author, duration, file_size, hits
+         FROM popular_files
+         WHERE url = ?1
+         ORDER BY hits DESC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![url], |row| {
+            Ok(PopularFileEntry {
+                url: row.get(0)?,
+                format: row.get(1)?,
+                file_id: row.get(2)?,
+                title: row.get(3)?,
+                author: row.get(4)?,
+                duration: row.get(5)?,
+                file_size: row.get(6)?,
+                hits: row.get(7)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +199,62 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    // ─── lookup_popular_file_all_formats ───────────────────────────────────
+
+    #[test]
+    fn all_formats_returns_every_cached_format_for_url() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        let url = "https://youtu.be/multi";
+        upsert_popular_file(&conn, url, "mp3", "fa", Some("Title"), Some("A"), Some(180), Some(1000)).unwrap();
+        upsert_popular_file(
+            &conn,
+            url,
+            "mp4",
+            "fv",
+            Some("Title"),
+            Some("A"),
+            Some(180),
+            Some(20_000),
+        )
+        .unwrap();
+        upsert_popular_file(&conn, url, "gif", "fg", Some("Title"), None, Some(5), Some(500)).unwrap();
+
+        let all = lookup_popular_file_all_formats(&conn, url).unwrap();
+        assert_eq!(all.len(), 3);
+        let formats: Vec<&str> = all.iter().map(|e| e.format.as_str()).collect();
+        assert!(formats.contains(&"mp3"));
+        assert!(formats.contains(&"mp4"));
+        assert!(formats.contains(&"gif"));
+    }
+
+    #[test]
+    fn all_formats_ordered_by_hits_desc() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        let url = "https://youtu.be/ordering";
+        // mp4 gets 3 hits, mp3 gets 2, gif gets 1 — verify DESC order.
+        upsert_popular_file(&conn, url, "mp3", "a", None, None, None, None).unwrap();
+        upsert_popular_file(&conn, url, "mp4", "b", None, None, None, None).unwrap();
+        upsert_popular_file(&conn, url, "gif", "c", None, None, None, None).unwrap();
+        upsert_popular_file(&conn, url, "mp3", "a", None, None, None, None).unwrap(); // mp3 hits=2
+        upsert_popular_file(&conn, url, "mp4", "b", None, None, None, None).unwrap(); // mp4 hits=2
+        upsert_popular_file(&conn, url, "mp4", "b", None, None, None, None).unwrap(); // mp4 hits=3
+
+        let all = lookup_popular_file_all_formats(&conn, url).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].format, "mp4"); // 3 hits
+        assert_eq!(all[1].format, "mp3"); // 2 hits
+        assert_eq!(all[2].format, "gif"); // 1 hit
+    }
+
+    #[test]
+    fn all_formats_empty_when_url_missing() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        let all = lookup_popular_file_all_formats(&conn, "https://nope.example/x").unwrap();
+        assert!(all.is_empty());
     }
 }

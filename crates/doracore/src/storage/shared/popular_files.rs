@@ -95,6 +95,44 @@ impl SharedStorage {
         }
     }
 
+    /// Look up every cached format for a given URL, ordered by hits DESC.
+    /// Drives the inline-mode multi-format URL response: one call returns
+    /// every variant (mp3, mp4, m4r, video_note, gif, cut) the bot has seen
+    /// for this URL so the user can pick any with a single tap.
+    pub async fn lookup_popular_file_all_formats(&self, url: &str) -> Result<Vec<PopularFileEntry>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite lookup_popular_file_all_formats connection")?;
+                db::lookup_popular_file_all_formats(&conn, url).context("sqlite lookup_popular_file_all_formats")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT url, format, file_id, title, author, duration, file_size, hits
+                     FROM popular_files
+                     WHERE url = $1
+                     ORDER BY hits DESC",
+                )
+                .bind(url)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres lookup_popular_file_all_formats")?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| PopularFileEntry {
+                        url: row.get("url"),
+                        format: row.get("format"),
+                        file_id: row.get("file_id"),
+                        title: row.get("title"),
+                        author: row.get("author"),
+                        duration: row.get::<Option<i32>, _>("duration").map(|v| v as i64),
+                        file_size: row.get("file_size"),
+                        hits: row.get::<i32, _>("hits") as i64,
+                    })
+                    .collect())
+            }
+        }
+    }
+
     /// Look up the most recent `download_history` entry for a (telegram_id, url, format)
     /// triple — drives the Guest Bots Path A "user already had this file" branch.
     ///

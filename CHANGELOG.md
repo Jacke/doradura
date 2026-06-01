@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Inline-режим top-UX: личный поиск + recents + multi-format + funnel-кнопка** (v0.51.0-alpha.34) — переработка `@doradura_bot <…>` в трёхрежимный диспетчер. `@bot ` (пусто) → твои последние 15 скачиваний (CachedAudio/Video/Gif). `@bot Дора Дорадура` → поиск по `download_history.title/author` (AND если «Author - Title», OR если просто слова) с Vlipsy GIF как fallback. `@bot https://yt.be/x` → ВСЕ закешированные форматы из `popular_files` за один запрос (mp3+mp4+m4r+video_note+gif+cut, не только mp3+mp4). Везде сверху постоянная кнопка **🔽 Открыть Doradura** через новый `InlineQueryResultsButton::StartParameter("from_inline")` API. Богатые caption/description с duration · bitrate/quality · size. Article-fallback с YouTube-thumbnail. **Bugfix:** URL-lookup теперь канонизирует ссылку (`canonicalize_url`) перед обращением к `popular_files` — раньше любой `?si=…` вариант ютуб-ссылки мимо кеша. Новый accessor `lookup_popular_file_all_formats` (один запрос вместо N round-trip). 18 новых unit-тестов.
+
 ### Changed
 - **i18n для Silent downloads и Instagram Stories** (v0.51.0-alpha.33) — все строки обеих фич (тоггл/алерты/MOTD-сводка/статусы/ошибки/подписи) переведены и вынесены в 4 локали (en/ru/fr/de), 20 новых fluent-ключей `silent-*` и `stories-*` вместо захардкоженного русского. MOTD-заголовки используют `t_args` с counts. Примечание: fluent isolation-маркеры (U+2068/U+2069) вокруг `{ $arg }` — невидимы в Telegram, безвредны.
 
