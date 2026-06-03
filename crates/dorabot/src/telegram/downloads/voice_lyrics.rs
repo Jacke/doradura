@@ -259,30 +259,34 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                                 .await
                                 .map(|m| m.len() as i64)
                                 .unwrap_or(0);
-                            if let Some(fid) = new_file_id {
-                                let new_title = format!("{} [{} subs]", title, lang_code);
-                                if let Ok(db_id) = shared_storage
-                                    .save_download_history(
-                                        chat_id.0,
-                                        &url,
-                                        &new_title,
-                                        "mp4",
-                                        Some(&fid),
-                                        None,
-                                        Some(file_size),
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                    )
-                                    .await
-                                {
-                                    let _ = shared_storage
-                                        .update_download_message_id(db_id, sent_message.id.0, chat_id.0)
-                                        .await;
-                                }
+                            let new_title = format!("{} [{} subs]", title, lang_code);
+                            if new_file_id.is_none() {
+                                log::warn!(
+                                    "file_id extraction failed for burned-subs send '{}', saving history with NULL file_id",
+                                    new_title
+                                );
+                            }
+                            if let Ok(db_id) = shared_storage
+                                .save_download_history(
+                                    chat_id.0,
+                                    &url,
+                                    &new_title,
+                                    "mp4",
+                                    new_file_id.as_deref(),
+                                    None,
+                                    Some(file_size),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                )
+                                .await
+                            {
+                                let _ = shared_storage
+                                    .update_download_message_id(db_id, sent_message.id.0, chat_id.0)
+                                    .await;
                             }
 
                             // Add video cut button

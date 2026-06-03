@@ -136,25 +136,30 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                             .map(|v| v.file.id.0.clone())
                             .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
                             .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
-                        if let Some(fid) = new_file_id
-                            && let Ok(db_id) = ctx
-                                .shared_storage
-                                .save_download_history(
-                                    ctx.chat_id.0,
-                                    &download.url,
-                                    &new_title,
-                                    "mp4",
-                                    Some(&fid),
-                                    download.author.as_deref(),
-                                    Some(file_size),
-                                    new_duration,
-                                    download.video_quality.as_deref(),
-                                    None,
-                                    None,
-                                    None,
-                                    Some(speed),
-                                )
-                                .await
+                        if new_file_id.is_none() {
+                            log::warn!(
+                                "file_id extraction failed for speed-modified send '{}', saving history with NULL file_id",
+                                new_title
+                            );
+                        }
+                        if let Ok(db_id) = ctx
+                            .shared_storage
+                            .save_download_history(
+                                ctx.chat_id.0,
+                                &download.url,
+                                &new_title,
+                                "mp4",
+                                new_file_id.as_deref(),
+                                download.author.as_deref(),
+                                Some(file_size),
+                                new_duration,
+                                download.video_quality.as_deref(),
+                                None,
+                                None,
+                                None,
+                                Some(speed),
+                            )
+                            .await
                         {
                             // Save message_id for MTProto file_reference refresh
                             let _ = ctx
@@ -225,25 +230,30 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                             .map(|v| v.file.id.0.clone())
                             .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
                             .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
-                        if let Some(fid) = new_file_id
-                            && let Ok(db_id) = ctx
-                                .shared_storage
-                                .save_download_history(
-                                    ctx.chat_id.0,
-                                    &cut.original_url,
-                                    &new_title,
-                                    "mp4",
-                                    Some(&fid),
-                                    None,
-                                    Some(file_size),
-                                    new_duration,
-                                    cut.video_quality.as_deref(),
-                                    None,
-                                    None,
-                                    None,
-                                    Some(speed),
-                                )
-                                .await
+                        if new_file_id.is_none() {
+                            log::warn!(
+                                "file_id extraction failed for speed-modified cut '{}', saving history with NULL file_id",
+                                new_title
+                            );
+                        }
+                        if let Ok(db_id) = ctx
+                            .shared_storage
+                            .save_download_history(
+                                ctx.chat_id.0,
+                                &cut.original_url,
+                                &new_title,
+                                "mp4",
+                                new_file_id.as_deref(),
+                                None,
+                                Some(file_size),
+                                new_duration,
+                                cut.video_quality.as_deref(),
+                                None,
+                                None,
+                                None,
+                                Some(speed),
+                            )
+                            .await
                         {
                             // Save message_id for MTProto file_reference refresh
                             let _ = ctx

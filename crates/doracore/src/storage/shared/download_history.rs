@@ -205,6 +205,34 @@ impl SharedStorage {
         }
     }
 
+    /// Returns every history entry for this user matching `url` exactly,
+    /// newest first, with `file_id IS NOT NULL`. Drives inline-mode
+    /// personal-first URL response — see `dorabot::telegram::inline_query::url_mode`.
+    pub async fn get_user_history_for_url(&self, user_id: i64, url: &str) -> Result<Vec<DownloadHistoryEntry>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_user_history_for_url connection")?;
+                db::get_user_history_for_url(&conn, user_id, url).context("sqlite get_user_history_for_url")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
+                            file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
+                            source_id, part_index, category, speed
+                     FROM download_history
+                     WHERE user_id = $1 AND url = $2 AND file_id IS NOT NULL
+                     ORDER BY downloaded_at DESC",
+                )
+                .bind(user_id)
+                .bind(url)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_user_history_for_url")?;
+                Ok(rows.into_iter().map(map_pg_download_history).collect())
+            }
+        }
+    }
+
     /// Same lookup criteria as [`Self::find_cached_file_id`] but also returns
     /// the cached `title` and `author` (artist) so callers serving from
     /// cache can re-hydrate metadata they'd otherwise need yt-dlp for.

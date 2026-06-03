@@ -82,7 +82,7 @@ pub async fn handle_inline_query(
     // ── Dispatch ─────────────────────────────────────────────────────────
     let (results, next_offset, is_personal) = if let Some(m) = URL_REGEX.find(trimmed) {
         let url = m.as_str().trim_end_matches(['.', ',', ')', ']']).to_string();
-        let results = url_mode(&shared_storage, &db_pool, bot_username, &url).await;
+        let results = url_mode(&shared_storage, &db_pool, bot_username, user_id, &url).await;
         (results, String::new(), true)
     } else if trimmed.is_empty() {
         let results = recents_mode(&shared_storage, &db_pool, bot_username, user_id).await;
@@ -230,30 +230,61 @@ async fn url_mode(
     shared: &SharedStorage,
     db_pool: &Arc<DbPool>,
     bot_username: &str,
+    user_id: i64,
     raw_url: &str,
 ) -> Vec<InlineQueryResult> {
-    // FIX (latent bug): popular_files is keyed on canonical URLs by the
-    // writer (`pipeline::save_to_history_and_cache`) but the previous reader
-    // looked up the raw URL → any `?si=…` tracking variant of a YouTube link
-    // would miss the cache. Canonicalize first so reader matches writer.
+    // popular_files is keyed on canonical URLs by the writer, so reader must
+    // canonicalize too — any `?si=…` tracking variant would miss otherwise.
     let canonical = canonicalize_url(raw_url);
 
+    // 1. Personal-first: caller's own cached file_ids for this URL. UX rationale —
+    //    when "I" type `@bot <url>` I expect MY copies on top, not someone else's.
+    let personal = shared
+        .get_user_history_for_url(user_id, &canonical)
+        .await
+        .unwrap_or_default();
+
+    // 2. Global popular_files as supplement — formats the caller never
+    //    personally downloaded but the bot has cached for somebody.
     let cached = shared
         .lookup_popular_file_all_formats(&canonical)
         .await
         .unwrap_or_default();
 
-    let mut out: Vec<InlineQueryResult> = Vec::with_capacity(cached.len() + 1);
-    for (seed, entry) in cached.iter().enumerate() {
-        let inline = InlineEntry::from_popular(entry);
-        if let Some(r) = entry_to_inline_result(&inline, seed) {
-            out.push(r);
-        }
-    }
+    // 3. Stitch with format-dedup. Personal wins per format.
+    let mut out = stitch_url_results(&personal, &cached);
 
     // Always append the deep-link article so the user can request a fresh
     // download / a format we haven't cached.
     out.push(build_article(db_pool, shared, bot_username, raw_url).await);
+    out
+}
+
+/// Pure stitch helper: emit Cached* results from personal history first
+/// (one per format), then global popular_files for formats personal didn't
+/// cover. Extracted from `url_mode` for testability.
+fn stitch_url_results(personal: &[DownloadHistoryEntry], cached: &[PopularFileEntry]) -> Vec<InlineQueryResult> {
+    let mut out: Vec<InlineQueryResult> = Vec::with_capacity(personal.len() + cached.len() + 1);
+    let mut seen_formats: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (seed, entry) in personal.iter().enumerate() {
+        if entry.file_id.is_none() {
+            continue;
+        }
+        seen_formats.insert(entry.format.clone());
+        let inline = InlineEntry::from_history(entry);
+        if let Some(r) = entry_to_inline_result(&inline, seed) {
+            out.push(r);
+        }
+    }
+    for (i, entry) in cached.iter().enumerate() {
+        if seen_formats.contains(&entry.format) {
+            continue;
+        }
+        let inline = InlineEntry::from_popular(entry);
+        if let Some(r) = entry_to_inline_result(&inline, personal.len() + i) {
+            out.push(r);
+        }
+    }
     out
 }
 
@@ -653,6 +684,92 @@ mod tests {
         let a = make_id("mp4", "FILE", 0);
         let b = make_id("mp4", "FILE", 1);
         assert_ne!(a, b);
+    }
+
+    // ── stitch_url_results: personal-first + format dedup ────────────────
+
+    fn history_entry(format: &str, file_id: Option<&str>) -> DownloadHistoryEntry {
+        DownloadHistoryEntry {
+            id: 1,
+            url: "https://yt.be/x".to_string(),
+            title: "Track".to_string(),
+            format: format.to_string(),
+            downloaded_at: "2026-06-01 00:00:00".to_string(),
+            file_id: file_id.map(String::from),
+            author: Some("Author".to_string()),
+            file_size: Some(1_000_000),
+            duration: Some(120),
+            video_quality: Some("720p".to_string()),
+            audio_bitrate: Some("256k".to_string()),
+            bot_api_url: None,
+            bot_api_is_local: Some(0),
+            source_id: None,
+            part_index: None,
+            category: None,
+            speed: None,
+        }
+    }
+
+    fn popular_entry(format: &str, file_id: &str) -> PopularFileEntry {
+        PopularFileEntry {
+            url: "https://yt.be/x".to_string(),
+            format: format.to_string(),
+            file_id: file_id.to_string(),
+            title: Some("Track".to_string()),
+            author: Some("Author".to_string()),
+            duration: Some(120),
+            file_size: Some(1_000_000),
+            hits: 5,
+        }
+    }
+
+    #[test]
+    fn stitch_personal_first_when_user_has_history() {
+        let personal = vec![history_entry("mp3", Some("PERSONAL_MP3"))];
+        let cached = vec![popular_entry("mp4", "GLOBAL_MP4")];
+        let out = stitch_url_results(&personal, &cached);
+        assert_eq!(out.len(), 2);
+        // First result must be from personal (mp3).
+        match &out[0] {
+            InlineQueryResult::CachedAudio(a) => assert_eq!(a.audio_file_id.0, "PERSONAL_MP3"),
+            other => panic!("expected CachedAudio first, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stitch_dedup_skips_global_format_if_personal_has_it() {
+        // Personal has mp3 → global mp3 should be SKIPPED, but global mp4 surfaces.
+        let personal = vec![history_entry("mp3", Some("PERSONAL_MP3"))];
+        let cached = vec![popular_entry("mp3", "GLOBAL_MP3"), popular_entry("mp4", "GLOBAL_MP4")];
+        let out = stitch_url_results(&personal, &cached);
+        assert_eq!(out.len(), 2);
+        // No GLOBAL_MP3 should appear.
+        for r in &out {
+            if let InlineQueryResult::CachedAudio(a) = r {
+                assert_ne!(a.audio_file_id.0, "GLOBAL_MP3");
+            }
+        }
+    }
+
+    #[test]
+    fn stitch_global_only_when_no_personal() {
+        let personal: Vec<DownloadHistoryEntry> = vec![];
+        let cached = vec![popular_entry("mp3", "GLOBAL_MP3"), popular_entry("mp4", "GLOBAL_MP4")];
+        let out = stitch_url_results(&personal, &cached);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn stitch_skips_personal_entry_with_null_file_id() {
+        let personal = vec![history_entry("mp3", None)];
+        let cached = vec![popular_entry("mp3", "GLOBAL_MP3")];
+        let out = stitch_url_results(&personal, &cached);
+        // Null-file_id personal entry should NOT dedup-block global mp3.
+        assert_eq!(out.len(), 1);
+        match &out[0] {
+            InlineQueryResult::CachedAudio(a) => assert_eq!(a.audio_file_id.0, "GLOBAL_MP3"),
+            other => panic!("expected CachedAudio, got {:?}", other),
+        }
     }
 
     // ── URL canonicalization is applied in URL mode ──────────────────────

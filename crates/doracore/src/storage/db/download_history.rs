@@ -652,3 +652,149 @@ pub fn get_download_history_filtered(
 
     Ok(downloads)
 }
+
+/// Returns every history entry for this user matching `url` exactly, newest
+/// first, with `file_id IS NOT NULL`. Drives the inline-mode personal-first
+/// URL response: when someone types `@bot <url>` they see their OWN cached
+/// file_ids before the global `popular_files` supplement.
+pub fn get_user_history_for_url(conn: &DbConnection, user_id: i64, url: &str) -> Result<Vec<DownloadHistoryEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
+                bot_api_url, bot_api_is_local, source_id, part_index, category, speed
+         FROM download_history
+         WHERE user_id = ?1 AND url = ?2 AND file_id IS NOT NULL
+         ORDER BY downloaded_at DESC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![user_id, url], |row| {
+            Ok(DownloadHistoryEntry {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                format: row.get(3)?,
+                downloaded_at: row.get(4)?,
+                file_id: row.get(5)?,
+                author: row.get(6)?,
+                file_size: row.get(7)?,
+                duration: row.get(8)?,
+                video_quality: row.get(9)?,
+                audio_bitrate: row.get(10)?,
+                bot_api_url: row.get(11)?,
+                bot_api_is_local: row.get(12)?,
+                source_id: row.get(13)?,
+                part_index: row.get(14)?,
+                category: row.get(15)?,
+                speed: row.get(16)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+#[cfg(test)]
+mod get_user_history_for_url_tests {
+    use super::*;
+    use crate::storage::db::{create_pool, get_connection};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn setup_pool() -> crate::storage::db::DbPool {
+        let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("guhfu_test_{}_{}.db", std::process::id(), counter));
+        let _ = fs_err::remove_file(&path);
+        create_pool(path.to_string_lossy().as_ref()).unwrap()
+    }
+
+    fn ensure_user(conn: &DbConnection, telegram_id: i64) {
+        let _ = crate::storage::db::users::create_user(conn, telegram_id, Some(format!("u{}", telegram_id)));
+    }
+
+    fn insert(conn: &DbConnection, user: i64, url: &str, fmt: &str, file_id: Option<&str>) {
+        ensure_user(conn, user);
+        save_download_history(
+            conn,
+            user,
+            url,
+            "title",
+            fmt,
+            file_id,
+            Some("author"),
+            Some(1000),
+            Some(60),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn get_user_history_for_url_returns_only_matching_url() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        insert(&conn, 1, "https://yt.be/a", "mp3", Some("fa"));
+        insert(&conn, 1, "https://yt.be/b", "mp3", Some("fb"));
+        insert(&conn, 1, "https://yt.be/a", "mp4", Some("fa_v"));
+
+        let rows = get_user_history_for_url(&conn, 1, "https://yt.be/a").unwrap();
+        assert_eq!(rows.len(), 2);
+        for r in &rows {
+            assert_eq!(r.url, "https://yt.be/a");
+        }
+    }
+
+    #[test]
+    fn get_user_history_for_url_orders_by_downloaded_at_desc() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        ensure_user(&conn, 1);
+        // Insert with explicit downloaded_at via raw SQL to control ordering.
+        let url = "https://yt.be/x";
+        conn.execute(
+            "INSERT INTO download_history (user_id, url, title, format, downloaded_at, file_id)
+             VALUES (1, ?1, 'old', 'mp3', '2026-01-01 00:00:00', 'old_id')",
+            rusqlite::params![url],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO download_history (user_id, url, title, format, downloaded_at, file_id)
+             VALUES (1, ?1, 'new', 'mp3', '2026-06-01 00:00:00', 'new_id')",
+            rusqlite::params![url],
+        )
+        .unwrap();
+
+        let rows = get_user_history_for_url(&conn, 1, url).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].file_id.as_deref(), Some("new_id"));
+        assert_eq!(rows[1].file_id.as_deref(), Some("old_id"));
+    }
+
+    #[test]
+    fn get_user_history_for_url_skips_null_file_id() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        let url = "https://yt.be/z";
+        insert(&conn, 1, url, "mp3", Some("with_id"));
+        insert(&conn, 1, url, "mp4", None);
+
+        let rows = get_user_history_for_url(&conn, 1, url).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].file_id.as_deref(), Some("with_id"));
+    }
+
+    #[test]
+    fn get_user_history_for_url_empty_when_no_matches() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        insert(&conn, 1, "https://yt.be/a", "mp3", Some("fa"));
+
+        let other_user = get_user_history_for_url(&conn, 2, "https://yt.be/a").unwrap();
+        assert!(other_user.is_empty());
+
+        let other_url = get_user_history_for_url(&conn, 1, "https://yt.be/missing").unwrap();
+        assert!(other_url.is_empty());
+    }
+}

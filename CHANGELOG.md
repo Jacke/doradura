@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Inline-режим personal-first для URL + bulletproof history saves** (v0.51.0-alpha.35) — теперь при `@doradura_bot https://yt.be/x` СНАЧАЛА показываются ТВОИ собственные cached file_ids этого URL из `download_history`, и только потом supplement из глобального `popular_files` (с de-dup по формату — твой mp3 вытесняет чужой mp3, но чужой mp4 поднимается если ты сам не качал). UX-эффект: «я скачал это вчера — вижу свою копию в inline». Новый targeted accessor `get_user_history_for_url(user_id, url)` (SQLite + Postgres, `file_id IS NOT NULL`, `ORDER BY downloaded_at DESC`) + 4 unit-теста. Pure stitch-helper `stitch_url_results` + 4 unit-теста на personal-first ordering и format-dedup.
+
+### Changed
+- **Speed-modify и burn-subs пути теперь всегда записывают в `download_history`** (v0.51.0-alpha.35) — раньше `speed.rs:142/231` и `voice_lyrics.rs:265` имели `if let Some(fid) = new_file_id` guard вокруг `save_download_history` → если Telegram вернул ответ без распознаваемого `file_id` (редкий случай malformed response), запись истории молча терялась, юзер скачал — а в `/history` и inline этого файла нет. Теперь save безусловный, при `file_id=None` пишем NULL и `log::warn!` с заголовком — inline-фильтр всё равно отсеет NULL, но запись видна в админских отчётах и для будущего MTProto refresh.
+
+### Added
 - **Inline-режим top-UX: личный поиск + recents + multi-format + funnel-кнопка** (v0.51.0-alpha.34) — переработка `@doradura_bot <…>` в трёхрежимный диспетчер. `@bot ` (пусто) → твои последние 15 скачиваний (CachedAudio/Video/Gif). `@bot Дора Дорадура` → поиск по `download_history.title/author` (AND если «Author - Title», OR если просто слова) с Vlipsy GIF как fallback. `@bot https://yt.be/x` → ВСЕ закешированные форматы из `popular_files` за один запрос (mp3+mp4+m4r+video_note+gif+cut, не только mp3+mp4). Везде сверху постоянная кнопка **🔽 Открыть Doradura** через новый `InlineQueryResultsButton::StartParameter("from_inline")` API. Богатые caption/description с duration · bitrate/quality · size. Article-fallback с YouTube-thumbnail. **Bugfix:** URL-lookup теперь канонизирует ссылку (`canonicalize_url`) перед обращением к `popular_files` — раньше любой `?si=…` вариант ютуб-ссылки мимо кеша. Новый accessor `lookup_popular_file_all_formats` (один запрос вместо N round-trip). 18 новых unit-тестов.
 
 ### Changed
