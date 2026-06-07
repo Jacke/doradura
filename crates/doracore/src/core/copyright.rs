@@ -49,30 +49,37 @@ pub static COPYRIGHT_ENABLED: LazyLock<bool> = LazyLock::new(|| {
         .unwrap_or(true)
 });
 
-/// Dora the Explorer themed sign-off messages (bilingual Russian/Spanish style)
+/// Sign-off messages in the voice of singer Дора — cute-rock, self-ironic
+/// vulnerability, late-night-headphones mood. Some lines reference her
+/// lyrical themes (loud music as escape, small intimate moments, replay culture).
 const DORA_MESSAGES_RU: &[&str] = &[
-    // Classic Dora bilingual
-    "We did it! ¡Lo hicimos!",
-    "Let's go! ¡Vámonos!",
-    "We couldn't have done it without you!",
-    // Map references
-    "I'm the Map! I'm the Map!",
-    // Adventure vibes
-    "Come on, vámonos! All together!",
-    "Delicious! Delicioso!",
-    // Backpack references
-    "Backpack, Backpack!",
-    // Encouraging
-    "If you believe in yourself, anything is possible!",
-    "You have to keep going no matter what!",
-    // Swiper reference
-    "Swiper, no swiping!",
-    // Short and sweet
-    "Excellent! ¡Excelente!",
-    "Super!",
-    "You did it!",
-    "Happy to help!",
-    "Adventure complete!",
+    // Headphones / volume / escape via music
+    "Close the door, turn off your phone — and turn the music up. ❤️‍🔥",
+    "Headphones on. The world can wait.",
+    "Volume up. Thoughts down.",
+    "Lights off, sound on.",
+    "Press play. Forget everything else.",
+    // Replay / one more time
+    "One more song. Just one more.",
+    "Replay until it makes sense.",
+    "This one's been on repeat all week.",
+    "Play it again — and again.",
+    // Late night / intimate
+    "It's 3 AM and we're still here.",
+    "Some songs are better at 2 AM.",
+    "For the long drives and longer nights.",
+    // Self-ironic vulnerability
+    "I'll cry to this song. And then dance to it.",
+    "Soft girl. Loud songs.",
+    "Heart in headphones.",
+    "Dance alone. Cry alone. Same thing.",
+    "Hide in the chorus.",
+    // Soft handoff
+    "Some songs find you when you need them.",
+    "Trust me, this one hits different.",
+    "Save it. You'll need it tonight.",
+    "I downloaded this for you.",
+    "Vibe first, words later.",
 ];
 
 /// Get a random Dora message
