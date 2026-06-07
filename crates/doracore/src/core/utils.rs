@@ -542,6 +542,95 @@ pub fn format_media_caption(title: &str, artist: &str) -> String {
     crate::core::copyright::format_caption_with_copyright(&base_caption)
 }
 
+/// Maximum number of chapter timestamps to render in a caption.
+const MAX_CAPTION_TIMESTAMPS: usize = 10;
+/// Maximum character length of a chapter label before truncation with `…`.
+const MAX_CHAPTER_LABEL_CHARS: usize = 50;
+/// Pre-escape budget for the chapter block. Caption hard limit is 1024;
+/// header + copyright signature consume ~250 chars, escapes can double the
+/// rest, so we cap raw block content at ~380 chars.
+const MAX_CHAPTER_BLOCK_RAW_CHARS: usize = 380;
+
+/// Formats a media caption with an optional chapter list below the title.
+///
+/// Chapter lines use `MM:SS — Label` (or `HH:MM:SS — Label`) format and are
+/// inserted between the bold/italic title line and the copyright signature.
+/// When `timestamps` is empty or contains no usable labels, falls back to
+/// [`format_media_caption`].
+pub fn format_media_caption_with_chapters(
+    title: &str,
+    artist: &str,
+    timestamps: &[crate::timestamps::VideoTimestamp],
+) -> String {
+    let header = if artist.trim().is_empty() {
+        format!("_{}_", escape_markdown_v2(title))
+    } else {
+        format!("*{}* — _{}_", escape_markdown_v2(artist), escape_markdown_v2(title))
+    };
+
+    let base_caption = match build_chapter_block(timestamps) {
+        Some(block) => format!("{}\n\n{}", header, block),
+        None => header,
+    };
+
+    crate::core::copyright::format_caption_with_copyright(&base_caption)
+}
+
+/// Build a MarkdownV2-escaped chapter block from `timestamps`.
+///
+/// Returns `None` when no entries have a usable label. Drops trailing entries
+/// when the raw block exceeds `MAX_CHAPTER_BLOCK_RAW_CHARS`.
+fn build_chapter_block(timestamps: &[crate::timestamps::VideoTimestamp]) -> Option<String> {
+    if timestamps.is_empty() {
+        return None;
+    }
+
+    let candidates: Vec<&crate::timestamps::VideoTimestamp> = timestamps
+        .iter()
+        .filter(|ts| ts.label.as_deref().is_some_and(|l| !l.trim().is_empty()))
+        .collect();
+
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let selected: Vec<&crate::timestamps::VideoTimestamp> = if candidates.len() > MAX_CAPTION_TIMESTAMPS {
+        let owned: Vec<crate::timestamps::VideoTimestamp> = candidates.iter().map(|t| (*t).clone()).collect();
+        let picked = crate::timestamps::select_best_timestamps(&owned, MAX_CAPTION_TIMESTAMPS);
+        let times: std::collections::BTreeSet<i64> = picked.iter().map(|t| t.time_seconds).collect();
+        candidates
+            .into_iter()
+            .filter(|t| times.contains(&t.time_seconds))
+            .collect()
+    } else {
+        candidates
+    };
+
+    let mut lines: Vec<String> = Vec::with_capacity(selected.len());
+    let mut running_len = 0usize;
+    for ts in selected {
+        let label = ts.label.as_deref().unwrap_or("").trim();
+        let label_truncated: String = if label.chars().count() > MAX_CHAPTER_LABEL_CHARS {
+            let head: String = label.chars().take(MAX_CHAPTER_LABEL_CHARS).collect();
+            format!("{}…", head)
+        } else {
+            label.to_string()
+        };
+
+        let time_str = ts.format_time();
+        // Time has no MarkdownV2-special chars (digits + `:`). Em-dash is safe.
+        let line = format!("{} — {}", time_str, escape_markdown_v2(&label_truncated));
+        let line_len = line.chars().count();
+        if running_len + line_len > MAX_CHAPTER_BLOCK_RAW_CHARS && !lines.is_empty() {
+            break;
+        }
+        running_len += line_len + 1; // +1 for newline
+        lines.push(line);
+    }
+
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
+}
+
 /// Returns the correct Russian plural form of the word "second".
 ///
 /// Declension rules:
@@ -977,5 +1066,118 @@ mod tests {
         // Check copyright is appended
         let caption = format_media_caption("Test", "Artist");
         assert!(caption.contains("Yours,"));
+    }
+
+    #[test]
+    fn test_format_media_caption_with_chapters_renders_block() {
+        use crate::timestamps::{TimestampSource, VideoTimestamp};
+        let ts = vec![
+            VideoTimestamp {
+                source: TimestampSource::Chapter,
+                time_seconds: 0,
+                end_seconds: Some(83),
+                label: Some("Intro".to_string()),
+            },
+            VideoTimestamp {
+                source: TimestampSource::Chapter,
+                time_seconds: 83,
+                end_seconds: Some(195),
+                label: Some("Verse 1".to_string()),
+            },
+        ];
+        let caption = super::format_media_caption_with_chapters("My Song", "Artist", &ts);
+        assert!(caption.starts_with("*Artist* — _My Song_"));
+        assert!(caption.contains("0:00 — Intro"));
+        assert!(caption.contains("1:23 — Verse 1"));
+        // Two newlines between header and chapters
+        assert!(caption.contains("_My Song_\n\n0:00"));
+        // Copyright still appended
+        assert!(caption.contains("Yours,"));
+    }
+
+    #[test]
+    fn test_format_media_caption_with_chapters_empty_falls_back() {
+        let caption = super::format_media_caption_with_chapters("Title", "Artist", &[]);
+        assert!(caption.starts_with("*Artist* — _Title_"));
+        // No chapter block, copyright still present
+        assert!(caption.contains("Yours,"));
+        // Should NOT have an extra blank-line-prefixed chapter block before copyright
+        // (copyright signature itself starts with \n\n, so just check there's no `\n\n0:` pattern)
+        assert!(!caption.contains("\n\n0:"));
+    }
+
+    #[test]
+    fn test_format_media_caption_with_chapters_skips_empty_labels() {
+        use crate::timestamps::{TimestampSource, VideoTimestamp};
+        let ts = vec![
+            VideoTimestamp {
+                source: TimestampSource::Url,
+                time_seconds: 90,
+                end_seconds: None,
+                label: None,
+            },
+            VideoTimestamp {
+                source: TimestampSource::Description,
+                time_seconds: 60,
+                end_seconds: None,
+                label: Some("  ".to_string()),
+            },
+        ];
+        // No usable labels → falls back to plain caption
+        let caption = super::format_media_caption_with_chapters("Title", "Artist", &ts);
+        assert!(caption.starts_with("*Artist* — _Title_"));
+        assert!(!caption.contains("\n\n1:30"));
+        assert!(!caption.contains("\n\n0:"));
+    }
+
+    #[test]
+    fn test_format_media_caption_with_chapters_escapes_special_chars() {
+        use crate::timestamps::{TimestampSource, VideoTimestamp};
+        let ts = vec![VideoTimestamp {
+            source: TimestampSource::Chapter,
+            time_seconds: 65,
+            end_seconds: None,
+            label: Some("Part (1).".to_string()),
+        }];
+        let caption = super::format_media_caption_with_chapters("Title", "Artist", &ts);
+        // Parens and dot must be MarkdownV2-escaped in the label
+        assert!(caption.contains("1:05 — Part \\(1\\)\\."));
+    }
+
+    #[test]
+    fn test_format_media_caption_with_chapters_truncates_long_label() {
+        use crate::timestamps::{TimestampSource, VideoTimestamp};
+        let long_label = "X".repeat(120);
+        let ts = vec![VideoTimestamp {
+            source: TimestampSource::Chapter,
+            time_seconds: 0,
+            end_seconds: None,
+            label: Some(long_label),
+        }];
+        let caption = super::format_media_caption_with_chapters("Title", "Artist", &ts);
+        // Label truncated to 50 chars + ellipsis
+        assert!(caption.contains("…"));
+        let truncated_x: String = "X".repeat(50);
+        assert!(caption.contains(&format!("0:00 — {}…", truncated_x)));
+    }
+
+    #[test]
+    fn test_format_media_caption_with_chapters_caps_total_count() {
+        use crate::timestamps::{TimestampSource, VideoTimestamp};
+        let ts: Vec<VideoTimestamp> = (0..30)
+            .map(|i| VideoTimestamp {
+                source: TimestampSource::Chapter,
+                time_seconds: (i * 60) as i64,
+                end_seconds: None,
+                label: Some(format!("Chapter {}", i + 1)),
+            })
+            .collect();
+        let caption = super::format_media_caption_with_chapters("Title", "Artist", &ts);
+        // Count chapter lines via the time prefix pattern
+        let chapter_lines = caption.matches(" — Chapter ").count();
+        assert!(chapter_lines <= 10, "expected ≤10 chapters, got {}", chapter_lines);
+        assert!(chapter_lines > 0);
+        // Whole caption stays well under Telegram's 1024 limit
+        assert!(caption.chars().count() < 1024);
     }
 }

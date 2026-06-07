@@ -14,7 +14,7 @@ use crate::core::disk;
 use crate::core::error::AppError;
 use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
-use crate::core::utils::format_media_caption;
+use crate::core::utils::{format_media_caption, format_media_caption_with_chapters};
 use crate::download::builder::DownloadConfigBuilder;
 use crate::download::downloader::cleanup_partial_download;
 use crate::download::error::DownloadError;
@@ -495,7 +495,21 @@ pub async fn download_phase(
     let (title, artist) = sanitize_metadata(title, artist);
 
     let display_title = build_display_title(&title, &artist);
-    let caption: Arc<str> = Arc::from(format_media_caption(&title, &artist));
+    // Pull chapter timestamps from the preview cache populated during the
+    // preview phase (yt-dlp chapters or description fallback). When present,
+    // they render below the title in the send caption — gives the recipient
+    // a quick TOC for long videos like talks or mixes. Cache miss → fall back
+    // to the plain caption.
+    let cached_timestamps = crate::telegram::cache::PREVIEW_CACHE
+        .get(url.as_str())
+        .await
+        .map(|p| p.timestamps)
+        .unwrap_or_default();
+    let caption: Arc<str> = if cached_timestamps.is_empty() {
+        Arc::from(format_media_caption(&title, &artist))
+    } else {
+        Arc::from(format_media_caption_with_chapters(&title, &artist, &cached_timestamps))
+    };
 
     // ── Step 3: Show starting status ──
     let _ = progress_msg

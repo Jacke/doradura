@@ -11,7 +11,7 @@ use secrecy::ExposeSecret;
 use teloxide::dispatching::{Dispatcher, UpdateHandler};
 use teloxide::prelude::*;
 use teloxide::requests::{HasPayload, Request as TelegramRequest};
-use teloxide::types::UserId;
+use teloxide::types::{AllowedUpdate, UserId};
 use teloxide::update_listeners::UpdateListener;
 use teloxide::update_listeners::webhooks::{self, Options};
 
@@ -22,6 +22,43 @@ use crate::telegram::handlers::HandlerError;
 
 const WEBHOOK_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const TELEGRAM_SECRET_HEADER: &str = "X-Telegram-Bot-Api-Secret-Token";
+
+/// Update types the bot needs to receive via webhook.
+///
+/// Telegram persists the `allowed_updates` list set at the last `setWebhook`
+/// call. If the list omits a type (e.g. `inline_query`), Telegram silently
+/// drops those updates — inline mode just stops working even though the
+/// handler code is present. We pass this list explicitly on every
+/// `set_webhook` call and verify it on startup via `ensure_webhook_config`.
+fn webhook_allowed_updates() -> Vec<AllowedUpdate> {
+    vec![
+        AllowedUpdate::Message,
+        AllowedUpdate::EditedMessage,
+        AllowedUpdate::ChannelPost,
+        AllowedUpdate::EditedChannelPost,
+        AllowedUpdate::CallbackQuery,
+        AllowedUpdate::InlineQuery,
+        AllowedUpdate::ChosenInlineResult,
+        AllowedUpdate::MyChatMember,
+        AllowedUpdate::ChatMember,
+        AllowedUpdate::ChatJoinRequest,
+    ]
+}
+
+/// Returns `true` when `info` already matches the bot's required allow-list
+/// for all "must-have" update types (currently `inline_query` and
+/// `chosen_inline_result`). When this returns `false`, the caller should
+/// re-register the webhook so Telegram starts (or resumes) delivering the
+/// missing kinds.
+fn webhook_config_is_healthy(info: &teloxide::types::WebhookInfo) -> bool {
+    let Some(current) = info.allowed_updates.as_ref() else {
+        // `None` means "Telegram default" — which excludes a few kinds but
+        // does include inline_query. Healthy enough for our minimum bar.
+        return true;
+    };
+    let required = [AllowedUpdate::InlineQuery, AllowedUpdate::ChosenInlineResult];
+    required.iter().all(|r| current.contains(r))
+}
 
 #[derive(Clone)]
 struct DedupState {
@@ -55,6 +92,13 @@ pub async fn run_webhook_mode(
     let secret_token_secret = config::WEBHOOK_SECRET_TOKEN
         .clone()
         .ok_or_else(|| anyhow!("WEBHOOK_SECRET_TOKEN must be set when running in webhook mode"))?;
+
+    // Self-heal: confirm Telegram is set to deliver the update kinds we
+    // handle (notably inline_query + chosen_inline_result). If the live
+    // allow-list is stale, re-register before we start dispatching.
+    if let Err(e) = ensure_webhook_config(&bot).await {
+        log::warn!("ensure_webhook_config failed (continuing anyway): {}", e);
+    }
     // Extract plaintext once for use by teloxide `Options::secret_token()`
     // and the dedup middleware. Kept as a local `String` (not `SecretString`)
     // because teloxide's API takes `String` directly.
@@ -212,7 +256,31 @@ pub async fn set_webhook(bot: &Bot, drop_pending_updates: bool) -> Result<()> {
     request.payload_mut().secret_token = Some(secret_token.expose_secret().to_string());
     request.payload_mut().drop_pending_updates = Some(drop_pending_updates);
     request.payload_mut().max_connections = *config::WEBHOOK_MAX_CONNECTIONS;
+    request.payload_mut().allowed_updates = Some(webhook_allowed_updates());
     request.send().await.context("set Telegram webhook")?;
+    Ok(())
+}
+
+/// Verify the live webhook config carries the update types this bot needs;
+/// re-register the webhook if it doesn't. Runs at startup so a stale
+/// `allowed_updates` list (e.g. missing `inline_query` after BotFather
+/// inline-mode was enabled later) is corrected automatically — without the
+/// operator having to remember to run `webhook set` manually.
+pub async fn ensure_webhook_config(bot: &Bot) -> Result<()> {
+    let info = bot.get_webhook_info().send().await.context("get webhook info")?;
+    if webhook_config_is_healthy(&info) {
+        log::info!(
+            "Webhook allowed_updates already healthy ({} kinds set)",
+            info.allowed_updates.as_ref().map(|v| v.len()).unwrap_or(0)
+        );
+        return Ok(());
+    }
+    log::warn!(
+        "Webhook allowed_updates missing required kinds (got {:?}) — re-registering",
+        info.allowed_updates
+    );
+    set_webhook(bot, false).await?;
+    log::info!("Webhook re-registered with full allowed_updates list");
     Ok(())
 }
 
