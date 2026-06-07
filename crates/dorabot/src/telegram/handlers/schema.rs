@@ -48,6 +48,19 @@ fn is_fresh_message(msg: &Message) -> bool {
     false
 }
 
+/// Returns `true` only for private (DM) chats.
+///
+/// Stateful message processing — downloads, user creation, sessions — is gated
+/// to private chats. The bot keys user identity by the Telegram user id, which
+/// equals `chat.id` **only** in DMs. In groups and channels `chat.id` is the
+/// chat's own (negative) id, so handling a message there would register the chat
+/// itself as a bogus new "user" — the cause of admin "new user" notifications
+/// carrying a negative id. Group members interact through inline mode instead,
+/// which correctly keys on `query.from.id`.
+fn is_private_chat(msg: &Message) -> bool {
+    msg.chat.is_private()
+}
+
 /// Creates the main dispatcher schema for the Telegram bot.
 ///
 /// This function returns a handler tree that can be used with teloxide's Dispatcher.
@@ -422,6 +435,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
 
     Update::filter_message()
         .filter(|msg: Message| is_fresh_message(&msg))
+        .filter(|msg: Message| is_private_chat(&msg))
         .branch(
             dptree::entry()
                 .filter_command::<Command>()
@@ -716,6 +730,7 @@ fn voice_message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
 
     Update::filter_message()
         .filter(|msg: Message| is_fresh_message(&msg))
+        .filter(|msg: Message| is_private_chat(&msg))
         .filter(|msg: Message| msg.voice().is_some())
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
@@ -737,6 +752,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
 
     Update::filter_message()
         .filter(|msg: Message| is_fresh_message(&msg))
+        .filter(|msg: Message| is_private_chat(&msg))
         .filter(move |msg: Message| is_message_addressed_to_bot(&msg, bot_username.as_deref(), bot_id))
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
