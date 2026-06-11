@@ -18,6 +18,7 @@ pub mod conversion;
 pub mod core;
 pub mod download;
 pub mod downsub;
+pub mod explore;
 pub mod extension;
 pub mod i18n;
 pub mod lyrics;
