@@ -70,6 +70,20 @@ pub fn media_kind_from_format(format: &str) -> MediaKind {
     }
 }
 
+/// Assign a UTC instant to its bucket relative to `now`. Buckets compare on the
+/// calendar day (UTC): same day = Today, day-1 = Yesterday, within 7 days =
+/// ThisWeek, within 31 days = ThisMonth, else Earlier.
+pub fn bucket_for(at: DateTime<Utc>, now: DateTime<Utc>) -> BucketLabel {
+    let days = (now.date_naive() - at.date_naive()).num_days();
+    match days {
+        d if d <= 0 => BucketLabel::Today,
+        1 => BucketLabel::Yesterday,
+        2..=6 => BucketLabel::ThisWeek,
+        7..=30 => BucketLabel::ThisMonth,
+        _ => BucketLabel::Earlier,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +95,22 @@ mod tests {
         assert_eq!(media_kind_from_format("video_note"), MediaKind::VideoNote);
         assert_eq!(media_kind_from_format("gif"), MediaKind::Gif);
         assert_eq!(media_kind_from_format("srt"), MediaKind::Other);
+    }
+
+    #[test]
+    fn bucket_for_classifies_relative_to_now() {
+        use chrono::TimeZone;
+        let now = Utc.with_ymd_and_hms(2026, 6, 11, 12, 0, 0).unwrap();
+        let today = Utc.with_ymd_and_hms(2026, 6, 11, 1, 0, 0).unwrap();
+        let yesterday = Utc.with_ymd_and_hms(2026, 6, 10, 23, 0, 0).unwrap();
+        let three_days = Utc.with_ymd_and_hms(2026, 6, 8, 9, 0, 0).unwrap();
+        let twenty_days = Utc.with_ymd_and_hms(2026, 5, 25, 9, 0, 0).unwrap();
+        let old = Utc.with_ymd_and_hms(2026, 1, 1, 9, 0, 0).unwrap();
+
+        assert_eq!(bucket_for(today, now), BucketLabel::Today);
+        assert_eq!(bucket_for(yesterday, now), BucketLabel::Yesterday);
+        assert_eq!(bucket_for(three_days, now), BucketLabel::ThisWeek);
+        assert_eq!(bucket_for(twenty_days, now), BucketLabel::ThisMonth);
+        assert_eq!(bucket_for(old, now), BucketLabel::Earlier);
     }
 }
