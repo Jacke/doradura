@@ -321,3 +321,19 @@ stories-capped = ⚠️ Video länger als { $minutes } Min — Anfang gekürzt.
 stories-caption = 📱 { $title } — Stories { $index }/{ $total }
 stories-only-mp4 = 📱 Instagram Stories sind nur für Videos \(MP4\) verfügbar\.
 stories-no-file-id = ❌ file\_id für diese Datei nicht gefunden\.
+
+# Explore hub
+explore_title = 🎵 Doradura · Entdecken
+explore_tab_recent = 📜 Verlauf
+explore_tab_trending = 🔥 Trends
+explore_tab_subs = ⭐ Abos
+explore_soon = 🔜 Demnächst
+explore_empty = Noch nichts heruntergeladen — sende einen Link, um zu starten.
+explore_bucket_today = 🗓 Heute
+explore_bucket_yesterday = 🗓 Gestern
+explore_bucket_week = 🗓 Diese Woche
+explore_bucket_month = 🗓 Dieser Monat
+explore_bucket_earlier = 🗓 Früher
+explore_page = Seite { $page }/{ $total }
+explore_resent = 📤 Erneut gesendet
+explore_load_failed = ❌ Verlauf konnte nicht geladen werden. Versuche es erneut.

@@ -530,3 +530,19 @@ stories-capped = ⚠️ Video longer than { $minutes } min — trimmed from the 
 stories-caption = 📱 { $title } — Stories { $index }/{ $total }
 stories-only-mp4 = 📱 Instagram Stories are only available for video \(MP4\)\.
 stories-no-file-id = ❌ Couldn't find file\_id for this file\.
+
+# Explore hub
+explore_title = 🎵 Doradura · Explore
+explore_tab_recent = 📜 Recent
+explore_tab_trending = 🔥 Trending
+explore_tab_subs = ⭐ Subscriptions
+explore_soon = 🔜 Coming soon
+explore_empty = Nothing downloaded yet — send a link to start.
+explore_bucket_today = 🗓 Today
+explore_bucket_yesterday = 🗓 Yesterday
+explore_bucket_week = 🗓 This week
+explore_bucket_month = 🗓 This month
+explore_bucket_earlier = 🗓 Earlier
+explore_page = page { $page }/{ $total }
+explore_resent = 📤 Sent again
+explore_load_failed = ❌ Couldn't load your timeline. Try again.

@@ -531,3 +531,19 @@ stories-capped = ⚠️ Видео длиннее { $minutes } мин — обр
 stories-caption = 📱 { $title } — Stories { $index }/{ $total }
 stories-only-mp4 = 📱 Instagram Stories доступны только для видео \(MP4\)\.
 stories-no-file-id = ❌ Не найден file\_id для этого файла\.
+
+# Explore hub
+explore_title = 🎵 Doradura · Лента
+explore_tab_recent = 📜 Лента
+explore_tab_trending = 🔥 Тренды
+explore_tab_subs = ⭐ Подписки
+explore_soon = 🔜 Скоро
+explore_empty = Пока ничего не скачано — пришли ссылку.
+explore_bucket_today = 🗓 Сегодня
+explore_bucket_yesterday = 🗓 Вчера
+explore_bucket_week = 🗓 Эта неделя
+explore_bucket_month = 🗓 Этот месяц
+explore_bucket_earlier = 🗓 Ранее
+explore_page = стр { $page }/{ $total }
+explore_resent = 📤 Отправил снова
+explore_load_failed = ❌ Не удалось загрузить ленту. Попробуй ещё раз.
