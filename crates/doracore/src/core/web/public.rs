@@ -130,6 +130,33 @@ pub(super) async fn share_api_handler(
     Json(data).into_response()
 }
 
+/// `GET /api/timeline?user_id=<i64>&page=<u32>` → JSON `TimelinePage`.
+///
+/// Internal/stub for the future Telegram Mini App; `initData` auth is added
+/// alongside the frontend spec.
+pub(super) async fn timeline_api_handler(
+    State(state): State<WebState>,
+    Query(q): Query<TimelineQuery>,
+) -> impl IntoResponse {
+    let now = chrono::Utc::now();
+    match crate::explore::timeline::build_timeline_page(&state.shared_storage, q.user_id, q.page.unwrap_or(0), now)
+        .await
+    {
+        Ok(page) => Json(page).into_response(),
+        Err(e) => {
+            log::warn!("timeline_api_handler: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "error").into_response()
+        }
+    }
+}
+
+/// Query parameters for [`timeline_api_handler`].
+#[derive(serde::Deserialize)]
+pub(super) struct TimelineQuery {
+    pub user_id: i64,
+    pub page: Option<u32>,
+}
+
 /// GET /health — simple health check.
 pub(super) async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")

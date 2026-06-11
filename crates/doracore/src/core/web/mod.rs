@@ -125,6 +125,7 @@ pub async fn start_web_server(
     let app = Router::new()
         .route("/s/{id}", get(public::share_page_handler))
         .route("/api/s/{id}", get(public::share_api_handler))
+        .route("/api/timeline", get(public::timeline_api_handler))
         .route("/health", get(public::health_handler))
         .route("/privacy", get(public::privacy_handler))
         // Admin routes
