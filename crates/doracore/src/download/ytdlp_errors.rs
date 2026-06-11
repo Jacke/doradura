@@ -17,6 +17,16 @@ pub enum YtDlpErrorType {
     /// uploader/rights-holder restricted it. User-facing message tells them
     /// the server's region is blocked, not that the bot is broken.
     GeoBlocked,
+    /// Video is age-restricted (18+). YouTube gates it behind "Sign in to
+    /// confirm your age" and only serves it to a fully-authenticated,
+    /// age-verified account. No `player_client` bypasses this (verified
+    /// empirically across android_vr/tv/tv_embedded/mediaconnect/web/
+    /// web_creator/mweb), so the only fix is uploading cookies from an
+    /// account that has confirmed it is 18+. Kept distinct from
+    /// `InvalidCookies` because the age error string also contains
+    /// "use --cookies for the authentication" — without this branch it
+    /// misclassifies as a (retryable) cookie problem and spams the admin.
+    AgeRestricted,
     /// Network issues (timeouts, connection)
     NetworkError,
     /// Errors while downloading video fragments (usually temporary)
@@ -51,6 +61,19 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         || stderr_lower.contains("confirm you\u{2019}re not a bot")
     {
         return YtDlpErrorType::BotDetection;
+    }
+
+    // Age-restricted (18+). MUST be checked before the cookie branch below:
+    // the age error string also contains "use --cookies for the
+    // authentication", so it would otherwise be misread as InvalidCookies
+    // (a retryable, admin-alerting problem). It is neither — without an
+    // age-verified account it is permanent for this video.
+    if stderr_lower.contains("confirm your age")
+        || stderr_lower.contains("age-restricted")
+        || stderr_lower.contains("age restricted")
+        || stderr_lower.contains("inappropriate for some users")
+    {
+        return YtDlpErrorType::AgeRestricted;
     }
 
     // Check for cookie-related errors (genuinely invalid cookies)
@@ -171,6 +194,9 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
         YtDlpErrorType::GeoBlocked => {
             "🌍 The rights-holder blocked this video in the server's region.\n\nThis isn't a bot bug — even with a proxy, YouTube enforces the uploader's country block. Try a different upload of the same track, or a re-upload from another channel.".to_string()
         }
+        YtDlpErrorType::AgeRestricted => {
+            "🔞 This video is age-restricted (18+).\n\nYouTube only serves it to a verified adult account — there's no way around that. Try a different upload of the same track, or a re-upload from another channel.".to_string()
+        }
         YtDlpErrorType::NetworkError => "❌ Network problem.\n\nTry again in a minute.".to_string(),
         YtDlpErrorType::FragmentError => "❌ Temporary issue while downloading video.\n\nPlease retry.".to_string(),
         YtDlpErrorType::PostprocessingError => "❌ Video processing error.\n\nPlease retry.".to_string(),
@@ -195,6 +221,7 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
         YtDlpErrorType::BotDetection => true,
         YtDlpErrorType::VideoUnavailable => false,
         YtDlpErrorType::GeoBlocked => false, // user's content choice, not a service failure
+        YtDlpErrorType::AgeRestricted => false, // per-video YouTube wall, not a service failure
         YtDlpErrorType::NetworkError => false,
         YtDlpErrorType::FragmentError => false, // Temporary fragment errors - no action needed
         YtDlpErrorType::PostprocessingError => false, // Retried with --fixup never
@@ -280,6 +307,14 @@ pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
         YtDlpErrorType::GeoBlocked => {
             "ℹ️  Geo-block by uploader/rights-holder - cannot bypass, no action required".to_string()
         }
+        YtDlpErrorType::AgeRestricted => "ℹ️  Age-restricted (18+) video.\n\
+            • No player_client bypasses YouTube's age gate\n\
+            • Downloadable ONLY with cookies from an age-verified (18+) account\n\
+            • If you want these to work: re-export a COMPLETE cookie set\n\
+              (must include first-party login: SID, SAPISID, __Secure-1PSID,\n\
+              __Secure-1PAPISID, LOGIN_INFO) from a logged-in 18+ youtube.com\n\
+              session — a third-party-only export is not enough"
+            .to_string(),
         YtDlpErrorType::NetworkError => "🔧 FIX RECOMMENDATIONS:\n\
             • Check your internet connection\n\
             • Check accessibility of youtube.com\n\
@@ -365,6 +400,37 @@ mod tests {
                 case
             );
         }
+    }
+
+    #[test]
+    fn test_analyze_age_restricted_error() {
+        let cases = vec![
+            // Real production stderr from yt-dlp 2026.05.25 on an age-gated video.
+            "ERROR: [youtube] j7hAH11mtDk: Sign in to confirm your age. This video may be \
+             inappropriate for some users. Use --cookies for the authentication.",
+            "This video is age-restricted; some formats may be missing without authentication.",
+            "inappropriate for some users",
+            "confirm your age",
+        ];
+
+        for case in cases {
+            assert_eq!(
+                analyze_ytdlp_error(case),
+                YtDlpErrorType::AgeRestricted,
+                "Failed for: {}",
+                case
+            );
+        }
+    }
+
+    #[test]
+    fn test_age_restricted_not_retryable_and_silent_to_admin() {
+        // Age gate is permanent for the account, so we must not nudge the user
+        // to "retry later" and must not spam the admin with a cookie alert.
+        let msg = get_error_message(&YtDlpErrorType::AgeRestricted);
+        assert!(msg.contains("18+"));
+        assert!(!msg.to_lowercase().contains("retry later"));
+        assert!(!should_notify_admin(&YtDlpErrorType::AgeRestricted));
     }
 
     #[test]

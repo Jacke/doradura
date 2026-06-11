@@ -1048,9 +1048,17 @@ where
                 }
 
                 // ── Tier 2: With cookies + PO Token ──
+                // AgeRestricted is included: a no-cookies Tier 1 can't pass
+                // YouTube's age gate, but cookies from an age-verified (18+)
+                // account can. If the cookies aren't 18+, Tier 2 also fails
+                // with AgeRestricted and the chain ends on the accurate
+                // message (no futile cookie-refresh — see try_tier2).
                 let should_try_tier2 = matches!(
                     error_type,
-                    YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError
+                    YtDlpErrorType::InvalidCookies
+                        | YtDlpErrorType::BotDetection
+                        | YtDlpErrorType::NetworkError
+                        | YtDlpErrorType::AgeRestricted
                 );
                 if should_try_tier2 {
                     log::warn!(
@@ -1123,6 +1131,7 @@ where
                     YtDlpErrorType::BotDetection => "bot_detection",
                     YtDlpErrorType::VideoUnavailable => "video_unavailable",
                     YtDlpErrorType::GeoBlocked => "geo_blocked",
+                    YtDlpErrorType::AgeRestricted => "age_restricted",
                     YtDlpErrorType::NetworkError => "network",
                     YtDlpErrorType::FragmentError => "fragment_error",
                     YtDlpErrorType::PostprocessingError => "postprocessing_error",

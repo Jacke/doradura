@@ -941,6 +941,7 @@ pub async fn get_metadata_from_ytdlp(
             YtDlpErrorType::BotDetection => "bot_detection",
             YtDlpErrorType::VideoUnavailable => "video_unavailable",
             YtDlpErrorType::GeoBlocked => "geo_blocked",
+            YtDlpErrorType::AgeRestricted => "age_restricted",
             YtDlpErrorType::NetworkError => "network",
             YtDlpErrorType::FragmentError => "fragment_error",
             YtDlpErrorType::PostprocessingError => "postprocessing_error",
