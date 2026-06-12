@@ -204,6 +204,7 @@ bot_commands =
     .uploads = Meine Dateien
     .cuts = Meine Ausschnitte
     .history = Download-Verlauf
+    .explore = Meine letzten Downloads entdecken
     .stats = Meine Statistik
     .export = Verlauf exportieren
     .backup = DB-Backup erstellen (nur Admins)

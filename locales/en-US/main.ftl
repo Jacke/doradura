@@ -226,6 +226,7 @@ bot_commands =
     .uploads = My uploads
     .cuts = My cuts
     .history = Download history
+    .explore = Explore my recent timeline
     .stats = My stats
     .export = Export history
     .backup = Create DB backup (admins only)

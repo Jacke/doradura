@@ -7,7 +7,7 @@ pub mod render;
 use std::sync::Arc;
 
 use teloxide::prelude::*;
-use teloxide::types::{FileId, InputFile, ParseMode};
+use teloxide::types::{ChatId, FileId, InlineKeyboardMarkup, InputFile, ParseMode};
 use unic_langid::LanguageIdentifier;
 
 use crate::i18n;
@@ -70,27 +70,20 @@ fn bucket_header(lang: &LanguageIdentifier, label: BucketLabel) -> String {
     i18n::t(lang, key)
 }
 
-/// Build the timeline message (text + keyboard) for `page` and edit the
-/// callback's message in place. Used by tab-switch and pagination callbacks.
-async fn show_recent(
-    bot: &Bot,
-    q: &CallbackQuery,
+/// Build the timeline message (text + keyboard) for `page`.
+///
+/// Shared by [`show_recent`] (which edits the callback's message in place) and
+/// [`show_recent_fresh`] (which sends a brand-new message). Returns the rendered
+/// MarkdownV2 text and the timeline keyboard, or an error if the page can't be
+/// built from storage.
+async fn render_recent(
     storage: &Arc<SharedStorage>,
     user_id: i64,
     page: u32,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(String, InlineKeyboardMarkup)> {
     let lang = i18n::user_lang_from_storage(storage, user_id).await;
 
-    let page: TimelinePage = match timeline::build_timeline_page(storage, user_id, page, chrono::Utc::now()).await {
-        Ok(p) => p,
-        Err(e) => {
-            log::error!("explore: build_timeline_page failed for {}: {}", user_id, e);
-            bot.answer_callback_query(q.id.clone())
-                .text(i18n::t(&lang, "explore_load_failed"))
-                .await?;
-            return Ok(());
-        }
-    };
+    let page: TimelinePage = timeline::build_timeline_page(storage, user_id, page, chrono::Utc::now()).await?;
 
     let title = escape_markdown_v2(&i18n::t(&lang, "explore_title"));
     let empty = i18n::t(&lang, "explore_empty");
@@ -109,6 +102,30 @@ async fn show_recent(
         &page_label,
     );
 
+    Ok((text, keyboard))
+}
+
+/// Build the timeline message for `page` and edit the callback's message in
+/// place. Used by tab-switch and pagination callbacks.
+async fn show_recent(
+    bot: &Bot,
+    q: &CallbackQuery,
+    storage: &Arc<SharedStorage>,
+    user_id: i64,
+    page: u32,
+) -> anyhow::Result<()> {
+    let (text, keyboard) = match render_recent(storage, user_id, page).await {
+        Ok(rendered) => rendered,
+        Err(e) => {
+            log::error!("explore: build_timeline_page failed for {}: {}", user_id, e);
+            let lang = i18n::user_lang_from_storage(storage, user_id).await;
+            bot.answer_callback_query(q.id.clone())
+                .text(i18n::t(&lang, "explore_load_failed"))
+                .await?;
+            return Ok(());
+        }
+    };
+
     // Edit the message the callback was invoked from.
     if let Some(msg) = q.message.as_ref() {
         let chat_id = msg.chat().id;
@@ -124,6 +141,31 @@ async fn show_recent(
     }
 
     bot.answer_callback_query(q.id.clone()).await?;
+    Ok(())
+}
+
+/// Build the timeline (page 0) and send it as a NEW message. Used by the
+/// `/explore` command and the main-menu Explore button, which have no callback
+/// message to edit.
+pub async fn show_recent_fresh(
+    bot: &Bot,
+    chat_id: ChatId,
+    storage: &Arc<SharedStorage>,
+    user_id: i64,
+) -> anyhow::Result<()> {
+    match render_recent(storage, user_id, 0).await {
+        Ok((text, keyboard)) => {
+            bot.send_message(chat_id, text)
+                .parse_mode(ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await?;
+        }
+        Err(e) => {
+            log::error!("explore: build_timeline_page failed for {}: {}", user_id, e);
+            let lang = i18n::user_lang_from_storage(storage, user_id).await;
+            bot.send_message(chat_id, i18n::t(&lang, "explore_load_failed")).await?;
+        }
+    }
     Ok(())
 }
 

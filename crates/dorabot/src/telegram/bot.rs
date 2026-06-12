@@ -29,6 +29,8 @@ pub enum Command {
     Downsub,
     #[command(description = "download history")]
     History,
+    #[command(description = "explore your recent downloads timeline")]
+    Explore,
     #[command(description = "my downloads")]
     Downloads,
     #[command(description = "my files")]
@@ -103,6 +105,7 @@ pub enum Command {
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     ("start", "bot_commands.start"),
     ("settings", "bot_commands.settings"),
+    ("explore", "bot_commands.explore"),
     ("downloads", "bot_commands.downloads"),
     ("plan", "bot_commands.plan"),
     ("subscriptions", "bot_commands.subscriptions"),

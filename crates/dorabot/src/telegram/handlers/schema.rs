@@ -488,6 +488,19 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                                     show_history(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
                                         .await;
                             }
+                            Command::Explore => {
+                                let user_id = msg.chat.id.0;
+                                if let Err(e) = crate::telegram::explore::show_recent_fresh(
+                                    &bot,
+                                    msg.chat.id,
+                                    &deps.shared_storage,
+                                    user_id,
+                                )
+                                .await
+                                {
+                                    log::error!("explore: /explore command failed: {}", e);
+                                }
+                            }
                             Command::Downloads => {
                                 handle_downloads_command(&bot, &msg, &deps).await?;
                             }

@@ -130,6 +130,10 @@ pub(crate) fn build_enhanced_menu(
             crate::telegram::cb("\u{1f5c4} Vault", "vault:menu"),
         ],
         vec![crate::telegram::cb(
+            i18n::t(lang, "explore_tab_recent"),
+            "exp:tab:recent",
+        )],
+        vec![crate::telegram::cb(
             i18n::t(lang, "menu.button_feedback"),
             "main:feedback",
         )],
@@ -613,8 +617,8 @@ mod tests {
         // Text should not be empty
         assert!(!text.is_empty());
 
-        // Keyboard should include the dedicated feedback row.
-        assert_eq!(keyboard.inline_keyboard.len(), 5);
+        // Keyboard should include the Explore row and the dedicated feedback row.
+        assert_eq!(keyboard.inline_keyboard.len(), 6);
     }
 
     #[test]
@@ -630,7 +634,13 @@ mod tests {
         assert_eq!(keyboard.inline_keyboard[2].len(), 2);
         // Fourth row: Language + Vault
         assert_eq!(keyboard.inline_keyboard[3].len(), 2);
-        // Fifth row: Feedback
+        // Fifth row: Explore
         assert_eq!(keyboard.inline_keyboard[4].len(), 1);
+        assert_eq!(
+            keyboard.inline_keyboard[4][0].text,
+            i18n::t(&lang, "explore_tab_recent")
+        );
+        // Sixth row: Feedback
+        assert_eq!(keyboard.inline_keyboard[5].len(), 1);
     }
 }
