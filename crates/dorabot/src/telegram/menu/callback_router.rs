@@ -539,6 +539,19 @@ pub async fn handle_menu_callback(
                     .await?;
                 }
 
+                CallbackKind::Explore => {
+                    let fq = build_fq(message_clone.clone(), data_clone.clone());
+                    try_forward!(
+                        "Explore",
+                        crate::telegram::explore::handle_explore_callback(
+                            bot.clone(),
+                            fq,
+                            &data,
+                            Arc::clone(&shared_storage)
+                        )
+                    );
+                }
+
                 CallbackKind::Long => {
                     super::long_video::handle_long_video_callback(
                         &bot,

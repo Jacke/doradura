@@ -118,6 +118,8 @@ pub(crate) enum CallbackKind {
     Info,
     #[strum(serialize = "long")]
     Long,
+    #[strum(serialize = "exp")]
+    Explore,
 }
 
 impl CallbackKind {
@@ -185,6 +187,12 @@ mod tests {
             CallbackKind::parse("ringtone:select:audio:1"),
             Some(CallbackKind::Ringtone)
         );
+    }
+
+    #[test]
+    fn parses_explore_prefix() {
+        assert_eq!(CallbackKind::parse("exp:tab:recent"), Some(CallbackKind::Explore));
+        assert_eq!(CallbackKind::parse("exp:rs:42"), Some(CallbackKind::Explore));
     }
 
     #[test]
