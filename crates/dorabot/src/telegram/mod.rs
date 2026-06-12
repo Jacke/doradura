@@ -54,6 +54,7 @@ pub mod commands;
 pub mod cuts;
 pub mod downloads;
 pub mod draft;
+pub mod explore;
 pub mod ext;
 pub mod feedback;
 pub mod guest_bots;

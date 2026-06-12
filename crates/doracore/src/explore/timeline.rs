@@ -21,6 +21,19 @@ pub enum MediaKind {
     Other,
 }
 
+impl MediaKind {
+    /// Short label for captions, e.g. "mp3"/"mp4"/"note"/"gif".
+    pub fn media_label(self) -> &'static str {
+        match self {
+            MediaKind::Audio => "mp3",
+            MediaKind::Video => "mp4",
+            MediaKind::VideoNote => "note",
+            MediaKind::Gif => "gif",
+            MediaKind::Other => "file",
+        }
+    }
+}
+
 /// Coarse, locale-independent date bucket. The renderer maps it to a localized
 /// header so the inline UI and the Mini App localize independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
