@@ -576,6 +576,39 @@ pub fn format_media_caption_with_chapters(
     crate::core::copyright::format_caption_with_copyright(&base_caption)
 }
 
+/// Formats a rich media caption: `*Artist* — _Title_`, an optional monospace
+/// **tech badge** line (e.g. `MP4 · 1080p · ▶️ YouTube`), an optional chapter
+/// list, then the copyright signature. MarkdownV2.
+///
+/// `badge` is rendered inside a `` `code` `` span; its content must not contain
+/// backticks or backslashes (callers build it from controlled tokens). Passing
+/// `badge = None` and `timestamps = &[]` is equivalent to [`format_media_caption`].
+pub fn format_media_caption_rich(
+    title: &str,
+    artist: &str,
+    badge: Option<&str>,
+    timestamps: &[crate::timestamps::VideoTimestamp],
+) -> String {
+    let header = if artist.trim().is_empty() {
+        format!("_{}_", escape_markdown_v2(title))
+    } else {
+        format!("*{}* — _{}_", escape_markdown_v2(artist), escape_markdown_v2(title))
+    };
+
+    let mut base_caption = header;
+    if let Some(b) = badge.map(str::trim).filter(|b| !b.is_empty()) {
+        // Inside a code span MarkdownV2 only treats ` and \ specially; strip them
+        // defensively so a stray byte can't break parsing.
+        let safe = b.replace(['`', '\\'], "");
+        base_caption.push_str(&format!("\n`{}`", safe));
+    }
+    if let Some(block) = build_chapter_block(timestamps) {
+        base_caption.push_str(&format!("\n\n{}", block));
+    }
+
+    crate::core::copyright::format_caption_with_copyright(&base_caption)
+}
+
 /// Build a MarkdownV2-escaped chapter block from `timestamps`.
 ///
 /// Returns `None` when no entries have a usable label. Drops trailing entries
@@ -886,8 +919,8 @@ impl Drop for TempDirGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        escape_filename, escape_markdown_v2, format_bytes, format_bytes_i64, format_media_caption, pluralize_seconds,
-        sanitize_filename,
+        escape_filename, escape_markdown_v2, format_bytes, format_bytes_i64, format_media_caption,
+        format_media_caption_rich, pluralize_seconds, sanitize_filename,
     };
 
     #[test]
@@ -1066,6 +1099,22 @@ mod tests {
         // Check copyright is appended
         let caption = format_media_caption("Test", "Artist");
         assert!(caption.contains("Yours,"));
+    }
+
+    #[test]
+    fn test_format_media_caption_rich() {
+        // Header + monospace badge line + copyright.
+        let c = format_media_caption_rich("Song", "Artist", Some("MP4 · 1080p · ▶️ YouTube"), &[]);
+        assert!(c.starts_with("*Artist* — _Song_"));
+        assert!(c.contains("`MP4 · 1080p · ▶️ YouTube`"));
+        assert!(c.contains("Yours,"));
+        // No badge → behaves like the plain caption.
+        let plain = format_media_caption_rich("Song", "Artist", None, &[]);
+        assert!(plain.starts_with("*Artist* — _Song_"));
+        assert!(!plain.contains('`'));
+        // Backticks/backslashes in the badge are stripped (can't break the code span).
+        let safe = format_media_caption_rich("S", "A", Some("a`b\\c"), &[]);
+        assert!(safe.contains("`abc`"));
     }
 
     #[test]

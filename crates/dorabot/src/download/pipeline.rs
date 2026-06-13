@@ -14,7 +14,22 @@ use crate::core::disk;
 use crate::core::error::AppError;
 use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
-use crate::core::utils::{format_media_caption, format_media_caption_with_chapters};
+use crate::core::utils::format_media_caption_rich;
+
+/// Human platform badge `"emoji Name"` from a source URL, for result captions.
+fn caption_platform(url: &str) -> &'static str {
+    match doracore::core::metrics::extract_platform(url) {
+        "youtube" => "▶️ YouTube",
+        "soundcloud" => "☁️ SoundCloud",
+        "instagram" => "📸 Instagram",
+        "tiktok" => "🎵 TikTok",
+        "vimeo" => "🎯 Vimeo",
+        "spotify" => "🟢 Spotify",
+        "twitter" | "x" => "🐦 X",
+        "vk" => "💬 VK",
+        _ => "🔗 Web",
+    }
+}
 use crate::download::builder::DownloadConfigBuilder;
 use crate::download::downloader::cleanup_partial_download;
 use crate::download::error::DownloadError;
@@ -505,11 +520,21 @@ pub async fn download_phase(
         .await
         .map(|p| p.timestamps)
         .unwrap_or_default();
-    let caption: Arc<str> = if cached_timestamps.is_empty() {
-        Arc::from(format_media_caption(&title, &artist))
-    } else {
-        Arc::from(format_media_caption_with_chapters(&title, &artist, &cached_timestamps))
+    // Rich tech badge: FORMAT · quality · platform (e.g. `MP4 · 1080p · ▶️ YouTube`).
+    let badge = {
+        let mut parts: Vec<String> = vec![format.label().to_uppercase()];
+        if let Some(q) = pipeline_video_quality(format) {
+            parts.push(q.to_string());
+        }
+        parts.push(caption_platform(url.as_str()).to_string());
+        parts.join(" · ")
     };
+    let caption: Arc<str> = Arc::from(format_media_caption_rich(
+        &title,
+        &artist,
+        Some(&badge),
+        &cached_timestamps,
+    ));
 
     // ── Step 3: Show starting status ──
     let _ = progress_msg
