@@ -31,9 +31,6 @@ use crate::telegram::BotExt;
 
 use super::CallbackCtx;
 
-/// Story canvas — Instagram's native 9:16 portrait resolution.
-const STORY_W: u32 = 1080;
-const STORY_H: u32 = 1920;
 /// Hard ceiling on source length we'll process — keeps the encode bounded so a
 /// long clip can't run away on a shared box. Trim-from-start past this, with a
 /// warning. 20 min stays within [`STORIES_FFMPEG_TIMEOUT`] even at preset slow.
@@ -59,6 +56,78 @@ pub(super) enum Quality {
     Max,
 }
 
+/// Target aspect ratio for the reframed clip. Dimensions are the 1080-base
+/// canvas; `Original` keeps the source frame untouched (no reframe → enables a
+/// stream-copy fast path in the render).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum AspectRatio {
+    /// 9:16 vertical — Stories/Reels/Shorts (1080×1920). The historical default.
+    R9x16,
+    /// 1:1 square — classic feed (1080×1080).
+    R1x1,
+    /// 4:5 portrait — tallest feed post (1080×1350).
+    R4x5,
+    /// 16:9 landscape (1920×1080).
+    R16x9,
+    /// Source aspect ratio, no reframe.
+    Original,
+}
+
+impl AspectRatio {
+    /// All selectable ratios, in display order.
+    const ALL: [AspectRatio; 5] = [
+        AspectRatio::R9x16,
+        AspectRatio::R1x1,
+        AspectRatio::R4x5,
+        AspectRatio::R16x9,
+        AspectRatio::Original,
+    ];
+
+    /// Canvas dimensions, or `None` for `Original` (keep source dims, no reframe).
+    fn dims(self) -> Option<(u32, u32)> {
+        match self {
+            AspectRatio::R9x16 => Some((1080, 1920)),
+            AspectRatio::R1x1 => Some((1080, 1080)),
+            AspectRatio::R4x5 => Some((1080, 1350)),
+            AspectRatio::R16x9 => Some((1920, 1080)),
+            AspectRatio::Original => None,
+        }
+    }
+
+    /// One-char token piece for callback encoding.
+    fn token(self) -> char {
+        match self {
+            AspectRatio::R9x16 => 't',
+            AspectRatio::R1x1 => 'q',
+            AspectRatio::R4x5 => 'p',
+            AspectRatio::R16x9 => 'w',
+            AspectRatio::Original => 'o',
+        }
+    }
+
+    fn from_token(c: char) -> Option<Self> {
+        match c {
+            't' => Some(AspectRatio::R9x16),
+            'q' => Some(AspectRatio::R1x1),
+            'p' => Some(AspectRatio::R4x5),
+            'w' => Some(AspectRatio::R16x9),
+            'o' => Some(AspectRatio::Original),
+            _ => None,
+        }
+    }
+
+    /// Short human label for the config card.
+    fn label(self) -> &'static str {
+        match self {
+            AspectRatio::R9x16 => "9:16",
+            AspectRatio::R1x1 => "1:1",
+            AspectRatio::R4x5 => "4:5",
+            AspectRatio::R16x9 => "16:9",
+            AspectRatio::Original => "orig",
+        }
+    }
+}
+
 /// How each segment is delivered to the chat.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Delivery {
@@ -79,6 +148,7 @@ pub(super) struct StorySettings {
     seg_secs: u32,
     quality: Quality,
     delivery: Delivery,
+    aspect: AspectRatio,
 }
 
 impl Default for StorySettings {
@@ -89,6 +159,7 @@ impl Default for StorySettings {
             seg_secs: 60,
             quality: Quality::Std,
             delivery: Delivery::Video,
+            aspect: AspectRatio::R9x16,
         }
     }
 }
@@ -97,10 +168,11 @@ impl StorySettings {
     /// Allowed segment lengths offered in the UI.
     const SEG_CHOICES: [u32; 3] = [15, 30, 60];
 
-    /// Parse the compact `<mode><seg><quality><delivery>` token positionally;
+    /// Parse the compact `<mode><seg><quality><delivery><ar>` token positionally;
     /// tolerant — unknown/missing pieces fall back to [`Default`] so a malformed
-    /// callback never panics or 500s. A missing trailing delivery char (legacy
-    /// `<mode><seg><quality>` tokens) decodes to [`Delivery::Video`].
+    /// callback never panics or 500s. Trailing pieces are optional: legacy
+    /// `<mode><seg><quality>` decodes delivery→Video, and tokens without the AR
+    /// char decode aspect→9:16 (the historical canvas).
     fn parse(flags: &str) -> Self {
         let mut s = Self::default();
         let chars: Vec<char> = flags.chars().collect();
@@ -146,20 +218,33 @@ impl StorySettings {
 
         // delivery (optional; absent in legacy tokens → Video)
         match chars.get(i) {
-            Some('f') => s.delivery = Delivery::Document,
-            Some('v') => s.delivery = Delivery::Video,
+            Some('f') => {
+                s.delivery = Delivery::Document;
+                i += 1;
+            }
+            Some('v') => {
+                s.delivery = Delivery::Video;
+                i += 1;
+            }
             _ => {}
+        }
+
+        // aspect ratio (optional; absent → 9:16, the historical canvas)
+        if let Some(&c) = chars.get(i)
+            && let Some(ar) = AspectRatio::from_token(c)
+        {
+            s.aspect = ar;
         }
 
         s
     }
 
-    /// Encode back to the compact `<mode><seg><quality><delivery>` token.
+    /// Encode back to the compact `<mode><seg><quality><delivery><ar>` token.
     fn encode(&self) -> String {
         let mode = if self.reframe == Reframe::Crop { 'c' } else { 'b' };
         let q = if self.quality == Quality::Max { 'm' } else { 's' };
         let d = if self.delivery == Delivery::Document { 'f' } else { 'v' };
-        format!("{}{}{}{}", mode, self.seg_secs, q, d)
+        format!("{}{}{}{}{}", mode, self.seg_secs, q, d, self.aspect.token())
     }
 
     fn with_reframe(mut self, r: Reframe) -> Self {
@@ -176,6 +261,10 @@ impl StorySettings {
     }
     fn with_delivery(mut self, d: Delivery) -> Self {
         self.delivery = d;
+        self
+    }
+    fn with_aspect(mut self, a: AspectRatio) -> Self {
+        self.aspect = a;
         self
     }
 }
@@ -281,6 +370,16 @@ fn build_config_keyboard(lang: &unic_langid::LanguageIdentifier, id: i64, s: Sto
     let cfg = |next: StorySettings| format!("downloads:stories:cfg:{}:{}", id, next.encode());
 
     let rows = vec![
+        // Aspect ratio (labels are universal ratios — no i18n needed).
+        AspectRatio::ALL
+            .iter()
+            .map(|&ar| {
+                crate::telegram::cb(
+                    format!("{}{}", mark(s.aspect == ar), ar.label()),
+                    cfg(s.with_aspect(ar)),
+                )
+            })
+            .collect(),
         // Reframe mode.
         vec![
             crate::telegram::cb(
@@ -538,11 +637,13 @@ async fn run_stories(
         // actual frame orientation; see download/send.rs notes).
         let send_result = match settings.delivery {
             Delivery::Video => {
-                let mut req = bot
-                    .send_video(chat_id, InputFile::file(seg.clone()))
-                    .caption(caption)
-                    .width(STORY_W)
-                    .height(STORY_H);
+                let mut req = bot.send_video(chat_id, InputFile::file(seg.clone())).caption(caption);
+                // Hint the chosen canvas dims so Telegram renders the right
+                // orientation. For `Original` we don't know them → omit and let
+                // Telegram derive from the file.
+                if let Some((w, h)) = settings.aspect.dims() {
+                    req = req.width(w).height(h);
+                }
                 if let Some(d) = dur {
                     req = req.duration(d);
                 }
@@ -594,68 +695,66 @@ fn build_stories_cmd(
     capped: bool,
     settings: StorySettings,
 ) -> Command {
-    let filter = match settings.reframe {
-        // [bg] = source scaled to *cover* the frame, cropped, heavily blurred and
-        //        slightly darkened so the centred foreground pops.
-        // [fg] = source scaled to *fit* inside the frame (full clip visible).
-        Reframe::Blur => format!(
-            "[0:v]split=2[bg][fg];\
-             [bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=28:2,eq=brightness=-0.07[bg];\
-             [fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];\
-             [bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]",
-            w = STORY_W,
-            h = STORY_H,
-        ),
-        // Zoom to fill the whole frame, cropping the overflowing edges.
-        Reframe::Crop => format!(
-            "[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[v]",
-            w = STORY_W,
-            h = STORY_H,
-        ),
-    };
-
-    let (crf, preset, audio_bitrate) = match settings.quality {
-        Quality::Std => ("20", "medium", "192k"),
-        Quality::Max => ("18", "slow", "256k"),
-    };
-
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-hide_banner").arg("-loglevel").arg("info").arg("-y");
     cmd.arg("-i").arg(input);
     if capped {
         cmd.arg("-t").arg(MAX_TOTAL_SECS.to_string());
     }
-    cmd.arg("-filter_complex")
-        .arg(&filter)
-        .arg("-map")
-        .arg("[v]")
-        .arg("-map")
-        .arg("0:a?")
-        // High-quality H.264, broadly compatible with mobile playback.
-        .arg("-c:v")
-        .arg("libx264")
-        .arg("-profile:v")
-        .arg("high")
-        .arg("-level")
-        .arg("4.2")
-        .arg("-preset")
-        .arg(preset)
-        .arg("-crf")
-        .arg(crf)
-        .arg("-pix_fmt")
-        .arg("yuv420p")
-        .arg("-r")
-        .arg("30")
-        // Force a keyframe at every segment boundary for clean cuts.
-        .arg("-force_key_frames")
-        .arg(format!("expr:gte(t,n_forced*{})", settings.seg_secs))
-        .arg("-c:a")
-        .arg("aac")
-        .arg("-b:a")
-        .arg(audio_bitrate)
-        .arg("-ar")
-        .arg("44100")
-        .arg("-f")
+
+    match settings.aspect.dims() {
+        // Original AR: no reframe → stream-copy. No re-encode = near-instant. The
+        // segment muxer cuts on existing keyframes (forced keyframes aren't
+        // possible with `-c copy`), so segment boundaries are approximate — an
+        // accepted trade-off for the "keep original, fast" path.
+        None => {
+            cmd.arg("-map")
+                .arg("0:v:0")
+                .arg("-map")
+                .arg("0:a?")
+                .arg("-c")
+                .arg("copy");
+        }
+        // Fixed AR: reframe (blur/crop) into the chosen w×h, then re-encode with
+        // forced keyframes at each segment boundary for clean cuts.
+        Some((w, h)) => {
+            let filter = reframe_filter(settings.reframe, w, h);
+            let (crf, preset, audio_bitrate) = match settings.quality {
+                Quality::Std => ("20", "medium", "192k"),
+                Quality::Max => ("18", "slow", "256k"),
+            };
+            cmd.arg("-filter_complex")
+                .arg(&filter)
+                .arg("-map")
+                .arg("[v]")
+                .arg("-map")
+                .arg("0:a?")
+                .arg("-c:v")
+                .arg("libx264")
+                .arg("-profile:v")
+                .arg("high")
+                .arg("-level")
+                .arg("4.2")
+                .arg("-preset")
+                .arg(preset)
+                .arg("-crf")
+                .arg(crf)
+                .arg("-pix_fmt")
+                .arg("yuv420p")
+                .arg("-r")
+                .arg("30")
+                .arg("-force_key_frames")
+                .arg(format!("expr:gte(t,n_forced*{})", settings.seg_secs))
+                .arg("-c:a")
+                .arg("aac")
+                .arg("-b:a")
+                .arg(audio_bitrate)
+                .arg("-ar")
+                .arg("44100");
+        }
+    }
+
+    cmd.arg("-f")
         .arg("segment")
         .arg("-segment_time")
         .arg(settings.seg_secs.to_string())
@@ -665,6 +764,24 @@ fn build_stories_cmd(
         .arg("mp4")
         .arg(output_pattern);
     cmd
+}
+
+/// Build the reframe `-filter_complex` graph for a target `w`×`h` canvas.
+/// `Blur` = full clip over a blurred fill; `Crop` = center-crop zoom-to-fill.
+fn reframe_filter(reframe: Reframe, w: u32, h: u32) -> String {
+    match reframe {
+        // [bg] = source scaled to *cover* the frame, cropped, heavily blurred and
+        //        slightly darkened so the centred foreground pops.
+        // [fg] = source scaled to *fit* inside the frame (full clip visible).
+        Reframe::Blur => format!(
+            "[0:v]split=2[bg][fg];\
+             [bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=28:2,eq=brightness=-0.07[bg];\
+             [fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];\
+             [bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
+        ),
+        // Zoom to fill the whole frame, cropping the overflowing edges (center).
+        Reframe::Crop => format!("[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[v]"),
+    }
 }
 
 #[cfg(test)]
@@ -689,8 +806,21 @@ mod tests {
     }
 
     #[test]
-    fn story_canvas_is_9_by_16() {
-        assert_eq!(STORY_W * 16, STORY_H * 9);
+    fn aspect_dims_and_tokens_round_trip() {
+        // 9:16 canvas ratio holds.
+        let (w, h) = AspectRatio::R9x16.dims().unwrap();
+        assert_eq!(w * 16, h * 9);
+        // 16:9 is the transpose.
+        assert_eq!(AspectRatio::R16x9.dims(), Some((1920, 1080)));
+        // 1:1 and 4:5.
+        assert_eq!(AspectRatio::R1x1.dims(), Some((1080, 1080)));
+        assert_eq!(AspectRatio::R4x5.dims(), Some((1080, 1350)));
+        // Original has no fixed canvas.
+        assert_eq!(AspectRatio::Original.dims(), None);
+        // token round-trip for all variants.
+        for ar in AspectRatio::ALL {
+            assert_eq!(AspectRatio::from_token(ar.token()), Some(ar));
+        }
     }
 
     #[test]
@@ -700,23 +830,28 @@ mod tests {
         assert_eq!(s.seg_secs, 60);
         assert_eq!(s.quality, Quality::Std);
         assert_eq!(s.delivery, Delivery::Video);
-        // Encode now carries the trailing delivery char.
-        assert_eq!(s.encode(), "b60sv");
+        assert_eq!(s.aspect, AspectRatio::R9x16);
+        // Encode now carries the trailing delivery + aspect chars.
+        assert_eq!(s.encode(), "b60svt");
     }
 
     #[test]
     fn flags_round_trip() {
-        for token in ["b60sv", "c30mf", "b15sv", "c60mv", "c15sf"] {
+        for token in ["b60svt", "c30mfq", "b15svp", "c60mvw", "c15sfo"] {
             assert_eq!(StorySettings::parse(token).encode(), token);
         }
     }
 
     #[test]
-    fn legacy_tokens_without_delivery_decode_to_video() {
-        // Old `<mode><seg><quality>` callbacks must still work → Video.
+    fn legacy_tokens_decode_to_defaults() {
+        // Old `<mode><seg><quality>` callbacks → delivery Video + aspect 9:16.
         for token in ["b60s", "c30m", "b15s", "c60m"] {
-            assert_eq!(StorySettings::parse(token).delivery, Delivery::Video);
+            let s = StorySettings::parse(token);
+            assert_eq!(s.delivery, Delivery::Video);
+            assert_eq!(s.aspect, AspectRatio::R9x16);
         }
+        // Delivery-only (no AR char) → aspect 9:16.
+        assert_eq!(StorySettings::parse("b60sv").aspect, AspectRatio::R9x16);
         assert_eq!(StorySettings::parse("c30m").quality, Quality::Max);
         assert_eq!(StorySettings::parse("c30m").seg_secs, 30);
     }
@@ -727,8 +862,44 @@ mod tests {
         assert_eq!(StorySettings::parse("b60sv").delivery, Delivery::Video);
         assert_eq!(
             StorySettings::default().with_delivery(Delivery::Document).encode(),
-            "b60sf"
+            "b60sft"
         );
+    }
+
+    #[test]
+    fn aspect_parses_and_encodes() {
+        assert_eq!(StorySettings::parse("b60svq").aspect, AspectRatio::R1x1);
+        assert_eq!(StorySettings::parse("c30mfw").aspect, AspectRatio::R16x9);
+        assert_eq!(StorySettings::parse("b15svo").aspect, AspectRatio::Original);
+        assert_eq!(
+            StorySettings::default().with_aspect(AspectRatio::R4x5).encode(),
+            "b60svp"
+        );
+    }
+
+    #[test]
+    fn reframe_filter_uses_target_dims() {
+        // Crop into 1:1 → crop=1080:1080, no blur.
+        let f = reframe_filter(Reframe::Crop, 1080, 1080);
+        assert!(f.contains("crop=1080:1080"));
+        assert!(f.contains("force_original_aspect_ratio=increase"));
+        assert!(!f.contains("boxblur"));
+        // Blur into 16:9 → blurred fill at 1920:1080.
+        let f = reframe_filter(Reframe::Blur, 1920, 1080);
+        assert!(f.contains("crop=1920:1080"));
+        assert!(f.contains("boxblur"));
+        assert!(f.contains("split=2"));
+    }
+
+    #[test]
+    fn original_aspect_stream_copies_without_filter() {
+        let args = args_of(StorySettings::default().with_aspect(AspectRatio::Original), false);
+        // Stream-copy path: -c copy, no re-encode, no filter graph.
+        assert_eq!(arg_after(&args, "-c").as_deref(), Some("copy"));
+        assert!(!args.iter().any(|a| a == "-filter_complex"));
+        assert!(!args.iter().any(|a| a == "libx264"));
+        // Still segmented.
+        assert_eq!(arg_after(&args, "-f").as_deref(), Some("segment"));
     }
 
     #[test]

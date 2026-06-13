@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > 🎉 **Pre-release track promoted alpha → beta (v0.51.0-beta.1, 2026-06-07).** Core feature set (inline mode + identity guard, silent downloads, Instagram Stories, period/smart history search, popular_files viral cache) считается feature-complete и достаточно стабильным для бета-тестинга. Дальше нумерация `0.51.0-beta.N` вместо `alpha.N`. Историю alpha.X-меток в записях ниже оставляем как есть — это хронология появления фич.
 
+### Added
+- **Instagram Stories — выбор aspect ratio (фаза A)** (v0.51.0-beta.8) — Stories больше не зашит в 9:16: новый ряд на карточке выбирает целевой AR — **9:16 / 1:1 / 4:5 / 16:9 / original**. Режим Crop = центр-кроп (zoom-to-fill, режет края — «вижу только центр»), Blur = размытый фон. Обобщён ffmpeg-фильтр (вынесен `reframe_filter(reframe, w, h)`), `send_video` отдаёт width/height выбранного AR. **Оптимизация:** `original` + без reframe → `-c copy` (stream-copy, без перекодирования, почти мгновенно; сегменты режутся по существующим keyframe). Токен callback расширен `<mode><seg><quality><delivery><ar>` (обратно совместим: старые токены без AR-символа → 9:16). 5 новых unit-тестов (dims/token round-trip, AR parse/encode, reframe_filter под целевые dims, original stream-copy без фильтра). Фаза B (setup-wizard с сеткой-превью всех AR) — следующим заходом. Спека: `docs/superpowers/specs/2026-06-13-stories-aspect-ratio-wizard-design.md`.
+
 ### Security
 - **openssl 0.10.78 → 0.10.81** (v0.51.0-beta.7) — закрывает 3 Dependabot-алерта на транзитивном `openssl`: **GHSA-xp3w-r5p5-63rr** (high) + **GHSA-xv59-967r-8726** (medium) + **GHSA-phqj-4mhp-q6mq** (medium). Только `Cargo.lock` (+`openssl-sys` 0.9.114→0.9.117); прямой зависимости нет, поведение не меняется, сборка зелёная.
 
