@@ -47,7 +47,9 @@ RUN cargo build --release -p doradura -p health-monitor && \
     ls -lh /app/doradura-bin /app/health-monitor-bin
 
 # === bgutil builder stage (runs in parallel with rust-builder) ===
-FROM aiogram/telegram-bot-api:latest AS bgutil-builder
+# Pinned to the Bot API 10.1 digest (2026-06-13) for reproducible builds — was
+# a floating :latest, which silently changed the server version on every build.
+FROM aiogram/telegram-bot-api@sha256:102a587810e23fb5dadc8b2116703e0e5db22c164fdd95f4155f02c3e2436767 AS bgutil-builder
 # hadolint ignore=DL3002,DL3018
 USER root
 RUN apk add --no-cache \
@@ -62,8 +64,10 @@ WORKDIR /opt/bgutil/server
 RUN npm install && npx tsc
 
 # === Runtime stage ===
-# hadolint ignore=DL3007
-FROM aiogram/telegram-bot-api:latest
+# Pinned to the Bot API 10.1 digest (2026-06-13). This is the server binary that
+# runs in prod (telegram-bot-api --local); 10.1 is required for sendRichMessage.
+# Pinning makes the version deliberate + reproducible instead of floating :latest.
+FROM aiogram/telegram-bot-api@sha256:102a587810e23fb5dadc8b2116703e0e5db22c164fdd95f4155f02c3e2436767
 
 # hadolint ignore=DL3002
 USER root

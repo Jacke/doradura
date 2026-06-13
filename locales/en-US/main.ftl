@@ -531,6 +531,13 @@ stories-capped = ⚠️ Video longer than { $minutes } min — trimmed from the 
 stories-caption = 📱 { $title } — Stories { $index }/{ $total }
 stories-only-mp4 = 📱 Instagram Stories are only available for video \(MP4\)\.
 stories-no-file-id = ❌ Couldn't find file\_id for this file\.
+stories-config-title = 📱 *Instagram Stories* — { $title }
+stories-mode-blur = 🌫 Blurred fill
+stories-mode-crop = 🔍 Crop to fill
+stories-quality-std = Standard
+stories-quality-max = Maximum
+stories-create = ▶️ Create stories
+stories-cancel = ❌ Cancel
 
 # Explore hub
 explore_title = 🎵 Doradura · Explore

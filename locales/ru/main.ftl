@@ -532,6 +532,13 @@ stories-capped = ⚠️ Видео длиннее { $minutes } мин — обр
 stories-caption = 📱 { $title } — Stories { $index }/{ $total }
 stories-only-mp4 = 📱 Instagram Stories доступны только для видео \(MP4\)\.
 stories-no-file-id = ❌ Не найден file\_id для этого файла\.
+stories-config-title = 📱 *Instagram Stories* — { $title }
+stories-mode-blur = 🌫 Размытый фон
+stories-mode-crop = 🔍 Обрезать
+stories-quality-std = Стандарт
+stories-quality-max = Максимум
+stories-create = ▶️ Создать стори
+stories-cancel = ❌ Отмена
 
 # Explore hub
 explore_title = 🎵 Doradura · Лента

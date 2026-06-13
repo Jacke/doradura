@@ -322,6 +322,13 @@ stories-capped = ⚠️ Video länger als { $minutes } Min — Anfang gekürzt.
 stories-caption = 📱 { $title } — Stories { $index }/{ $total }
 stories-only-mp4 = 📱 Instagram Stories sind nur für Videos \(MP4\) verfügbar\.
 stories-no-file-id = ❌ file\_id für diese Datei nicht gefunden\.
+stories-config-title = 📱 *Instagram Stories* — { $title }
+stories-mode-blur = 🌫 Unscharfer Rand
+stories-mode-crop = 🔍 Zuschneiden
+stories-quality-std = Standard
+stories-quality-max = Maximum
+stories-create = ▶️ Stories erstellen
+stories-cancel = ❌ Abbrechen
 
 # Explore hub
 explore_title = 🎵 Doradura · Entdecken

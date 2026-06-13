@@ -76,6 +76,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_cookies = deps.clone();
     let deps_ig_cookies = deps.clone();
     let deps_diagnose_cookies = deps.clone();
+    let deps_richtest = deps.clone();
     let deps_ytdlp = deps.clone();
     let deps_commands = deps.clone();
     let deps_media_upload = deps.clone();
@@ -99,6 +100,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(update_cookies_handler(deps_cookies))
         .branch(update_ig_cookies_handler(deps_ig_cookies))
         .branch(diagnose_cookies_handler(deps_diagnose_cookies))
+        .branch(richtest_handler(deps_richtest))
         .branch(update_ytdlp_handler(deps_ytdlp))
         .branch(browser_login_handler(deps_browser_login))
         .branch(browser_status_handler(deps_browser_status))
@@ -275,6 +277,43 @@ fn diagnose_cookies_handler(_deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     .send_message(msg.chat.id, format!("❌ /diagnose_cookies failed: {}", e))
                     .await;
             }
+            Ok(())
+        })
+}
+
+/// Handler for /richtest admin command (hidden, not in Command enum).
+///
+/// Bot API 10.1 rich-message **probe**: sends a candidate `InputRichMessage`
+/// via raw HTTP `sendRichMessage` and replies to the admin with the server's
+/// full JSON response. Used to discover the (not-yet-documented) schema
+/// empirically against the live 10.1 server, then drive a typed builder.
+/// Admin-only; harmless to everyone else (other users' messages don't match,
+/// and non-admins get a refusal).
+fn richtest_handler(_deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| msg.text().map(|t| t.starts_with("/richtest")).unwrap_or(false))
+        .endpoint(move |bot: Bot, msg: Message| async move {
+            let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+
+            // Admin gate: only the configured admin may probe.
+            if user_id != *crate::core::config::admin::ADMIN_USER_ID
+                && !crate::core::config::admin::ADMIN_IDS.contains(&user_id)
+            {
+                let _ = bot.send_message(msg.chat.id, "❌ admin only").await;
+                return Ok(());
+            }
+
+            log::info!("🎯 /richtest probe by admin {}", user_id);
+            let payload = crate::telegram::rich::demo_payload();
+            let reply = match crate::telegram::rich::send_rich_message(msg.chat.id.0, payload).await {
+                Ok(resp) => {
+                    let pretty = serde_json::to_string_pretty(&resp).unwrap_or_else(|_| resp.to_string());
+                    format!("sendRichMessage response:\n{}", pretty)
+                }
+                Err(e) => format!("❌ sendRichMessage transport error: {}", e),
+            };
+            // Plain text (no parse_mode) — the body is raw JSON, must not be parsed.
+            let _ = bot.send_message(msg.chat.id, reply).await;
             Ok(())
         })
 }
