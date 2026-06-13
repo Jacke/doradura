@@ -327,6 +327,8 @@ stories-mode-blur = 🌫 Unscharfer Rand
 stories-mode-crop = 🔍 Zuschneiden
 stories-quality-std = Standard
 stories-quality-max = Maximum
+stories-delivery-video = 📹 Video
+stories-delivery-file = 📄 Datei
 stories-create = ▶️ Stories erstellen
 stories-cancel = ❌ Abbrechen
 

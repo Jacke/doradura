@@ -59,13 +59,26 @@ pub(super) enum Quality {
     Max,
 }
 
+/// How each segment is delivered to the chat.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Delivery {
+    /// `sendVideo` — playable inline, but Telegram may re-compress.
+    Video,
+    /// `sendDocument` — the raw .mp4 file, untouched (best for re-uploading to
+    /// Instagram without Telegram's recompression).
+    Document,
+}
+
 /// Resolved Story render settings, encoded into callback data as a compact
-/// `<mode><seg><quality>` token (e.g. `b60s`, `c30m`).
+/// `<mode><seg><quality><delivery>` token (e.g. `b60sv`, `c30mf`). The trailing
+/// delivery char is optional on parse so legacy `<mode><seg><quality>` tokens
+/// (e.g. `b60s`) still decode — to `Delivery::Video`, the old behaviour.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct StorySettings {
     reframe: Reframe,
     seg_secs: u32,
     quality: Quality,
+    delivery: Delivery,
 }
 
 impl Default for StorySettings {
@@ -75,6 +88,7 @@ impl Default for StorySettings {
             reframe: Reframe::Blur,
             seg_secs: 60,
             quality: Quality::Std,
+            delivery: Delivery::Video,
         }
     }
 }
@@ -83,31 +97,69 @@ impl StorySettings {
     /// Allowed segment lengths offered in the UI.
     const SEG_CHOICES: [u32; 3] = [15, 30, 60];
 
-    /// Parse the compact flag token; tolerant — unknown pieces fall back to
-    /// [`Default`] so a malformed callback never panics or 500s.
+    /// Parse the compact `<mode><seg><quality><delivery>` token positionally;
+    /// tolerant — unknown/missing pieces fall back to [`Default`] so a malformed
+    /// callback never panics or 500s. A missing trailing delivery char (legacy
+    /// `<mode><seg><quality>` tokens) decodes to [`Delivery::Video`].
     fn parse(flags: &str) -> Self {
         let mut s = Self::default();
-        let bytes = flags.as_bytes();
-        if let Some(&first) = bytes.first() {
-            s.reframe = if first == b'c' { Reframe::Crop } else { Reframe::Blur };
+        let chars: Vec<char> = flags.chars().collect();
+        let mut i = 0;
+
+        // mode
+        match chars.get(i) {
+            Some('c') => {
+                s.reframe = Reframe::Crop;
+                i += 1;
+            }
+            Some('b') => {
+                s.reframe = Reframe::Blur;
+                i += 1;
+            }
+            _ => {}
         }
-        if let Some(&last) = bytes.last() {
-            s.quality = if last == b'm' { Quality::Max } else { Quality::Std };
+
+        // segment length digits
+        let mut seg_str = String::new();
+        while let Some(c) = chars.get(i).filter(|c| c.is_ascii_digit()) {
+            seg_str.push(*c);
+            i += 1;
         }
-        if flags.len() >= 3
-            && let Ok(seg) = flags[1..flags.len() - 1].parse::<u32>()
+        if let Ok(seg) = seg_str.parse::<u32>()
             && Self::SEG_CHOICES.contains(&seg)
         {
             s.seg_secs = seg;
         }
+
+        // quality
+        match chars.get(i) {
+            Some('m') => {
+                s.quality = Quality::Max;
+                i += 1;
+            }
+            Some('s') => {
+                s.quality = Quality::Std;
+                i += 1;
+            }
+            _ => {}
+        }
+
+        // delivery (optional; absent in legacy tokens → Video)
+        match chars.get(i) {
+            Some('f') => s.delivery = Delivery::Document,
+            Some('v') => s.delivery = Delivery::Video,
+            _ => {}
+        }
+
         s
     }
 
-    /// Encode back to the compact `<mode><seg><quality>` token.
+    /// Encode back to the compact `<mode><seg><quality><delivery>` token.
     fn encode(&self) -> String {
         let mode = if self.reframe == Reframe::Crop { 'c' } else { 'b' };
         let q = if self.quality == Quality::Max { 'm' } else { 's' };
-        format!("{}{}{}", mode, self.seg_secs, q)
+        let d = if self.delivery == Delivery::Document { 'f' } else { 'v' };
+        format!("{}{}{}{}", mode, self.seg_secs, q, d)
     }
 
     fn with_reframe(mut self, r: Reframe) -> Self {
@@ -120,6 +172,10 @@ impl StorySettings {
     }
     fn with_quality(mut self, q: Quality) -> Self {
         self.quality = q;
+        self
+    }
+    fn with_delivery(mut self, d: Delivery) -> Self {
+        self.delivery = d;
         self
     }
 }
@@ -266,6 +322,25 @@ fn build_config_keyboard(lang: &unic_langid::LanguageIdentifier, id: i64, s: Sto
                     i18n::t(lang, "stories-quality-max")
                 ),
                 cfg(s.with_quality(Quality::Max)),
+            ),
+        ],
+        // Delivery: playable video vs raw file (document).
+        vec![
+            crate::telegram::cb(
+                format!(
+                    "{}{}",
+                    mark(s.delivery == Delivery::Video),
+                    i18n::t(lang, "stories-delivery-video")
+                ),
+                cfg(s.with_delivery(Delivery::Video)),
+            ),
+            crate::telegram::cb(
+                format!(
+                    "{}{}",
+                    mark(s.delivery == Delivery::Document),
+                    i18n::t(lang, "stories-delivery-file")
+                ),
+                cfg(s.with_delivery(Delivery::Document)),
             ),
         ],
         // Run.
@@ -457,19 +532,31 @@ async fn run_stories(
             &doracore::fluent_args!("title" => title.as_str(), "index" => idx as i64 + 1, "total" => total as i64),
         );
 
-        // Portrait video: omit explicit thumbnail (Telegram auto-generates one
-        // matching the actual frame orientation; see download/send.rs notes).
-        let mut req = bot
-            .send_video(chat_id, InputFile::file(seg.clone()))
-            .caption(caption)
-            .width(STORY_W)
-            .height(STORY_H);
-        if let Some(d) = dur {
-            req = req.duration(d);
-        }
+        // Video → playable inline (Telegram may recompress). Document → the raw
+        // .mp4 untouched (best for re-uploading to Instagram). Portrait video
+        // omits an explicit thumbnail (Telegram auto-generates one matching the
+        // actual frame orientation; see download/send.rs notes).
+        let send_result = match settings.delivery {
+            Delivery::Video => {
+                let mut req = bot
+                    .send_video(chat_id, InputFile::file(seg.clone()))
+                    .caption(caption)
+                    .width(STORY_W)
+                    .height(STORY_H);
+                if let Some(d) = dur {
+                    req = req.duration(d);
+                }
+                req.await.map(|_| ())
+            }
+            Delivery::Document => bot
+                .send_document(chat_id, InputFile::file(seg.clone()))
+                .caption(caption)
+                .await
+                .map(|_| ()),
+        };
 
-        match req.await {
-            Ok(_) => sent += 1,
+        match send_result {
+            Ok(()) => sent += 1,
             Err(e) => log::warn!("stories: failed to send segment {}/{}: {}", idx + 1, total, e),
         }
     }
@@ -612,14 +699,36 @@ mod tests {
         assert_eq!(s.reframe, Reframe::Blur);
         assert_eq!(s.seg_secs, 60);
         assert_eq!(s.quality, Quality::Std);
-        assert_eq!(s.encode(), "b60s");
+        assert_eq!(s.delivery, Delivery::Video);
+        // Encode now carries the trailing delivery char.
+        assert_eq!(s.encode(), "b60sv");
     }
 
     #[test]
     fn flags_round_trip() {
-        for token in ["b60s", "c30m", "b15s", "c60m", "c15s"] {
+        for token in ["b60sv", "c30mf", "b15sv", "c60mv", "c15sf"] {
             assert_eq!(StorySettings::parse(token).encode(), token);
         }
+    }
+
+    #[test]
+    fn legacy_tokens_without_delivery_decode_to_video() {
+        // Old `<mode><seg><quality>` callbacks must still work → Video.
+        for token in ["b60s", "c30m", "b15s", "c60m"] {
+            assert_eq!(StorySettings::parse(token).delivery, Delivery::Video);
+        }
+        assert_eq!(StorySettings::parse("c30m").quality, Quality::Max);
+        assert_eq!(StorySettings::parse("c30m").seg_secs, 30);
+    }
+
+    #[test]
+    fn delivery_toggle_parses_and_encodes() {
+        assert_eq!(StorySettings::parse("b60sf").delivery, Delivery::Document);
+        assert_eq!(StorySettings::parse("b60sv").delivery, Delivery::Video);
+        assert_eq!(
+            StorySettings::default().with_delivery(Delivery::Document).encode(),
+            "b60sf"
+        );
     }
 
     #[test]

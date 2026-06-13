@@ -327,6 +327,8 @@ stories-mode-blur = 🌫 Fond flou
 stories-mode-crop = 🔍 Recadrer
 stories-quality-std = Standard
 stories-quality-max = Maximum
+stories-delivery-video = 📹 Vidéo
+stories-delivery-file = 📄 Fichier
 stories-create = ▶️ Créer les stories
 stories-cancel = ❌ Annuler
 

@@ -537,6 +537,8 @@ stories-mode-blur = 🌫 Размытый фон
 stories-mode-crop = 🔍 Обрезать
 stories-quality-std = Стандарт
 stories-quality-max = Максимум
+stories-delivery-video = 📹 Видео
+stories-delivery-file = 📄 Файл
 stories-create = ▶️ Создать стори
 stories-cancel = ❌ Отмена
 

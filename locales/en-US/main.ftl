@@ -536,6 +536,8 @@ stories-mode-blur = 🌫 Blurred fill
 stories-mode-crop = 🔍 Crop to fill
 stories-quality-std = Standard
 stories-quality-max = Maximum
+stories-delivery-video = 📹 Video
+stories-delivery-file = 📄 File
 stories-create = ▶️ Create stories
 stories-cancel = ❌ Cancel
 
