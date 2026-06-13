@@ -56,6 +56,16 @@ pub struct TimelineEntry {
     pub file_id: Option<String>,
     pub url: String,
     pub at: DateTime<Utc>,
+    /// Raw download `format` token (mp3/mp4/video_note/…) for a precise label.
+    pub format: String,
+    /// File size in bytes, if known.
+    pub size_bytes: Option<u64>,
+    /// Media duration in seconds, if known.
+    pub duration_secs: Option<u64>,
+    /// Video resolution label (e.g. "1080p"), for video downloads.
+    pub video_quality: Option<String>,
+    /// Audio bitrate label (e.g. "320k"), for audio downloads.
+    pub audio_bitrate: Option<String>,
 }
 
 /// One date group, e.g. "Today".
@@ -156,6 +166,11 @@ pub async fn build_timeline_page(
                 file_id: r.file_id,
                 url: r.url,
                 at,
+                format: r.format,
+                size_bytes: r.file_size.and_then(|v| u64::try_from(v).ok()),
+                duration_secs: r.duration.and_then(|v| u64::try_from(v).ok()),
+                video_quality: r.video_quality.filter(|s| !s.trim().is_empty()),
+                audio_bitrate: r.audio_bitrate.filter(|s| !s.trim().is_empty()),
             })
         })
         .collect();
@@ -220,6 +235,11 @@ mod tests {
             file_id: None,
             url: "u".into(),
             at,
+            format: "mp3".into(),
+            size_bytes: None,
+            duration_secs: None,
+            video_quality: None,
+            audio_bitrate: None,
         };
         let entries = vec![
             mk(1, Utc.with_ymd_and_hms(2026, 6, 11, 9, 0, 0).unwrap()), // Today
@@ -247,6 +267,11 @@ mod tests {
                 file_id: None,
                 url: "u".into(),
                 at: Utc.with_ymd_and_hms(2026, 6, 11, 9, 0, 0).unwrap(),
+                format: "mp3".into(),
+                size_bytes: None,
+                duration_secs: None,
+                video_quality: None,
+                audio_bitrate: None,
             })
             .collect();
 

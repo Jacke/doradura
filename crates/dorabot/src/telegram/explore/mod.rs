@@ -13,7 +13,6 @@ use unic_langid::LanguageIdentifier;
 use crate::i18n;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use doracore::core::utils::escape_markdown_v2;
 use doracore::explore::timeline::{self, BucketLabel, MediaKind, TimelinePage};
 
 use render::{render_timeline_keyboard, render_timeline_text};
@@ -74,8 +73,8 @@ fn bucket_header(lang: &LanguageIdentifier, label: BucketLabel) -> String {
 ///
 /// Shared by [`show_recent`] (which edits the callback's message in place) and
 /// [`show_recent_fresh`] (which sends a brand-new message). Returns the rendered
-/// MarkdownV2 text and the timeline keyboard, or an error if the page can't be
-/// built from storage.
+/// HTML text and the timeline keyboard, or an error if the page can't be built
+/// from storage.
 async fn render_recent(
     storage: &Arc<SharedStorage>,
     user_id: i64,
@@ -85,10 +84,17 @@ async fn render_recent(
 
     let page: TimelinePage = timeline::build_timeline_page(storage, user_id, page, chrono::Utc::now()).await?;
 
-    let title = escape_markdown_v2(&i18n::t(&lang, "explore_title"));
+    // HTML parse mode: inline-button labels are plain text, but the rich card
+    // body uses HTML (cleaner than MarkdownV2 — no escape-soup).
+    let html = teloxide::utils::html::escape;
+    let title = format!(
+        "<b>{}</b>  ·  {}",
+        html(&i18n::t(&lang, "explore_title")),
+        page.total_entries
+    );
     let empty = i18n::t(&lang, "explore_empty");
     let header = |label: BucketLabel| bucket_header(&lang, label);
-    let text = render_timeline_text(&page, &title, &empty, &header, &|s| escape_markdown_v2(s));
+    let text = render_timeline_text(&page, &title, &empty, &header, &|s| html(s));
 
     let page_label = {
         let args = doracore::fluent_args!("page" => page.page + 1, "total" => page.total_pages);
@@ -132,7 +138,7 @@ async fn show_recent(
         let message_id = msg.id();
         if let Err(e) = bot
             .edit_message_text(chat_id, message_id, text)
-            .parse_mode(ParseMode::MarkdownV2)
+            .parse_mode(ParseMode::Html)
             .reply_markup(keyboard)
             .await
         {
@@ -156,7 +162,7 @@ pub async fn show_recent_fresh(
     match render_recent(storage, user_id, 0).await {
         Ok((text, keyboard)) => {
             bot.send_message(chat_id, text)
-                .parse_mode(ParseMode::MarkdownV2)
+                .parse_mode(ParseMode::Html)
                 .reply_markup(keyboard)
                 .await?;
         }
