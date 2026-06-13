@@ -64,9 +64,12 @@ pub async fn call_method(method: &str, body: Value) -> Result<Value> {
     Ok(value)
 }
 
-/// Send a rich message to `chat_id`. `rich_message` is the candidate
-/// `InputRichMessage` object (schema-as-discovered). Returns the raw server
-/// response envelope.
+/// Send a rich message to `chat_id`. `rich_message` is the `InputRichMessage`
+/// object — for sending, that is `{"markdown": "<src>"}` or `{"html": "<src>"}`
+/// (schema discovered empirically against the live Bot API 10.1 server: the
+/// server's `get_input_rich_message` reads a `markdown` or `html` source string
+/// and tdlib renders the rich blocks; the `RichBlock`/`RichText` classes are the
+/// *receiving* shape, not the input). Returns the raw server response envelope.
 pub async fn send_rich_message(chat_id: i64, rich_message: Value) -> Result<Value> {
     let body = json!({
         "chat_id": chat_id,
@@ -75,40 +78,34 @@ pub async fn send_rich_message(chat_id: i64, rich_message: Value) -> Result<Valu
     call_method("sendRichMessage", body).await
 }
 
-/// A best-guess minimal `InputRichMessage`: one paragraph mixing plain + bold
-/// inline runs. This is the smallest payload that exercises both a block and an
-/// inline run, so the server's response pins down the most field names per probe.
-///
-/// If the server rejects it, the `description` (returned by [`send_rich_message`])
-/// tells us which field/`type` value is wrong, and we refine from there.
+/// A showcase `InputRichMessage` (Markdown source) demonstrating the rich
+/// formatting: heading, emphasis, list, blockquote, table, code, link.
 pub fn demo_payload() -> Value {
-    json!({
-        "blocks": [
-            {
-                "type": "paragraph",
-                "text": [
-                    { "type": "plain", "text": "Doradura rich-text probe — " },
-                    { "type": "bold",  "text": "it works" },
-                    { "type": "plain", "text": "." }
-                ]
-            }
-        ]
-    })
+    json!({ "markdown": DEMO_MARKDOWN })
 }
+
+/// Markdown showcase used by `/richtest`.
+const DEMO_MARKDOWN: &str = "# 🎵 Doradura — Rich text\n\
+Обычный текст: **bold**, _italic_, ~~strike~~, `code`.\n\n\
+> Цитата одной строкой.\n\n\
+- пункт раз\n- пункт два\n\n\
+| Формат | Размер |\n|---|---|\n| MP3 | 8 MB |\n| MP4 | 24 MB |\n\n\
+```\nblock code\n```\n\
+[ссылка](https://t.me)";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn demo_payload_has_paragraph_block_with_inline_runs() {
+    fn demo_payload_is_markdown_source() {
         let p = demo_payload();
-        let blocks = p.get("blocks").and_then(Value::as_array).expect("blocks array");
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0]["type"], "paragraph");
-        let runs = blocks[0]["text"].as_array().expect("inline runs");
-        assert_eq!(runs.len(), 3);
-        assert_eq!(runs[1]["type"], "bold");
+        // For sending, InputRichMessage is `{"markdown": <src>}` (or html).
+        let md = p.get("markdown").and_then(Value::as_str).expect("markdown source");
+        assert!(md.contains("# 🎵 Doradura"));
+        assert!(md.contains("**bold**"));
+        assert!(md.contains("| Формат | Размер |"));
+        assert!(p.get("blocks").is_none());
     }
 
     #[test]
