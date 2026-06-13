@@ -160,7 +160,11 @@ fn push_concurrent_fragments_arg<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
 /// `common_args_tests` submodule pins the exact slice.
 fn push_js_runtimes_tail<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
     args.push("--js-runtimes");
-    args.push("deno");
+    // node, not deno: Alpine's deno is pinned at 2.0.6 (edge/testing serves no
+    // newer), which yt-dlp 2026.06+ reports as "unsupported" for JS-challenge
+    // (nsig) solving → "No video formats found". node 22 (in the image) solves
+    // it. `deno,node` does NOT fall back — yt-dlp picks deno first and fails.
+    args.push("node");
     args.push("--no-check-certificate");
     push_concurrent_fragments_arg(args, cf_str);
 }
@@ -1293,7 +1297,7 @@ mod common_args_tests {
     fn js_runtimes_tail_with_cf_enabled() {
         let mut args: Vec<&str> = Vec::new();
         push_js_runtimes_tail(&mut args, "4");
-        assert_eq!(args, vec!["--js-runtimes", "deno", "--no-check-certificate", "-N", "4"]);
+        assert_eq!(args, vec!["--js-runtimes", "node", "--no-check-certificate", "-N", "4"]);
     }
 
     #[test]
@@ -1301,7 +1305,7 @@ mod common_args_tests {
         let mut args: Vec<&str> = Vec::new();
         push_js_runtimes_tail(&mut args, "");
         // Empty cf_str → no -N pair
-        assert_eq!(args, vec!["--js-runtimes", "deno", "--no-check-certificate"]);
+        assert_eq!(args, vec!["--js-runtimes", "node", "--no-check-certificate"]);
     }
 
     #[test]

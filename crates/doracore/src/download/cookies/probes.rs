@@ -81,7 +81,7 @@ pub async fn validate_cookies() -> anyhow::Result<()> {
             .arg("--extractor-args")
             .arg("youtube:player_client=android_vr,web_safari;formats=missing_pot")
             .arg("--js-runtimes")
-            .arg("deno")
+            .arg("node")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
@@ -212,7 +212,7 @@ pub async fn validate_age_gated_cookies() -> anyhow::Result<()> {
             .arg("--extractor-args")
             .arg("youtube:player_client=android_vr,web_safari;formats=missing_pot")
             .arg("--js-runtimes")
-            .arg("deno")
+            .arg("node")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
@@ -331,7 +331,7 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
             .arg("--extractor-args")
             .arg("youtube:player_client=android_vr,web_safari;formats=missing_pot")
             .arg("--js-runtimes")
-            .arg("deno")
+            .arg("node")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
