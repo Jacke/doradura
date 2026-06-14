@@ -220,6 +220,24 @@ fn ensure_tables(conn: &Connection) {
     );
     let _ =
         conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_silent_digest_user_shown ON silent_digest(user_id, shown)");
+
+    // V50: lyrics_overrides — global (canonical) source→lyrics correction
+    // snapshots. Mirrored in migrations/V50__lyrics_overrides.sql. Created here
+    // too because refinery rolls back the whole batch on a "duplicate column"
+    // error from older ALTERs, so the .sql migration never lands in prod.
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS lyrics_overrides (
+            source_key   TEXT PRIMARY KEY,
+            provider     TEXT NOT NULL,
+            source_url   TEXT NOT NULL,
+            artist       TEXT,
+            title        TEXT,
+            lyrics_text  TEXT NOT NULL,
+            corrected_by INTEGER,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        )",
+    );
 }
 
 /// Run migrations for tests without the outer transaction wrapper
