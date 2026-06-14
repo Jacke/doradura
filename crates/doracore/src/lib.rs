@@ -22,6 +22,7 @@ pub mod explore;
 pub mod extension;
 pub mod i18n;
 pub mod lyrics;
+pub mod playlist;
 pub mod storage;
 pub mod timestamps;
 
