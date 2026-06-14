@@ -642,6 +642,39 @@ async fn try_intercept_playlist_integrations_import(
     Ok(true)
 }
 
+/// Resolve a track URL from a platform yt-dlp can't download (Spotify, Apple
+/// Music, Deezer) to its **YouTube Music** equivalent via Odesli, so the normal
+/// pipeline can fetch it. Returns the resolved URL string, or `None` to leave
+/// the original URL untouched (not an alias platform, or Odesli had no YouTube
+/// match). Spotify *playlist*/*album* URLs are handled separately as imports —
+/// this only fires for single tracks.
+async fn resolve_streaming_alias(url: &Url, db_pool: Option<&Arc<DbPool>>) -> Option<String> {
+    let s = url.as_str();
+    let is_alias = s.contains("open.spotify.com/track/")
+        || s.contains("spotify:track:")
+        || s.contains("music.apple.com")
+        || s.contains("deezer.com/track");
+    if !is_alias {
+        return None;
+    }
+    let track = doracore::core::odesli::fetch_track(s).await?;
+    // 1) Direct YouTube link from Odesli, when it has one.
+    if let Some(yt) = track.youtube {
+        return Some(yt);
+    }
+    // 2) Fallback: search YouTube by the resolved title + artist (many tracks
+    //    have no Odesli YouTube entry but are findable by name).
+    let query = match (track.artist.as_deref(), track.title.as_deref()) {
+        (Some(a), Some(t)) if !t.trim().is_empty() => format!("{} {}", a.trim(), t.trim()),
+        (_, Some(t)) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => return None,
+    };
+    let results = crate::download::search::search(crate::download::search::SearchSource::YouTube, &query, 1, db_pool)
+        .await
+        .ok()?;
+    results.into_iter().next().map(|r| r.url)
+}
+
 /// Handle incoming message and process download requests
 ///
 /// Parses URLs from messages, validates them, checks rate limits, and adds tasks to the download queue.
@@ -871,6 +904,15 @@ pub async fn handle_message(
                             }
                         }
                         url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
+                    }
+
+                    // Spotify/Apple/Deezer tracks: yt-dlp can't fetch them →
+                    // resolve to the YouTube Music equivalent via Odesli first.
+                    if let Some(resolved) = resolve_streaming_alias(&url, Some(&db_pool)).await {
+                        log::info!("Resolved streaming track {} -> {}", url, resolved);
+                        if let Ok(u) = Url::parse(&resolved) {
+                            url = u;
+                        }
                     }
 
                     // Resolve channel/artist URLs to latest track
@@ -1104,6 +1146,16 @@ pub async fn handle_message(
                         }
                     }
                     url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
+                }
+
+                // Spotify/Apple/Deezer tracks: yt-dlp can't fetch them → resolve
+                // to the YouTube Music equivalent via Odesli before anything else
+                // (so preview + download both run on the YouTube URL).
+                if let Some(resolved) = resolve_streaming_alias(&url, Some(&db_pool)).await {
+                    log::info!("Resolved streaming track {} -> {}", url, resolved);
+                    if let Ok(u) = Url::parse(&resolved) {
+                        url = u;
+                    }
                 }
 
                 let _ = shared_storage
