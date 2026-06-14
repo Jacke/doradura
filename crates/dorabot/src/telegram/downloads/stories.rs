@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, InputFile};
+use teloxide::types::{InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto};
 use tokio::process::Command;
 
 use crate::core::escape_markdown;
@@ -300,6 +300,27 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
             let settings = StorySettings::parse(parts[4]);
             start_render(ctx, download_id, settings).await
         }
+        // Wizard: send a grid of cropped sample frames for every aspect ratio.
+        "wiz" => {
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let download_id = parts[3].parse::<i64>().unwrap_or(0);
+            start_wizard(ctx, download_id).await
+        }
+        // Wizard pick: user chose an AR from the preview → open the card with it.
+        "wpick" => {
+            if parts.len() < 5 {
+                return Ok(());
+            }
+            let download_id = parts[3].parse::<i64>().unwrap_or(0);
+            let aspect = parts[4]
+                .chars()
+                .next()
+                .and_then(AspectRatio::from_token)
+                .unwrap_or(AspectRatio::R9x16);
+            render_config_card(ctx, download_id, StorySettings::default().with_aspect(aspect), true).await
+        }
         // Entry: numeric download id → open card with defaults.
         id_str => {
             let download_id = id_str.parse::<i64>().unwrap_or(0);
@@ -380,6 +401,11 @@ fn build_config_keyboard(lang: &unic_langid::LanguageIdentifier, id: i64, s: Sto
                 )
             })
             .collect(),
+        // Visual AR preview wizard: sends a grid of cropped sample frames.
+        vec![crate::telegram::cb(
+            i18n::t(lang, "stories-preview-all"),
+            format!("downloads:stories:wiz:{}", id),
+        )],
         // Reframe mode.
         vec![
             crate::telegram::cb(
@@ -782,6 +808,180 @@ fn reframe_filter(reframe: Reframe, w: u32, h: u32) -> String {
         // Zoom to fill the whole frame, cropping the overflowing edges (center).
         Reframe::Crop => format!("[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[v]"),
     }
+}
+
+/// Wall-clock cap for the cheap wizard ffmpeg ops (1 frame extract + crops).
+const WIZARD_FFMPEG_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Validate the download, then kick the preview wizard off detached.
+async fn start_wizard(ctx: &CallbackCtx, download_id: i64) -> ResponseResult<()> {
+    let Some(download) = ctx
+        .shared_storage
+        .get_download_history_entry(ctx.chat_id.0, download_id)
+        .await
+        .map_err(to_req_err)?
+    else {
+        return Ok(());
+    };
+    let lang = i18n::user_lang_from_storage(&ctx.shared_storage, ctx.chat_id.0).await;
+    if download.format != "mp4" {
+        ctx.bot
+            .send_md(ctx.chat_id, i18n::t(&lang, "stories-only-mp4"))
+            .await
+            .ok();
+        return Ok(());
+    }
+    let Some(file_id) = download.file_id.clone() else {
+        ctx.bot
+            .send_md(ctx.chat_id, i18n::t(&lang, "stories-no-file-id"))
+            .await
+            .ok();
+        return Ok(());
+    };
+
+    let bot = ctx.bot.clone();
+    let shared_storage = ctx.shared_storage.clone();
+    let chat_id = ctx.chat_id;
+    tokio::spawn(async move {
+        if let Err(e) = run_wizard(bot, shared_storage, chat_id, download_id, file_id).await {
+            log::error!("stories wizard failed for download {}: {}", download_id, e);
+        }
+    });
+    Ok(())
+}
+
+/// Run a quiet ffmpeg op (no progress). Returns `true` on success.
+async fn run_ffmpeg_quiet(args: &[&std::ffi::OsStr]) -> bool {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-hide_banner").arg("-loglevel").arg("error").arg("-y");
+    cmd.args(args);
+    match tokio::time::timeout(WIZARD_FFMPEG_TIMEOUT, cmd.status()).await {
+        Ok(Ok(st)) => st.success(),
+        _ => false,
+    }
+}
+
+/// Preview wizard: download the source, grab a mid-clip frame, center-crop it to
+/// every aspect ratio, and send the crops as one album (a visual grid) plus a
+/// row of "pick this AR" buttons. Image-only ffmpeg (1 frame + N crops) → cheap
+/// and bounded, no video encode.
+async fn run_wizard(
+    bot: Bot,
+    shared_storage: Arc<SharedStorage>,
+    chat_id: ChatId,
+    download_id: i64,
+    file_id: String,
+) -> ResponseResult<()> {
+    use std::ffi::OsStr;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let status = bot
+        .send_message(chat_id, i18n::t(&lang, "stories-preview-preparing"))
+        .await?;
+
+    let (fb_mid, fb_chat) = shared_storage
+        .get_download_message_info(download_id)
+        .await
+        .ok()
+        .flatten()
+        .unzip();
+
+    let guard = match crate::core::utils::TempDirGuard::new("doradura_stories_wiz").await {
+        Ok(g) => g,
+        Err(e) => {
+            bot.delete_message(chat_id, status.id).await.ok();
+            return Err(to_req_err(e));
+        }
+    };
+    let dir = guard.path().to_path_buf();
+    let src = dir.join("source.mp4");
+
+    if let Err(e) =
+        crate::telegram::download_file_with_fallback(&bot, &file_id, fb_mid, fb_chat, Some(src.clone())).await
+    {
+        log::error!("stories wizard: source download failed: {}", e);
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, i18n::t(&lang, "stories-download-failed"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    // Grab one frame at the clip midpoint.
+    let dur = doracore::download::metadata::probe_duration_seconds(&src.to_string_lossy())
+        .await
+        .unwrap_or(0);
+    let mid = (dur / 2).to_string();
+    let frame = dir.join("frame.jpg");
+    let ok = run_ffmpeg_quiet(&[
+        OsStr::new("-ss"),
+        OsStr::new(&mid),
+        OsStr::new("-i"),
+        src.as_os_str(),
+        OsStr::new("-frames:v"),
+        OsStr::new("1"),
+        OsStr::new("-q:v"),
+        OsStr::new("3"),
+        frame.as_os_str(),
+    ])
+    .await;
+    if !ok || !frame.exists() {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, i18n::t(&lang, "stories-preview-failed"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    // Center-crop the frame to each AR (Original = the untouched frame).
+    let mut media: Vec<InputMedia> = Vec::new();
+    for ar in AspectRatio::ALL {
+        let path = match ar.dims() {
+            Some((w, h)) => {
+                let out = dir.join(format!("ar_{}.jpg", ar.token()));
+                let vf = format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}");
+                let cropped = run_ffmpeg_quiet(&[
+                    OsStr::new("-i"),
+                    frame.as_os_str(),
+                    OsStr::new("-vf"),
+                    OsStr::new(&vf),
+                    out.as_os_str(),
+                ])
+                .await;
+                if cropped && out.exists() { out } else { continue }
+            }
+            None => frame.clone(),
+        };
+        media.push(InputMedia::Photo(
+            InputMediaPhoto::new(InputFile::file(path)).caption(ar.label()),
+        ));
+    }
+
+    bot.delete_message(chat_id, status.id).await.ok();
+    if media.is_empty() {
+        bot.send_message(chat_id, i18n::t(&lang, "stories-preview-failed"))
+            .await
+            .ok();
+        return Ok(());
+    }
+    bot.send_media_group(chat_id, media).await.ok();
+
+    // "Pick an AR" buttons → reopen the config card pre-set to that ratio.
+    let buttons: Vec<_> = AspectRatio::ALL
+        .iter()
+        .map(|&ar| {
+            crate::telegram::cb(
+                ar.label(),
+                format!("downloads:stories:wpick:{}:{}", download_id, ar.token()),
+            )
+        })
+        .collect();
+    let kb = InlineKeyboardMarkup::new(vec![buttons]);
+    bot.send_message(chat_id, i18n::t(&lang, "stories-pick-ar"))
+        .reply_markup(kb)
+        .await
+        .ok();
+    // `guard` drops here, removing the temp dir.
+    Ok(())
 }
 
 #[cfg(test)]

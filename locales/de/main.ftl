@@ -329,6 +329,10 @@ stories-quality-std = Standard
 stories-quality-max = Maximum
 stories-delivery-video = 📹 Video
 stories-delivery-file = 📄 Datei
+stories-preview-all = 👁 Alle Formate ansehen
+stories-preview-preparing = 👁 Erstelle Format-Vorschauen…
+stories-preview-failed = ❌ Vorschauen fehlgeschlagen.
+stories-pick-ar = Wähle ein Seitenverhältnis für deine Stories:
 stories-create = ▶️ Stories erstellen
 stories-cancel = ❌ Abbrechen
 

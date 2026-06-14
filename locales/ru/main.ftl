@@ -539,6 +539,10 @@ stories-quality-std = Стандарт
 stories-quality-max = Максимум
 stories-delivery-video = 📹 Видео
 stories-delivery-file = 📄 Файл
+stories-preview-all = 👁 Превью всех форматов
+stories-preview-preparing = 👁 Готовлю превью соотношений…
+stories-preview-failed = ❌ Не удалось собрать превью.
+stories-pick-ar = Выбери соотношение сторон для Stories:
 stories-create = ▶️ Создать стори
 stories-cancel = ❌ Отмена
 
