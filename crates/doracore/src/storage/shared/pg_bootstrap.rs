@@ -658,4 +658,17 @@ CREATE TABLE IF NOT EXISTS silent_digest (
     shown        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_silent_digest_user_shown ON silent_digest(user_id, shown);
+
+-- V50: lyrics_overrides — canonical (global) source→lyrics correction snapshots.
+CREATE TABLE IF NOT EXISTS lyrics_overrides (
+    source_key   TEXT PRIMARY KEY,
+    provider     TEXT NOT NULL,
+    source_url   TEXT NOT NULL,
+    artist       TEXT,
+    title        TEXT,
+    lyrics_text  TEXT NOT NULL,
+    corrected_by BIGINT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
 "#;

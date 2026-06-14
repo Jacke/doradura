@@ -7,6 +7,7 @@
 //! structure (especially for rap/hip-hop). Otherwise falls back to LRCLIB.
 
 pub mod highlights;
+pub mod providers;
 pub mod title_parser;
 
 use lazy_regex::{Lazy, Regex, lazy_regex};

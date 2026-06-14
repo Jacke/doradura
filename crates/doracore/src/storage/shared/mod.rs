@@ -16,6 +16,7 @@ mod content_subs;
 pub mod download_history;
 mod errors;
 mod helpers;
+mod lyrics_overrides;
 mod playlists;
 mod popular_files;
 mod search;
