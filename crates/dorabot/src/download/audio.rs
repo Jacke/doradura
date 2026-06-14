@@ -130,7 +130,14 @@ pub async fn download_and_send_audio(
 
             // Audio-specific: add effects button (skipped in silent mode — no chatter)
             if !silent {
-                add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
+                add_audio_effects_button(
+                    &bot_clone,
+                    chat_id,
+                    &pipeline_result,
+                    shared_storage_clone.as_ref(),
+                    url.as_str(),
+                )
+                .await;
             }
 
             // Lyrics: fetch and show section picker — user picks → caption is edited on audio msg
@@ -283,6 +290,7 @@ async fn add_audio_effects_button(
     chat_id: ChatId,
     result: &PipelineResult,
     shared_storage: Option<&Arc<SharedStorage>>,
+    source_url: &str,
 ) {
     let Some(storage) = shared_storage else {
         return;
@@ -298,7 +306,7 @@ async fn add_audio_effects_button(
     match fs_err::tokio::copy(&result.download_path, &session_file_path).await {
         Ok(bytes) => {
             log::info!("Audio effects: copied {} bytes to {}", bytes, session_file_path);
-            let session = AudioEffectSession::new(
+            let mut session = AudioEffectSession::new(
                 session_id.clone(),
                 chat_id.0,
                 session_file_path,
@@ -306,6 +314,9 @@ async fn add_audio_effects_button(
                 result.display_title.as_ref().to_string(),
                 result.duration,
             );
+            // Remember the source URL so the lyrics flow can key a correction
+            // override to this exact video.
+            session.source_url = Some(source_url.to_string());
 
             match storage.create_audio_effect_session(&session).await {
                 Ok(_) => {

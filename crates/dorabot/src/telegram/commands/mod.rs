@@ -577,6 +577,41 @@ async fn try_intercept_vault_setup(
     Ok(true)
 }
 
+/// If the user armed the "fix lyrics" prompt, treat the text as a corrected
+/// lyrics URL. Returns `true` when handled.
+async fn try_intercept_lyrics_fix(
+    bot: &Bot,
+    msg: &Message,
+    shared_storage: &Arc<SharedStorage>,
+    text: &str,
+) -> ResponseResult<bool> {
+    if crate::telegram::menu::lyrics::pending_lyrics_fix(shared_storage, msg.chat.id.0)
+        .await
+        .is_none()
+    {
+        return Ok(false);
+    }
+    let bot_clone = bot.clone();
+    let storage_clone = shared_storage.clone();
+    let text_owned = text.to_string();
+    let chat_id = msg.chat.id;
+    let user_id = msg.chat.id.0;
+    tokio::spawn(async move {
+        if let Err(e) = crate::telegram::menu::lyrics::handle_lyrics_fix_input(
+            &bot_clone,
+            chat_id,
+            user_id,
+            &text_owned,
+            &storage_clone,
+        )
+        .await
+        {
+            log::error!("lyrics fix input failed: {}", e);
+        }
+    });
+    Ok(true)
+}
+
 /// If the user is in playlist-integrations import-URL mode, spawn the
 /// import-URL handler. Returns `true` when handled.
 async fn try_intercept_playlist_integrations_import(
@@ -706,6 +741,11 @@ pub async fn handle_message(
 
         // Feedback capture
         if try_intercept_feedback(&bot, &msg, &db_pool, &shared_storage, &lang, text).await? {
+            return Ok(None);
+        }
+
+        // Lyrics correction URL
+        if try_intercept_lyrics_fix(&bot, &msg, &shared_storage, text).await? {
             return Ok(None);
         }
 

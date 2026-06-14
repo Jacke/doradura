@@ -18,8 +18,8 @@ impl SharedStorage {
                     "INSERT INTO audio_effect_sessions (
                         id, user_id, original_file_path, current_file_path, telegram_file_id,
                         original_message_id, title, duration, pitch_semitones, tempo_factor,
-                        bass_gain_db, morph_profile, version, processing, created_at, expires_at
-                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+                        bass_gain_db, morph_profile, version, processing, created_at, expires_at, source_url
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
                 )
                 .bind(&session.id)
                 .bind(session.user_id)
@@ -37,6 +37,7 @@ impl SharedStorage {
                 .bind(if session.processing { 1_i32 } else { 0_i32 })
                 .bind(session.created_at)
                 .bind(session.expires_at)
+                .bind(&session.source_url)
                 .execute(pg_pool)
                 .await
                 .context("postgres create_audio_effect_session")?;
@@ -789,6 +790,7 @@ fn map_pg_audio_effect_session(row: sqlx::postgres::PgRow) -> Result<AudioEffect
         processing: row.get::<i32, _>("processing") != 0,
         created_at: row.get("created_at"),
         expires_at: row.get("expires_at"),
+        source_url: row.try_get("source_url").unwrap_or(None),
     })
 }
 

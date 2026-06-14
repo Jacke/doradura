@@ -90,6 +90,10 @@ pub struct AudioEffectSession {
     pub processing: bool,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// Source media URL (YouTube/etc.), when known. Lets the lyrics flow key a
+    /// `lyrics_overrides` correction by the source video. `None` for sessions
+    /// created from an already-local file.
+    pub source_url: Option<String>,
 }
 
 impl AudioEffectSession {
@@ -122,6 +126,7 @@ impl AudioEffectSession {
             processing: false,
             created_at: now,
             expires_at,
+            source_url: None,
         }
     }
 

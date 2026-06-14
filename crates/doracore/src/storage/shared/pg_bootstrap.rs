@@ -345,8 +345,10 @@ CREATE TABLE IF NOT EXISTS audio_effect_sessions (
     version INTEGER NOT NULL DEFAULT 0,
     processing INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL
+    expires_at TIMESTAMPTZ NOT NULL,
+    source_url TEXT
 );
+ALTER TABLE audio_effect_sessions ADD COLUMN IF NOT EXISTS source_url TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_audio_effect_sessions_user_message
     ON audio_effect_sessions(user_id, original_message_id);

@@ -19,6 +19,7 @@ pub fn is_premium_or_vip(conn: &DbConnection, user_id: i64) -> Result<bool> {
 
 static BASS_COLUMN_INIT: Once = Once::new();
 static MORPH_COLUMN_INIT: Once = Once::new();
+static SOURCE_URL_COLUMN_INIT: Once = Once::new();
 
 fn ensure_audio_effects_bass_column(conn: &DbConnection) {
     BASS_COLUMN_INIT.call_once(|| {
@@ -38,9 +39,16 @@ fn ensure_audio_effects_morph_column(conn: &DbConnection) {
     });
 }
 
+fn ensure_audio_effects_source_url_column(conn: &DbConnection) {
+    SOURCE_URL_COLUMN_INIT.call_once(|| {
+        let _ = conn.execute("ALTER TABLE audio_effect_sessions ADD COLUMN source_url TEXT", []);
+    });
+}
+
 fn ensure_audio_effects_columns(conn: &DbConnection) {
     ensure_audio_effects_bass_column(conn);
     ensure_audio_effects_morph_column(conn);
+    ensure_audio_effects_source_url_column(conn);
 }
 
 /// Parse an RFC3339 datetime string, falling back to `fallback` on error.
@@ -79,13 +87,14 @@ fn audio_effect_session_from_row(
             &row.get::<_, String>(15)?,
             chrono::Utc::now() + chrono::Duration::hours(24),
         ),
+        source_url: row.get(16)?,
     })
 }
 
 /// The SELECT column list for audio_effect_sessions (shared across queries).
 const AUDIO_SESSION_COLS: &str = "id, user_id, original_file_path, current_file_path, telegram_file_id, \
      original_message_id, title, duration, pitch_semitones, tempo_factor, bass_gain_db, morph_profile, \
-     version, processing, created_at, expires_at";
+     version, processing, created_at, expires_at, source_url";
 
 /// Create a new audio effect session
 pub fn create_audio_effect_session(
@@ -98,8 +107,8 @@ pub fn create_audio_effect_session(
         "INSERT INTO audio_effect_sessions (
             id, user_id, original_file_path, current_file_path, telegram_file_id,
             original_message_id, title, duration, pitch_semitones, tempo_factor, bass_gain_db, morph_profile,
-            version, processing, created_at, expires_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            version, processing, created_at, expires_at, source_url
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         rusqlite::params![
             session.id,
             session.user_id,
@@ -117,6 +126,7 @@ pub fn create_audio_effect_session(
             session.processing as i32,
             session.created_at.to_rfc3339(),
             session.expires_at.to_rfc3339(),
+            session.source_url,
         ],
     )?;
     Ok(())
