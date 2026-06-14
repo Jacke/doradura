@@ -11,7 +11,8 @@
 //! No I/O, no Telegram API calls — fully unit-testable. `esc` (HTML escaper) and
 //! `bucket_header` (localized date label) are injected to keep this pure.
 
-use doracore::explore::timeline::{BucketLabel, MediaKind, TimelineEntry, TimelinePage};
+use doracore::explore::timeline::{BucketLabel, MediaKind, TimelineEntry, TimelinePage, media_kind_from_format};
+use doracore::storage::db::PopularFileEntry;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
 /// Type badge for a download.
@@ -186,6 +187,80 @@ pub fn render_timeline_keyboard(
     InlineKeyboardMarkup::new(rows)
 }
 
+/// Tech badge for a popular file: `FORMAT · size · duration` (no per-user
+/// quality column in `popular_files`).
+fn popular_badge(e: &PopularFileEntry) -> String {
+    let mut parts: Vec<String> = vec![format_label(&e.format)];
+    if let Some(sz) = e.file_size.and_then(|v| u64::try_from(v).ok()) {
+        parts.push(human_size(sz));
+    }
+    if let Some(d) = e.duration.and_then(|v| u64::try_from(v).ok()).filter(|d| *d > 0) {
+        parts.push(fmt_duration(d));
+    }
+    parts.join(" · ")
+}
+
+/// Render the **Trending** tab body (HTML): rank + 🔥 hits + rich card per entry.
+/// `hits_label(n)` localizes the "N downloads" suffix.
+pub fn render_trending_text(
+    entries: &[PopularFileEntry],
+    title: &str,
+    empty_msg: &str,
+    hits_label: &dyn Fn(i64) -> String,
+    esc: &dyn Fn(&str) -> String,
+) -> String {
+    if entries.is_empty() {
+        return format!("{title}\n\n{}", esc(empty_msg));
+    }
+    let mut out = String::from(title);
+    out.push('\n');
+    for (i, e) in entries.iter().enumerate() {
+        let num = number_emoji(i as u32 + 1);
+        let media = media_kind_from_format(&e.format);
+        let title_txt = e.title.as_deref().unwrap_or("—");
+        let artist = e.author.as_deref().unwrap_or("");
+        let head = if artist.trim().is_empty() {
+            format!("{} <b>{}</b>", media_emoji(media), esc(title_txt))
+        } else {
+            format!("{} <b>{}</b> — {}", media_emoji(media), esc(artist), esc(title_txt))
+        };
+        let (pemoji, pname) = platform_badge(&e.url);
+        out.push_str(&format!(
+            "\n{num}  {head}\n     └ <code>{}</code> · {pemoji} {pname} · 🔥 {}\n",
+            esc(&popular_badge(e)),
+            esc(&hits_label(e.hits)),
+        ));
+    }
+    out
+}
+
+/// Trending keyboard: one number-emoji re-send button per entry (`exp:trs:{rank}`,
+/// 5/row) + the tab bar. No pager (Trending is a single top-N page).
+pub fn render_trending_keyboard(
+    entries: &[PopularFileEntry],
+    tab_recent: &str,
+    tab_trending: &str,
+    tab_subs: &str,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    let mut num_row: Vec<InlineKeyboardButton> = Vec::new();
+    for (i, _e) in entries.iter().enumerate() {
+        num_row.push(crate::telegram::cb(number_emoji(i as u32 + 1), format!("exp:trs:{i}")));
+        if num_row.len() == 5 {
+            rows.push(std::mem::take(&mut num_row));
+        }
+    }
+    if !num_row.is_empty() {
+        rows.push(num_row);
+    }
+    rows.push(vec![
+        crate::telegram::cb(tab_recent, "exp:tab:recent".to_string()),
+        crate::telegram::cb(tab_trending, "exp:tab:trending".to_string()),
+        crate::telegram::cb(tab_subs, "exp:tab:subs".to_string()),
+    ]);
+    InlineKeyboardMarkup::new(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +308,54 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 6, 11, 12, 0, 0).unwrap();
         let page = paginate(vec![], 0, now);
         let text = render_timeline_text(&page, "TITLE", "EMPTY", &|_| "H".to_string(), &|s| s.to_string());
+        assert!(text.contains("EMPTY"));
+    }
+
+    #[test]
+    fn renders_trending_cards_with_hits() {
+        let entries = vec![
+            PopularFileEntry {
+                url: "https://youtu.be/x".into(),
+                format: "mp4".into(),
+                file_id: "F1".into(),
+                title: Some("Song A".into()),
+                author: Some("Art A".into()),
+                duration: Some(204),
+                file_size: Some(8_400_000),
+                hits: 42,
+            },
+            PopularFileEntry {
+                url: "https://soundcloud.com/y".into(),
+                format: "mp3".into(),
+                file_id: "F2".into(),
+                title: Some("Song B".into()),
+                author: None,
+                duration: None,
+                file_size: None,
+                hits: 7,
+            },
+        ];
+        let text = render_trending_text(&entries, "TREND", "EMPTY", &|n| format!("{n} dl"), &|s| {
+            s.replace('&', "&amp;")
+        });
+        assert!(text.contains("TREND"));
+        assert!(text.contains("1\u{fe0f}\u{20e3}"));
+        assert!(text.contains("<b>Art A</b>"));
+        assert!(text.contains("<code>MP4 · 8.0 MB · 3:24</code>"));
+        assert!(text.contains("▶️ YouTube"));
+        assert!(text.contains("🔥 42 dl"));
+        // entry 2: no author/size/duration → just format badge + soundcloud.
+        assert!(text.contains("☁️ SoundCloud"));
+        assert!(text.contains("<code>MP3</code>"));
+
+        let kb = render_trending_keyboard(&entries, "R", "T", "S");
+        // 2 number buttons + tab row.
+        assert_eq!(kb.inline_keyboard.last().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn trending_empty_shows_message() {
+        let text = render_trending_text(&[], "TREND", "EMPTY", &|n| format!("{n}"), &|s| s.to_string());
         assert!(text.contains("EMPTY"));
     }
 

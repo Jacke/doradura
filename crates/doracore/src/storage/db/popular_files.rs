@@ -113,6 +113,32 @@ pub fn lookup_popular_file_all_formats(conn: &DbConnection, url: &str) -> Result
     Ok(rows)
 }
 
+/// Top `limit` globally-most-downloaded files, by hit count (desc). Drives the
+/// Explore "Trending" tab. Each (url, format) is its own row.
+pub fn top_popular_files(conn: &DbConnection, limit: u32) -> Result<Vec<PopularFileEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT url, format, file_id, title, author, duration, file_size, hits
+         FROM popular_files
+         ORDER BY hits DESC, last_used DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![limit], |row| {
+            Ok(PopularFileEntry {
+                url: row.get(0)?,
+                format: row.get(1)?,
+                file_id: row.get(2)?,
+                title: row.get(3)?,
+                author: row.get(4)?,
+                duration: row.get(5)?,
+                file_size: row.get(6)?,
+                hits: row.get(7)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +282,26 @@ mod tests {
         let conn = get_connection(&pool).unwrap();
         let all = lookup_popular_file_all_formats(&conn, "https://nope.example/x").unwrap();
         assert!(all.is_empty());
+    }
+
+    #[test]
+    fn top_popular_files_orders_by_hits_desc() {
+        let pool = setup_pool();
+        let conn = get_connection(&pool).unwrap();
+        // hot: 3 hits, mid: 2, cold: 1.
+        for _ in 0..3 {
+            upsert_popular_file(&conn, "https://yt.be/hot", "mp3", "h", Some("Hot"), None, None, None).unwrap();
+        }
+        for _ in 0..2 {
+            upsert_popular_file(&conn, "https://yt.be/mid", "mp3", "m", Some("Mid"), None, None, None).unwrap();
+        }
+        upsert_popular_file(&conn, "https://yt.be/cold", "mp3", "c", Some("Cold"), None, None, None).unwrap();
+
+        let top = top_popular_files(&conn, 2).unwrap();
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].url, "https://yt.be/hot");
+        assert_eq!(top[0].hits, 3);
+        assert_eq!(top[1].url, "https://yt.be/mid");
+        assert_eq!(top[1].hits, 2);
     }
 }

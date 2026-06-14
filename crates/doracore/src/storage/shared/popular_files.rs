@@ -133,6 +133,41 @@ impl SharedStorage {
         }
     }
 
+    /// Top `limit` globally-most-downloaded files by hit count — Explore Trending.
+    pub async fn top_popular_files(&self, limit: u32) -> Result<Vec<PopularFileEntry>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite top_popular_files connection")?;
+                db::top_popular_files(&conn, limit).context("sqlite top_popular_files")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT url, format, file_id, title, author, duration, file_size, hits
+                     FROM popular_files
+                     ORDER BY hits DESC, last_used DESC
+                     LIMIT $1",
+                )
+                .bind(limit as i64)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres top_popular_files")?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| PopularFileEntry {
+                        url: row.get("url"),
+                        format: row.get("format"),
+                        file_id: row.get("file_id"),
+                        title: row.get("title"),
+                        author: row.get("author"),
+                        duration: row.get::<Option<i32>, _>("duration").map(|v| v as i64),
+                        file_size: row.get("file_size"),
+                        hits: row.get::<i32, _>("hits") as i64,
+                    })
+                    .collect())
+            }
+        }
+    }
+
     /// Look up the most recent `download_history` entry for a (telegram_id, url, format)
     /// triple — drives the Guest Bots Path A "user already had this file" branch.
     ///

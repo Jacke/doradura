@@ -15,7 +15,10 @@ use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use doracore::explore::timeline::{self, BucketLabel, MediaKind, TimelinePage};
 
-use render::{render_timeline_keyboard, render_timeline_text};
+use render::{render_timeline_keyboard, render_timeline_text, render_trending_keyboard, render_trending_text};
+
+/// How many top files the Trending tab shows.
+const TRENDING_LIMIT: u32 = 10;
 
 /// Dispatch `exp:*` callbacks: tab switch, pagination, resend-by-history-id.
 ///
@@ -37,7 +40,9 @@ pub async fn handle_explore_callback(
             let page = p.parse().unwrap_or(0);
             show_recent(&bot, &q, &storage, user_id, page).await
         }
+        ["exp", "tab", "trending"] => show_trending(&bot, &q, &storage, user_id).await,
         ["exp", "tab", _other] => {
+            // Subscriptions tab — not built yet (sub-project B).
             let lang = i18n::user_lang_from_storage(&storage, user_id).await;
             bot.answer_callback_query(q.id.clone())
                 .text(i18n::t(&lang, "explore_soon"))
@@ -47,6 +52,10 @@ pub async fn handle_explore_callback(
         ["exp", "rs", id] => {
             let hist_id = id.parse().unwrap_or(0);
             resend_entry(&bot, &q, &storage, user_id, hist_id).await
+        }
+        ["exp", "trs", rank] => {
+            let rank = rank.parse().unwrap_or(usize::MAX);
+            resend_trending(&bot, &q, &storage, user_id, rank).await
         }
         _ => {
             // `exp:noop` (the page-label button) and any unknown shape just
@@ -244,5 +253,82 @@ async fn fallback_resend(
             .text(i18n::t(lang, "explore_load_failed"))
             .await?;
     }
+    Ok(())
+}
+
+/// Trending tab: top globally-downloaded files as rich cards, edited in place.
+async fn show_trending(bot: &Bot, q: &CallbackQuery, storage: &Arc<SharedStorage>, user_id: i64) -> anyhow::Result<()> {
+    let lang = i18n::user_lang_from_storage(storage, user_id).await;
+    let entries = match storage.top_popular_files(TRENDING_LIMIT).await {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("explore: top_popular_files failed: {}", e);
+            bot.answer_callback_query(q.id.clone())
+                .text(i18n::t(&lang, "explore_load_failed"))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let html = teloxide::utils::html::escape;
+    let title = format!("<b>{}</b>", html(&i18n::t(&lang, "explore_tab_trending")));
+    let empty = i18n::t(&lang, "explore_trending_empty");
+    let hits_label = |n: i64| i18n::t_args(&lang, "explore_hits", &doracore::fluent_args!("count" => n));
+    let text = render_trending_text(&entries, &title, &empty, &hits_label, &|s| html(s));
+    let keyboard = render_trending_keyboard(
+        &entries,
+        &i18n::t(&lang, "explore_tab_recent"),
+        &i18n::t(&lang, "explore_tab_trending"),
+        &i18n::t(&lang, "explore_tab_subs"),
+    );
+
+    if let Some(msg) = q.message.as_ref()
+        && let Err(e) = bot
+            .edit_message_text(msg.chat().id, msg.id(), text)
+            .parse_mode(ParseMode::Html)
+            .reply_markup(keyboard)
+            .await
+    {
+        log::warn!("explore: trending edit failed: {}", e);
+    }
+    bot.answer_callback_query(q.id.clone()).await?;
+    Ok(())
+}
+
+/// Re-send a trending entry by its rank (re-fetch the top list, send file_id).
+async fn resend_trending(
+    bot: &Bot,
+    q: &CallbackQuery,
+    storage: &Arc<SharedStorage>,
+    user_id: i64,
+    rank: usize,
+) -> anyhow::Result<()> {
+    let lang = i18n::user_lang_from_storage(storage, user_id).await;
+    let chat_id = ChatId(user_id);
+    let entries = storage.top_popular_files(TRENDING_LIMIT).await.unwrap_or_default();
+    let Some(entry) = entries.get(rank) else {
+        bot.answer_callback_query(q.id.clone())
+            .text(i18n::t(&lang, "explore_load_failed"))
+            .await?;
+        return Ok(());
+    };
+
+    let media = timeline::media_kind_from_format(&entry.format);
+    let input = InputFile::file_id(FileId(entry.file_id.clone()));
+    let send_result = match media {
+        MediaKind::Audio => bot.send_audio(chat_id, input).await.map(|_| ()),
+        MediaKind::Video => bot.send_video(chat_id, input).await.map(|_| ()),
+        MediaKind::VideoNote => bot.send_video_note(chat_id, input).await.map(|_| ()),
+        MediaKind::Gif => bot.send_animation(chat_id, input).await.map(|_| ()),
+        MediaKind::Other => bot.send_document(chat_id, input).await.map(|_| ()),
+    };
+    let key = if send_result.is_ok() {
+        "explore_resent"
+    } else {
+        "explore_load_failed"
+    };
+    bot.answer_callback_query(q.id.clone())
+        .text(i18n::t(&lang, key))
+        .await?;
     Ok(())
 }
