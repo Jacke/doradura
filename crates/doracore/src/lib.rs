@@ -23,6 +23,7 @@ pub mod extension;
 pub mod i18n;
 pub mod lyrics;
 pub mod messaging;
+pub mod recommend;
 pub mod storage;
 pub mod timestamps;
 

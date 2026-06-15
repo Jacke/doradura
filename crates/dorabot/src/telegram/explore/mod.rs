@@ -14,11 +14,19 @@ use crate::i18n;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use doracore::explore::timeline::{self, BucketLabel, MediaKind, TimelinePage};
+use doracore::storage::db::DbPool;
 
-use render::{render_timeline_keyboard, render_timeline_text, render_trending_keyboard, render_trending_text};
+use render::{
+    render_recommendations_keyboard, render_recommendations_text, render_timeline_keyboard, render_timeline_text,
+    render_trending_keyboard, render_trending_text,
+};
 
 /// How many top files the Trending tab shows.
 const TRENDING_LIMIT: u32 = 10;
+/// How many recommendations the "For You" tab shows.
+const FORYOU_LIMIT: usize = 10;
+/// Prompt-session kind caching the current "For You" rec list (for `exp:rec:{i}`).
+const FORYOU_CACHE_KIND: &str = "foryou_recs";
 
 /// Dispatch `exp:*` callbacks: tab switch, pagination, resend-by-history-id.
 ///
@@ -30,6 +38,7 @@ pub async fn handle_explore_callback(
     q: CallbackQuery,
     data: &str,
     storage: Arc<SharedStorage>,
+    db_pool: Arc<DbPool>,
 ) -> anyhow::Result<()> {
     let user_id = i64::try_from(q.from.id.0).unwrap_or(0);
     let parts: Vec<&str> = data.split(':').collect();
@@ -41,6 +50,7 @@ pub async fn handle_explore_callback(
             show_recent(&bot, &q, &storage, user_id, page).await
         }
         ["exp", "tab", "trending"] => show_trending(&bot, &q, &storage, user_id).await,
+        ["exp", "tab", "foryou"] => show_for_you(&bot, &q, &storage, user_id).await,
         ["exp", "tab", _other] => {
             // Subscriptions tab — not built yet (sub-project B).
             let lang = i18n::user_lang_from_storage(&storage, user_id).await;
@@ -56,6 +66,10 @@ pub async fn handle_explore_callback(
         ["exp", "trs", rank] => {
             let rank = rank.parse().unwrap_or(usize::MAX);
             resend_trending(&bot, &q, &storage, user_id, rank).await
+        }
+        ["exp", "rec", idx] => {
+            let idx = idx.parse().unwrap_or(usize::MAX);
+            preview_recommendation(&bot, &q, &storage, &db_pool, user_id, idx).await
         }
         _ => {
             // `exp:noop` (the page-label button) and any unknown shape just
@@ -113,6 +127,7 @@ async fn render_recent(
         &page,
         &i18n::t(&lang, "explore_tab_recent"),
         &i18n::t(&lang, "explore_tab_trending"),
+        &i18n::t(&lang, "explore_tab_foryou"),
         &i18n::t(&lang, "explore_tab_subs"),
         &page_label,
     );
@@ -279,6 +294,7 @@ async fn show_trending(bot: &Bot, q: &CallbackQuery, storage: &Arc<SharedStorage
         &entries,
         &i18n::t(&lang, "explore_tab_recent"),
         &i18n::t(&lang, "explore_tab_trending"),
+        &i18n::t(&lang, "explore_tab_foryou"),
         &i18n::t(&lang, "explore_tab_subs"),
     );
 
@@ -330,5 +346,117 @@ async fn resend_trending(
     bot.answer_callback_query(q.id.clone())
         .text(i18n::t(&lang, key))
         .await?;
+    Ok(())
+}
+
+/// "✨ For You" tab: compute personalized recommendations (radio from recent
+/// downloads, blended with trending), cache them for `exp:rec:{idx}`, and render
+/// rich cards in place. The compute can take a few seconds, so we toast + show a
+/// loading line first.
+async fn show_for_you(bot: &Bot, q: &CallbackQuery, storage: &Arc<SharedStorage>, user_id: i64) -> anyhow::Result<()> {
+    let lang = i18n::user_lang_from_storage(storage, user_id).await;
+    bot.answer_callback_query(q.id.clone())
+        .text(i18n::t(&lang, "explore_foryou_loading"))
+        .await?;
+    if let Some(msg) = q.message.as_ref() {
+        let _ = bot
+            .edit_message_text(msg.chat().id, msg.id(), i18n::t(&lang, "explore_foryou_loading"))
+            .await;
+    }
+
+    let recs = crate::download::recommend::recommend_for_user(storage, user_id, FORYOU_LIMIT).await;
+
+    // Cache the list so a number tap (`exp:rec:{idx}`) can resolve the URL.
+    if let Ok(json) = serde_json::to_string(&recs) {
+        let _ = storage
+            .upsert_prompt_session(user_id, FORYOU_CACHE_KIND, &json, 3600)
+            .await;
+    }
+
+    let html = teloxide::utils::html::escape;
+    let title = format!("<b>{}</b>", html(&i18n::t(&lang, "explore_tab_foryou")));
+    let empty = i18n::t(&lang, "explore_foryou_empty");
+    let text = render_recommendations_text(&recs, &title, &empty, &|s| html(s));
+    let keyboard = render_recommendations_keyboard(
+        &recs,
+        &i18n::t(&lang, "explore_tab_recent"),
+        &i18n::t(&lang, "explore_tab_trending"),
+        &i18n::t(&lang, "explore_tab_foryou"),
+        &i18n::t(&lang, "explore_tab_subs"),
+    );
+
+    if let Some(msg) = q.message.as_ref()
+        && let Err(e) = bot
+            .edit_message_text(msg.chat().id, msg.id(), text)
+            .parse_mode(ParseMode::Html)
+            .reply_markup(keyboard)
+            .await
+    {
+        log::warn!("explore: for-you edit failed: {}", e);
+    }
+    Ok(())
+}
+
+/// Tapping a recommendation: resolve its URL from the cached list and open the
+/// normal **preview card** (respecting the "always preview before download" rule
+/// — never a one-tap download).
+async fn preview_recommendation(
+    bot: &Bot,
+    q: &CallbackQuery,
+    storage: &Arc<SharedStorage>,
+    db_pool: &Arc<DbPool>,
+    user_id: i64,
+    idx: usize,
+) -> anyhow::Result<()> {
+    let lang = i18n::user_lang_from_storage(storage, user_id).await;
+    bot.answer_callback_query(q.id.clone()).await?;
+
+    let cached = storage
+        .get_prompt_session(user_id, FORYOU_CACHE_KIND)
+        .await
+        .ok()
+        .flatten();
+    let recs: Vec<doracore::recommend::RawRec> = cached.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+    let Some(rec) = recs.get(idx) else {
+        bot.send_message(ChatId(user_id), i18n::t(&lang, "explore_load_failed"))
+            .await?;
+        return Ok(());
+    };
+    let Ok(url) = url::Url::parse(&rec.url) else {
+        bot.send_message(ChatId(user_id), i18n::t(&lang, "explore_load_failed"))
+            .await?;
+        return Ok(());
+    };
+
+    let format = storage
+        .get_user(user_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|u| u.download_format)
+        .unwrap_or_else(|| "mp4".to_string());
+
+    match crate::telegram::preview::get_preview_metadata(&url, Some(&format), None).await {
+        Ok(meta) => {
+            let _ = crate::telegram::preview::send_preview(
+                bot,
+                ChatId(user_id),
+                &url,
+                &meta,
+                &format,
+                None,
+                None,
+                Arc::clone(db_pool),
+                Arc::clone(storage),
+                None,
+            )
+            .await;
+        }
+        Err(e) => {
+            log::warn!("explore: rec preview failed for {}: {}", url, e);
+            bot.send_message(ChatId(user_id), i18n::t(&lang, "explore_load_failed"))
+                .await?;
+        }
+    }
     Ok(())
 }

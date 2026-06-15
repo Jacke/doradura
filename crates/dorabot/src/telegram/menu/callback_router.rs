@@ -547,7 +547,8 @@ pub async fn handle_menu_callback(
                             bot.clone(),
                             fq,
                             &data,
-                            Arc::clone(&shared_storage)
+                            Arc::clone(&shared_storage),
+                            Arc::clone(&db_pool)
                         )
                     );
                 }

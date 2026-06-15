@@ -29,6 +29,7 @@ pub mod playlist_import; // External playlist import (YouTube, Spotify)
 pub mod playlist_sync;
 pub mod progress; // Telegram progress messages
 pub mod queue; // Download queue management
+pub mod recommend; // "For You" recommendations via YouTube Mix/Radio
 pub mod search; // Music search engine (YouTube, SoundCloud)
 pub mod send; // Telegram send utilities
 pub mod source; // Source backends (bot-specific YtDlp/Instagram behaviour)

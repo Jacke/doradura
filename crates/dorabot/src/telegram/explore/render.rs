@@ -144,10 +144,21 @@ pub fn render_timeline_text(
 
 /// Build the inline keyboard: one number-emoji re-send button per entry (5/row),
 /// then the pager, then the tab bar.
+/// The shared Explore tab bar (📜 Recent · 🔥 Trending · ✨ For You · ⭐ Subs).
+fn tabs_row(tab_recent: &str, tab_trending: &str, tab_foryou: &str, tab_subs: &str) -> Vec<InlineKeyboardButton> {
+    vec![
+        crate::telegram::cb(tab_recent, "exp:tab:recent".to_string()),
+        crate::telegram::cb(tab_trending, "exp:tab:trending".to_string()),
+        crate::telegram::cb(tab_foryou, "exp:tab:foryou".to_string()),
+        crate::telegram::cb(tab_subs, "exp:tab:subs".to_string()),
+    ]
+}
+
 pub fn render_timeline_keyboard(
     page: &TimelinePage,
     tab_recent: &str,
     tab_trending: &str,
+    tab_foryou: &str,
     tab_subs: &str,
     page_label: &str,
 ) -> InlineKeyboardMarkup {
@@ -178,11 +189,7 @@ pub fn render_timeline_keyboard(
     }
     rows.push(pager);
 
-    rows.push(vec![
-        crate::telegram::cb(tab_recent, "exp:tab:recent".to_string()),
-        crate::telegram::cb(tab_trending, "exp:tab:trending".to_string()),
-        crate::telegram::cb(tab_subs, "exp:tab:subs".to_string()),
-    ]);
+    rows.push(tabs_row(tab_recent, tab_trending, tab_foryou, tab_subs));
 
     InlineKeyboardMarkup::new(rows)
 }
@@ -240,6 +247,7 @@ pub fn render_trending_keyboard(
     entries: &[PopularFileEntry],
     tab_recent: &str,
     tab_trending: &str,
+    tab_foryou: &str,
     tab_subs: &str,
 ) -> InlineKeyboardMarkup {
     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
@@ -253,11 +261,61 @@ pub fn render_trending_keyboard(
     if !num_row.is_empty() {
         rows.push(num_row);
     }
-    rows.push(vec![
-        crate::telegram::cb(tab_recent, "exp:tab:recent".to_string()),
-        crate::telegram::cb(tab_trending, "exp:tab:trending".to_string()),
-        crate::telegram::cb(tab_subs, "exp:tab:subs".to_string()),
-    ]);
+    rows.push(tabs_row(tab_recent, tab_trending, tab_foryou, tab_subs));
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Render the **✨ For You** tab body (HTML): rich card per recommendation.
+pub fn render_recommendations_text(
+    recs: &[doracore::recommend::RawRec],
+    title: &str,
+    empty_msg: &str,
+    esc: &dyn Fn(&str) -> String,
+) -> String {
+    if recs.is_empty() {
+        return format!("{title}\n\n{}", esc(empty_msg));
+    }
+    let mut out = String::from(title);
+    out.push('\n');
+    for (i, r) in recs.iter().enumerate() {
+        let num = number_emoji(i as u32 + 1);
+        let title_txt = if r.title.trim().is_empty() {
+            "—"
+        } else {
+            r.title.as_str()
+        };
+        let uploader = r.uploader.as_deref().unwrap_or("");
+        let head = if uploader.trim().is_empty() {
+            format!("🎵 <b>{}</b>", esc(title_txt))
+        } else {
+            format!("🎵 <b>{}</b> — {}", esc(uploader), esc(title_txt))
+        };
+        let (pemoji, pname) = platform_badge(&r.url);
+        out.push_str(&format!("\n{num}  {head}\n     └ {pemoji} {pname}\n"));
+    }
+    out
+}
+
+/// For You keyboard: number button per rec (`exp:rec:{idx}` → preview) + tabs.
+pub fn render_recommendations_keyboard(
+    recs: &[doracore::recommend::RawRec],
+    tab_recent: &str,
+    tab_trending: &str,
+    tab_foryou: &str,
+    tab_subs: &str,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    let mut num_row: Vec<InlineKeyboardButton> = Vec::new();
+    for (i, _r) in recs.iter().enumerate() {
+        num_row.push(crate::telegram::cb(number_emoji(i as u32 + 1), format!("exp:rec:{i}")));
+        if num_row.len() == 5 {
+            rows.push(std::mem::take(&mut num_row));
+        }
+    }
+    if !num_row.is_empty() {
+        rows.push(num_row);
+    }
+    rows.push(tabs_row(tab_recent, tab_trending, tab_foryou, tab_subs));
     InlineKeyboardMarkup::new(rows)
 }
 
@@ -348,9 +406,34 @@ mod tests {
         assert!(text.contains("☁️ SoundCloud"));
         assert!(text.contains("<code>MP3</code>"));
 
-        let kb = render_trending_keyboard(&entries, "R", "T", "S");
-        // 2 number buttons + tab row.
-        assert_eq!(kb.inline_keyboard.last().unwrap().len(), 3);
+        let kb = render_trending_keyboard(&entries, "R", "T", "F", "S");
+        // tab row now has 4 tabs (Recent · Trending · For You · Subs).
+        assert_eq!(kb.inline_keyboard.last().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn renders_recommendation_cards() {
+        let recs = vec![
+            doracore::recommend::RawRec {
+                url: "https://youtu.be/x".into(),
+                title: "Salsa Brava".into(),
+                uploader: Some("LAFLOR".into()),
+            },
+            doracore::recommend::RawRec {
+                url: "https://youtu.be/y".into(),
+                title: "Track 2".into(),
+                uploader: None,
+            },
+        ];
+        let text = render_recommendations_text(&recs, "FOR YOU", "EMPTY", &|s| s.to_string());
+        assert!(text.contains("FOR YOU"));
+        assert!(text.contains("<b>LAFLOR</b> — Salsa Brava"));
+        assert!(text.contains("1\u{fe0f}\u{20e3}"));
+        assert!(text.contains("▶️ YouTube"));
+        let kb = render_recommendations_keyboard(&recs, "R", "T", "F", "S");
+        assert_eq!(kb.inline_keyboard.last().unwrap().len(), 4); // tab row
+        // empty state
+        assert!(render_recommendations_text(&[], "FOR YOU", "EMPTY", &|s| s.to_string()).contains("EMPTY"));
     }
 
     #[test]
