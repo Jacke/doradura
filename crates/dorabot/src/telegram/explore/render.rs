@@ -319,6 +319,24 @@ pub fn render_recommendations_keyboard(
     InlineKeyboardMarkup::new(rows)
 }
 
+/// "🎧 More like this" keyboard: number button per rec (`exp:rec:{idx}` →
+/// preview) only — no Explore tab bar (this is a standalone "similar" list, not
+/// the hub).
+pub fn render_recommendations_keyboard_plain(recs: &[doracore::recommend::RawRec]) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    let mut num_row: Vec<InlineKeyboardButton> = Vec::new();
+    for (i, _r) in recs.iter().enumerate() {
+        num_row.push(crate::telegram::cb(number_emoji(i as u32 + 1), format!("exp:rec:{i}")));
+        if num_row.len() == 5 {
+            rows.push(std::mem::take(&mut num_row));
+        }
+    }
+    if !num_row.is_empty() {
+        rows.push(num_row);
+    }
+    InlineKeyboardMarkup::new(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

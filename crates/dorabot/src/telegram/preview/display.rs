@@ -353,6 +353,19 @@ pub async fn send_preview(
         keyboard
     };
 
+    // "🎧 More like this" — recommendations seeded from this video. YouTube only
+    // (radio source); the explore handler resolves the url_id and shows similar.
+    let keyboard = if is_youtube {
+        let mut kb = keyboard;
+        kb.inline_keyboard.push(vec![crate::telegram::cb(
+            crate::i18n::t(&lang, "explore_similar_button"),
+            format!("exp:like:{}", url_id),
+        )]);
+        kb
+    } else {
+        keyboard
+    };
+
     let (keyboard_rows, keyboard_buttons) = keyboard_stats(&keyboard);
     log::info!(
         "Preview keyboard built (rows={}, buttons={}, format={}, quality={:?}, url_id={}, send_as_document={})",
@@ -678,6 +691,19 @@ pub async fn update_preview_message(
             })
             .collect();
         teloxide::types::InlineKeyboardMarkup::new(filtered)
+    } else {
+        keyboard
+    };
+
+    // "🎧 More like this" — recommendations seeded from this video. YouTube only
+    // (radio source); the explore handler resolves the url_id and shows similar.
+    let keyboard = if is_youtube {
+        let mut kb = keyboard;
+        kb.inline_keyboard.push(vec![crate::telegram::cb(
+            crate::i18n::t(&lang, "explore_similar_button"),
+            format!("exp:like:{}", url_id),
+        )]);
+        kb
     } else {
         keyboard
     };

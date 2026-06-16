@@ -171,6 +171,16 @@ pub async fn recommend_for_user(storage: &Arc<SharedStorage>, user_id: i64, limi
     ranked
 }
 
+/// Recommendations seeded from a **single** video (the "🎧 More like this"
+/// button). Returns the YouTube Mix for `seed_url`, minus the seed itself.
+pub async fn similar_to(seed_url: &str, limit: usize) -> Vec<RawRec> {
+    let seed_id = youtube_id(seed_url);
+    let mut recs = radio_for(seed_url, limit + 1).await;
+    recs.retain(|r| youtube_id(&r.url) != seed_id);
+    recs.truncate(limit);
+    recs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

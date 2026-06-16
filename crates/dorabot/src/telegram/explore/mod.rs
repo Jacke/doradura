@@ -17,8 +17,8 @@ use doracore::explore::timeline::{self, BucketLabel, MediaKind, TimelinePage};
 use doracore::storage::db::DbPool;
 
 use render::{
-    render_recommendations_keyboard, render_recommendations_text, render_timeline_keyboard, render_timeline_text,
-    render_trending_keyboard, render_trending_text,
+    render_recommendations_keyboard, render_recommendations_keyboard_plain, render_recommendations_text,
+    render_timeline_keyboard, render_timeline_text, render_trending_keyboard, render_trending_text,
 };
 
 /// How many top files the Trending tab shows.
@@ -71,6 +71,7 @@ pub async fn handle_explore_callback(
             let idx = idx.parse().unwrap_or(usize::MAX);
             preview_recommendation(&bot, &q, &storage, &db_pool, user_id, idx).await
         }
+        ["exp", "like", url_id] => like_video(&bot, &q, &storage, &db_pool, user_id, url_id).await,
         _ => {
             // `exp:noop` (the page-label button) and any unknown shape just
             // clear the spinner.
@@ -458,5 +459,52 @@ async fn preview_recommendation(
                 .await?;
         }
     }
+    Ok(())
+}
+
+/// "🎧 More like this" from the preview card: resolve the previewed URL, fetch
+/// its YouTube radio, and send a standalone recommendations message (number
+/// taps → `exp:rec:{idx}` → preview). Caches the list like the For You tab.
+async fn like_video(
+    bot: &Bot,
+    q: &CallbackQuery,
+    storage: &Arc<SharedStorage>,
+    db_pool: &Arc<DbPool>,
+    user_id: i64,
+    url_id: &str,
+) -> anyhow::Result<()> {
+    let lang = i18n::user_lang_from_storage(storage, user_id).await;
+    bot.answer_callback_query(q.id.clone())
+        .text(i18n::t(&lang, "explore_foryou_loading"))
+        .await?;
+
+    let Some(url) = crate::storage::cache::get_url(db_pool, Some(storage.as_ref()), url_id).await else {
+        bot.send_message(ChatId(user_id), i18n::t(&lang, "explore_load_failed"))
+            .await?;
+        return Ok(());
+    };
+
+    let recs = crate::download::recommend::similar_to(&url, FORYOU_LIMIT).await;
+    if recs.is_empty() {
+        bot.send_message(ChatId(user_id), i18n::t(&lang, "explore_foryou_empty"))
+            .await?;
+        return Ok(());
+    }
+
+    // Cache so a number tap resolves the URL (shared with the For You tab).
+    if let Ok(json) = serde_json::to_string(&recs) {
+        let _ = storage
+            .upsert_prompt_session(user_id, FORYOU_CACHE_KIND, &json, 3600)
+            .await;
+    }
+
+    let html = teloxide::utils::html::escape;
+    let title = format!("<b>{}</b>", html(&i18n::t(&lang, "explore_similar_title")));
+    let text = render_recommendations_text(&recs, &title, &i18n::t(&lang, "explore_foryou_empty"), &|s| html(s));
+    let keyboard = render_recommendations_keyboard_plain(&recs);
+    bot.send_message(ChatId(user_id), text)
+        .parse_mode(ParseMode::Html)
+        .reply_markup(keyboard)
+        .await?;
     Ok(())
 }
