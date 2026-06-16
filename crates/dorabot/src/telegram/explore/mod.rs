@@ -25,8 +25,20 @@ use render::{
 const TRENDING_LIMIT: u32 = 10;
 /// How many recommendations the "For You" tab shows.
 const FORYOU_LIMIT: usize = 10;
-/// Prompt-session kind caching the current "For You" rec list (for `exp:rec:{i}`).
+/// Prompt-session kind caching the "For You" rec list (tap tag `f`).
 const FORYOU_CACHE_KIND: &str = "foryou_recs";
+/// Prompt-session kind caching the "🎧 Similar" rec list (tap tag `s`).
+const SIMILAR_CACHE_KIND: &str = "similar_recs";
+
+/// Map a rec-tap tag (`f`/`s`) to its cache kind, so two rec messages in one
+/// chat never resolve a tap against the other's list.
+fn rec_cache_kind(tag: &str) -> &'static str {
+    if tag == "s" {
+        SIMILAR_CACHE_KIND
+    } else {
+        FORYOU_CACHE_KIND
+    }
+}
 
 /// Dispatch `exp:*` callbacks: tab switch, pagination, resend-by-history-id.
 ///
@@ -67,9 +79,9 @@ pub async fn handle_explore_callback(
             let rank = rank.parse().unwrap_or(usize::MAX);
             resend_trending(&bot, &q, &storage, user_id, rank).await
         }
-        ["exp", "rec", idx] => {
+        ["exp", "rec", tag, idx] => {
             let idx = idx.parse().unwrap_or(usize::MAX);
-            preview_recommendation(&bot, &q, &storage, &db_pool, user_id, idx).await
+            preview_recommendation(&bot, &q, &storage, &db_pool, user_id, tag, idx).await
         }
         ["exp", "like", url_id] => like_video(&bot, &q, &storage, &db_pool, user_id, url_id).await,
         _ => {
@@ -380,6 +392,7 @@ async fn show_for_you(bot: &Bot, q: &CallbackQuery, storage: &Arc<SharedStorage>
     let text = render_recommendations_text(&recs, &title, &empty, &|s| html(s));
     let keyboard = render_recommendations_keyboard(
         &recs,
+        "f",
         &i18n::t(&lang, "explore_tab_recent"),
         &i18n::t(&lang, "explore_tab_trending"),
         &i18n::t(&lang, "explore_tab_foryou"),
@@ -407,13 +420,14 @@ async fn preview_recommendation(
     storage: &Arc<SharedStorage>,
     db_pool: &Arc<DbPool>,
     user_id: i64,
+    tag: &str,
     idx: usize,
 ) -> anyhow::Result<()> {
     let lang = i18n::user_lang_from_storage(storage, user_id).await;
     bot.answer_callback_query(q.id.clone()).await?;
 
     let cached = storage
-        .get_prompt_session(user_id, FORYOU_CACHE_KIND)
+        .get_prompt_session(user_id, rec_cache_kind(tag))
         .await
         .ok()
         .flatten();
@@ -491,17 +505,18 @@ async fn like_video(
         return Ok(());
     }
 
-    // Cache so a number tap resolves the URL (shared with the For You tab).
+    // Cache under the Similar key (distinct from For You) so a number tap on
+    // this message resolves against this list, not the For You one.
     if let Ok(json) = serde_json::to_string(&recs) {
         let _ = storage
-            .upsert_prompt_session(user_id, FORYOU_CACHE_KIND, &json, 3600)
+            .upsert_prompt_session(user_id, SIMILAR_CACHE_KIND, &json, 3600)
             .await;
     }
 
     let html = teloxide::utils::html::escape;
     let title = format!("<b>{}</b>", html(&i18n::t(&lang, "explore_similar_title")));
     let text = render_recommendations_text(&recs, &title, &i18n::t(&lang, "explore_foryou_empty"), &|s| html(s));
-    let keyboard = render_recommendations_keyboard_plain(&recs);
+    let keyboard = render_recommendations_keyboard_plain(&recs, "s");
     bot.send_message(ChatId(user_id), text)
         .parse_mode(ParseMode::Html)
         .reply_markup(keyboard)

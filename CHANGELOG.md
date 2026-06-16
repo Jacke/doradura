@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > 🎉 **Pre-release track promoted alpha → beta (v0.51.0-beta.1, 2026-06-07).** Core feature set (inline mode + identity guard, silent downloads, Instagram Stories, period/smart history search, popular_files viral cache) считается feature-complete и достаточно стабильным для бета-тестинга. Дальше нумерация `0.51.0-beta.N` вместо `alpha.N`. Историю alpha.X-меток в записях ниже оставляем как есть — это хронология появления фич.
 
+### Fixed
+- **Реки: разделены кэш-ключи For You / Похожее (баг при двух rec-сообщениях)** (v0.51.0-beta.24) — `✨ Для тебя` и `🎧 Похожее` делили один prompt_session-ключ, поэтому при двух rec-сообщениях в чате тап по номеру в старом сообщении резолвил трек из последнего списка (не того). Теперь раздельные ключи (`foryou_recs` / `similar_recs`) + тег в callback `exp:rec:{f|s}:{idx}` → тап всегда резолвится против своего списка. Также: `.specify/companion.yml` (случайно попал в beta.22) убран из репо + в `.gitignore`.
+
 ### Added
 - **🎧 «Похожее» — реки по конкретному видео из превью** (v0.51.0-beta.23) — на превью-карточке YouTube-видео кнопка «🎧 Похожее» (`exp:like:{url_id}`): резолвит URL → `recommend::similar_to` (YouTube Mix `RD<id>` минус сам сид) → присылает отдельное сообщение с rich-карточками похожих; тап по номеру → превью-карточка (через тот же `exp:rec:{idx}`, кэш в prompt_session). Это «лови такие видео» по конкретной ссылке (в дополнение к персональной вкладке ✨ Для тебя). Кнопка добавляется только для YouTube-превью (оба preview-сендера), не трогая builder'ы (дописывается в `send_preview`, где есть `lang`/`url_id`/`is_youtube`). Новый `render_recommendations_keyboard_plain` (номерные кнопки без таб-бара). i18n ×4. Аддитивно.
 

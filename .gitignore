@@ -66,3 +66,6 @@ docs/PRD.md
 .claude/commit-approved
 .claude/worktrees/
 test_circles/
+
+# Spec-kit / companion tooling (local only)
+.specify/

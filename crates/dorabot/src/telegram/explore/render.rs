@@ -299,34 +299,34 @@ pub fn render_recommendations_text(
 /// For You keyboard: number button per rec (`exp:rec:{idx}` → preview) + tabs.
 pub fn render_recommendations_keyboard(
     recs: &[doracore::recommend::RawRec],
+    tag: &str,
     tab_recent: &str,
     tab_trending: &str,
     tab_foryou: &str,
     tab_subs: &str,
 ) -> InlineKeyboardMarkup {
-    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-    let mut num_row: Vec<InlineKeyboardButton> = Vec::new();
-    for (i, _r) in recs.iter().enumerate() {
-        num_row.push(crate::telegram::cb(number_emoji(i as u32 + 1), format!("exp:rec:{i}")));
-        if num_row.len() == 5 {
-            rows.push(std::mem::take(&mut num_row));
-        }
-    }
-    if !num_row.is_empty() {
-        rows.push(num_row);
-    }
+    let mut rows = rec_number_rows(recs, tag);
     rows.push(tabs_row(tab_recent, tab_trending, tab_foryou, tab_subs));
     InlineKeyboardMarkup::new(rows)
 }
 
-/// "🎧 More like this" keyboard: number button per rec (`exp:rec:{idx}` →
-/// preview) only — no Explore tab bar (this is a standalone "similar" list, not
-/// the hub).
-pub fn render_recommendations_keyboard_plain(recs: &[doracore::recommend::RawRec]) -> InlineKeyboardMarkup {
+/// "🎧 More like this" keyboard: number button per rec only — no Explore tab bar
+/// (this is a standalone "similar" list, not the hub).
+pub fn render_recommendations_keyboard_plain(recs: &[doracore::recommend::RawRec], tag: &str) -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(rec_number_rows(recs, tag))
+}
+
+/// Number-emoji buttons (5/row), callback `exp:rec:{tag}:{idx}`. `tag` selects
+/// which cached rec list (`f` = For You, `s` = Similar) the tap resolves against,
+/// so two rec messages in one chat never cross-reference each other's list.
+fn rec_number_rows(recs: &[doracore::recommend::RawRec], tag: &str) -> Vec<Vec<InlineKeyboardButton>> {
     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
     let mut num_row: Vec<InlineKeyboardButton> = Vec::new();
     for (i, _r) in recs.iter().enumerate() {
-        num_row.push(crate::telegram::cb(number_emoji(i as u32 + 1), format!("exp:rec:{i}")));
+        num_row.push(crate::telegram::cb(
+            number_emoji(i as u32 + 1),
+            format!("exp:rec:{tag}:{i}"),
+        ));
         if num_row.len() == 5 {
             rows.push(std::mem::take(&mut num_row));
         }
@@ -334,7 +334,7 @@ pub fn render_recommendations_keyboard_plain(recs: &[doracore::recommend::RawRec
     if !num_row.is_empty() {
         rows.push(num_row);
     }
-    InlineKeyboardMarkup::new(rows)
+    rows
 }
 
 #[cfg(test)]
@@ -448,7 +448,7 @@ mod tests {
         assert!(text.contains("<b>LAFLOR</b> — Salsa Brava"));
         assert!(text.contains("1\u{fe0f}\u{20e3}"));
         assert!(text.contains("▶️ YouTube"));
-        let kb = render_recommendations_keyboard(&recs, "R", "T", "F", "S");
+        let kb = render_recommendations_keyboard(&recs, "f", "R", "T", "F", "S");
         assert_eq!(kb.inline_keyboard.last().unwrap().len(), 4); // tab row
         // empty state
         assert!(render_recommendations_text(&[], "FOR YOU", "EMPTY", &|s| s.to_string()).contains("EMPTY"));
