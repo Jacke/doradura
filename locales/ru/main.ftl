@@ -541,6 +541,7 @@ stories-delivery-video = 📹 Видео
 stories-delivery-file = 📄 Файл
 stories-preview-all = 👁 Превью всех форматов
 stories-preview-preparing = 👁 Готовлю превью соотношений…
+stories-rendering-parallel = ⚡ Рендер Stories (параллельно, все ядра)…
 stories-preview-failed = ❌ Не удалось собрать превью.
 stories-pick-ar = Выбери соотношение сторон для Stories:
 stories-create = ▶️ Создать стори

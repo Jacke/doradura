@@ -540,6 +540,7 @@ stories-delivery-video = 📹 Video
 stories-delivery-file = 📄 File
 stories-preview-all = 👁 Preview all ratios
 stories-preview-preparing = 👁 Rendering aspect-ratio previews…
+stories-rendering-parallel = ⚡ Rendering Stories (parallel, all cores)…
 stories-preview-failed = ❌ Couldn't build previews.
 stories-pick-ar = Pick an aspect ratio for your Stories:
 stories-create = ▶️ Create stories

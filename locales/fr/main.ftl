@@ -331,6 +331,7 @@ stories-delivery-video = 📹 Vidéo
 stories-delivery-file = 📄 Fichier
 stories-preview-all = 👁 Aperçu de tous les formats
 stories-preview-preparing = 👁 Génération des aperçus…
+stories-rendering-parallel = ⚡ Rendu des Stories (parallèle)…
 stories-preview-failed = ❌ Impossible de générer les aperçus.
 stories-pick-ar = Choisis un format pour tes Stories :
 stories-create = ▶️ Créer les stories

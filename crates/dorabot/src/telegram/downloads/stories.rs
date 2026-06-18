@@ -15,13 +15,17 @@
 //! `OutputKind` through it would touch many fragile branches. This module only
 //! reuses the shared download/ffmpeg/send helpers.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto};
 use tokio::process::Command;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tokio::time::timeout;
 
 use crate::core::escape_markdown;
 use crate::i18n;
@@ -585,36 +589,40 @@ async fn run_stories(
         .map(|d| d as i64);
     let capped = matches!(source_secs, Some(d) if d > MAX_TOTAL_SECS);
 
-    // ── Render + segment in a single ffmpeg pass ──
+    // ── Render + segment ──
+    // Fixed AR + known duration → parallel chunked re-encode (saturates the
+    // box's vCPUs, ~near-instant). `Original` AR (stream-copy) or unknown
+    // duration → the single-pass fallback (copy is already instant; chunking
+    // needs a duration to split on).
     let output_pattern = dir.join("story_%03d.mp4");
-    let mut cmd = build_stories_cmd(&input_path, &output_pattern, capped, settings);
+    let parallel = settings.aspect.dims().is_some() && source_secs.is_some_and(|d| d > 0);
 
-    let outcome = crate::core::progress_pulse::run_ffmpeg_with_progress(
-        &bot,
-        chat_id,
-        status.id,
-        &mut cmd,
-        STORIES_FFMPEG_TIMEOUT,
-        "📱 Render Stories",
-    )
-    .await;
-
-    let output = match outcome {
-        doracore::core::process::PulseOutcome::Done(o) => o,
-        doracore::core::process::PulseOutcome::Io(e) => {
-            bot.delete_message(chat_id, status.id).await.ok();
-            return Err(to_req_err(e));
-        }
-        doracore::core::process::PulseOutcome::Timeout => {
-            bot.delete_message(chat_id, status.id).await.ok();
-            bot.send_message(chat_id, i18n::t(&lang, "stories-timeout")).await.ok();
-            return Ok(());
+    let render: anyhow::Result<()> = if parallel {
+        let total = if capped {
+            MAX_TOTAL_SECS as u32
+        } else {
+            source_secs.unwrap_or(0).max(0) as u32
+        };
+        bot.edit_message_text(chat_id, status.id, i18n::t(&lang, "stories-rendering-parallel"))
+            .await
+            .ok();
+        encode_segments_parallel(&input_path, &dir, settings, total).await
+    } else {
+        let mut cmd = build_stories_cmd(&input_path, &output_pattern, capped, settings);
+        match timeout(STORIES_FFMPEG_TIMEOUT, cmd.status()).await {
+            Ok(Ok(s)) if s.success() => Ok(()),
+            Ok(Ok(s)) => Err(anyhow::anyhow!("ffmpeg exited {s}")),
+            Ok(Err(e)) => Err(e.into()),
+            Err(_) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                bot.send_message(chat_id, i18n::t(&lang, "stories-timeout")).await.ok();
+                return Ok(());
+            }
         }
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!("stories: ffmpeg failed: {}", stderr.lines().last().unwrap_or(""));
+    if let Err(e) = render {
+        log::error!("stories: render failed: {}", e);
         bot.delete_message(chat_id, status.id).await.ok();
         bot.send_message(chat_id, i18n::t(&lang, "stories-cut-failed"))
             .await
@@ -790,6 +798,93 @@ fn build_stories_cmd(
         .arg("mp4")
         .arg(output_pattern);
     cmd
+}
+
+/// **Per-segment parallel re-encode** — each output Story segment is encoded as
+/// an independent, self-contained `ffmpeg` running **concurrently**, so a clip
+/// that yields N segments uses up to N cores at once instead of one serial pass.
+///
+/// Why per-segment (vs chunk-then-concat): segments are the natural independent
+/// unit (separate clips re-uploaded to IG), so each `-ss start -t seg` encode is
+/// **exact** (no keyframe-cut drift, no concat/segment-muxer fragility) and
+/// audio is continuous *within* each segment (boundaries are different stories,
+/// so cross-segment seams don't matter). Produces `story_%03d.mp4` in `dir`.
+async fn encode_segments_parallel(
+    input: &Path,
+    dir: &Path,
+    settings: StorySettings,
+    total_secs: u32,
+) -> anyhow::Result<()> {
+    let (w, h) = settings
+        .aspect
+        .dims()
+        .context("parallel encode requires a fixed aspect ratio")?;
+    let filter = reframe_filter(settings.reframe, w, h);
+    // IG re-encodes on upload, so ultra presets are wasted compute — favour speed.
+    let (crf, preset, abr) = match settings.quality {
+        Quality::Std => ("23", "veryfast", "128k"),
+        Quality::Max => ("20", "fast", "192k"),
+    };
+    let seg = settings.seg_secs.max(1);
+    let n_segs = total_secs.div_ceil(seg).max(1);
+
+    // Bound concurrency to the cgroup's vCPUs; give each segment a few threads so
+    // a single-segment clip still uses the box, and N segments share cores cleanly.
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let threads_per = (cores / (n_segs as usize)).clamp(2, 8);
+    let max_parallel = (cores / threads_per).max(1);
+
+    log::info!(
+        "stories: parallel encode {} segment(s) × {}s, {} cores → {}-wide × {} threads, preset {}",
+        n_segs,
+        seg,
+        cores,
+        max_parallel,
+        threads_per,
+        preset
+    );
+
+    let sem = Arc::new(Semaphore::new(max_parallel));
+    let mut set: JoinSet<Option<u32>> = JoinSet::new();
+    for s in 0..n_segs {
+        let sem = sem.clone();
+        let input = input.to_path_buf();
+        let out = dir.join(format!("story_{s:03}.mp4"));
+        let filter = filter.clone();
+        let (crf, preset, abr) = (crf.to_string(), preset.to_string(), abr.to_string());
+        set.spawn(async move {
+            let _permit = sem.acquire_owned().await.ok()?;
+            let status = Command::new("ffmpeg")
+                .args(["-hide_banner", "-loglevel", "error", "-y"])
+                .args(["-ss", &(s * seg).to_string()])
+                .arg("-i")
+                .arg(&input)
+                .args(["-t", &seg.to_string()])
+                .args(["-threads", &threads_per.to_string()])
+                .arg("-filter_complex")
+                .arg(&filter)
+                .args(["-map", "[v]", "-map", "0:a?"])
+                .args(["-c:v", "libx264", "-profile:v", "high", "-level", "4.2"])
+                .args(["-preset", &preset, "-crf", &crf])
+                .args(["-pix_fmt", "yuv420p", "-r", "30"])
+                .args(["-c:a", "aac", "-b:a", &abr, "-ar", "44100"])
+                .arg("-movflags")
+                .arg("+faststart")
+                .arg(&out)
+                .status()
+                .await
+                .ok()?;
+            (status.success() && out.exists()).then_some(s)
+        });
+    }
+    let mut ok = 0u32;
+    while let Some(res) = set.join_next().await {
+        if matches!(res, Ok(Some(_))) {
+            ok += 1;
+        }
+    }
+    anyhow::ensure!(ok == n_segs, "segment encode failed: {ok}/{n_segs} ok");
+    Ok(())
 }
 
 /// Build the reframe `-filter_complex` graph for a target `w`×`h` canvas.
