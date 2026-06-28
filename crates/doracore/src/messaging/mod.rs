@@ -11,12 +11,14 @@
 
 pub mod capabilities;
 pub mod types;
+pub mod whatsapp;
 
 pub use capabilities::Capabilities;
 pub use types::{
     Button, ChatRef, InboundEvent, InboundMessage, Keyboard, MediaKind, MediaSource, MessageHandle, OutboundMessage,
     Platform, TextStyle, UserRef,
 };
+pub use whatsapp::{WhatsAppClient, WhatsAppConfig, WhatsAppInbound, WhatsAppMessenger};
 
 use async_trait::async_trait;
 
